@@ -8,6 +8,7 @@ import {
   TOOL_KIND_LABELS,
   type ToolKind,
 } from '../types';
+import { importReferenceImage } from '../referenceImage';
 
 async function startTimelapse(): Promise<void> {
   const set = useStore.getState().set;
@@ -101,6 +102,7 @@ export function MainMenu() {
   const [sizeOpen, setSizeOpen] = useState(false);
   const progress = useStore((s) => s.exportProgress);
   const fileRef = useRef<HTMLInputElement>(null);
+  const imageRef = useRef<HTMLInputElement>(null);
 
   const close = () => {
     setOpen(false);
@@ -119,6 +121,13 @@ export function MainMenu() {
     } catch {
       alert('プロジェクトの読み込みに失敗しました');
     }
+  };
+
+  const onImportImage = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!importReferenceImage(file)) alert('画像ファイルを選択してください');
   };
 
   return (
@@ -166,6 +175,14 @@ export function MainMenu() {
             </button>
             <button
               onClick={() => {
+                imageRef.current?.click();
+                close();
+              }}
+            >
+              画像をインポート…
+            </button>
+            <button
+              onClick={() => {
                 engine.exportPNG();
                 close();
               }}
@@ -201,6 +218,13 @@ export function MainMenu() {
         </>
       )}
       {sizeOpen && <CanvasSizeDialog onClose={() => setSizeOpen(false)} />}
+      <input
+        ref={imageRef}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={onImportImage}
+      />
       <input
         ref={fileRef}
         type="file"

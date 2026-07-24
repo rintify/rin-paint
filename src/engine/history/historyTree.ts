@@ -22,12 +22,24 @@ export interface LayerProps {
   params?: AdjustParams;
 }
 
+export interface IndexedLayerSnapshot {
+  index: number;
+  snapshot: LayerSnapshot;
+}
+
 export type Op =
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
   | { kind: 'layerAdd'; index: number; snapshot: LayerSnapshot }
   | { kind: 'layerRemove'; index: number; snapshot: LayerSnapshot }
   | { kind: 'layerMove'; from: number; to: number }
-  | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps };
+  | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
+  | {
+      kind: 'layerMerge';
+      before: IndexedLayerSnapshot[];
+      after: IndexedLayerSnapshot[];
+      beforeActiveId: string;
+      afterActiveId: string;
+    };
 
 export interface HistoryNode {
   id: number;

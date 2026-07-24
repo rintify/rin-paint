@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { engine } from '../engine/PaintEngine';
 import { useStore } from '../state/store';
+import {
+  handleReferenceImageDrop,
+  ReferenceImageWindow,
+} from './ReferenceImageWindow';
 
 function ViewChip() {
   const scale = useStore((s) => s.viewScale);
@@ -25,6 +29,7 @@ export function CanvasView() {
   const mainRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [dropActive, setDropActive] = useState(false);
   const selectionActive = useStore((s) => s.selectionActive);
   const freeTransform = useStore((s) => s.freeTransform);
   const canvasW = useStore((s) => s.canvasW);
@@ -58,7 +63,33 @@ export function CanvasView() {
   }, [canvasW, canvasH]);
 
   return (
-    <div className="canvas-area" ref={areaRef}>
+    <div
+      className={`canvas-area${dropActive ? ' image-drop-active' : ''}`}
+      ref={areaRef}
+      onDragEnter={(event) => {
+        if ([...event.dataTransfer.items].some((item) => item.kind === 'file')) {
+          event.preventDefault();
+          setDropActive(true);
+        }
+      }}
+      onDragOver={(event) => {
+        if ([...event.dataTransfer.items].some((item) => item.kind === 'file')) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+        }
+      }}
+      onDragLeave={(event) => {
+        const next = event.relatedTarget as Node | null;
+        if (!next || !event.currentTarget.contains(next)) setDropActive(false);
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDropActive(false);
+        if (!handleReferenceImageDrop(event)) {
+          alert('画像ファイルをドロップしてください');
+        }
+      }}
+    >
       <div
         className="artboard"
         ref={wrapRef}
@@ -83,6 +114,8 @@ export function CanvasView() {
           <button onClick={() => engine.lassoCancel()}>キャンセル</button>
         </div>
       )}
+      <ReferenceImageWindow areaRef={areaRef} />
+      {dropActive && <div className="image-drop-hint">画像を参照として開く</div>}
       <ViewChip />
     </div>
   );

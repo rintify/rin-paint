@@ -209,6 +209,12 @@ export function LayerPanel() {
   const layers = useStore((s) => s.layers);
   const activeId = useStore((s) => s.activeLayerId);
   const active = layers.find((l) => l.id === activeId);
+  const activeIndex = layers.findIndex((l) => l.id === activeId);
+  const canMergeDown =
+    active?.type === 'raster' &&
+    activeIndex > 0 &&
+    layers[activeIndex - 1]?.type === 'raster';
+  const canMergeVisible = layers.filter((l) => l.visible).length > 1;
   const reversed = [...layers].reverse();
   return (
     <div className="section layers-section">
@@ -234,6 +240,22 @@ export function LayerPanel() {
         {reversed.map((l) => (
           <LayerRow key={l.id} meta={l} active={l.id === activeId} />
         ))}
+      </div>
+      <div className="layer-merge-buttons">
+        <button
+          onClick={() => engine.mergeLayerDown()}
+          disabled={!canMergeDown}
+          title="選択中のラスターレイヤーを直下のラスターレイヤーへ統合"
+        >
+          下と統合
+        </button>
+        <button
+          onClick={() => engine.mergeVisibleLayers()}
+          disabled={!canMergeVisible}
+          title="見えているレイヤーを表示どおりに1枚へ統合"
+        >
+          表示を統合
+        </button>
       </div>
       {active && <LayerControls meta={active} />}
     </div>

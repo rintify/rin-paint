@@ -13,6 +13,7 @@ import {
 import { checkerPattern, rectValid, type DirtyRect } from './brush';
 import {
   HistoryTree,
+  type IndexedLayerSnapshot,
   type LayerProps,
   type LayerSnapshot,
   type Op,
@@ -368,7 +369,7 @@ export class PaintEngine {
   /** キャンバス上に重ねた UI (選択ツールバー等) の操作は無視する */
   private isUiTarget(e: Event): boolean {
     const t = e.target as Element | null;
-    return !!t && !!t.closest('button');
+    return !!t && !!t.closest('button, [data-canvas-ui]');
   }
 
   private onPointerDown = (e: PointerEvent): void => {
@@ -787,6 +788,18 @@ export class PaintEngine {
         if (l) this.assignProps(l, dir === 'undo' ? op.before : op.after);
         break;
       }
+      case 'layerMerge': {
+        const remove = dir === 'undo' ? op.after : op.before;
+        const restore = dir === 'undo' ? op.before : op.after;
+        const removeIds = new Set(remove.map((entry) => entry.snapshot.id));
+        this.layers = this.layers.filter((layer) => !removeIds.has(layer.id));
+        for (const entry of [...restore].sort((a, b) => a.index - b.index)) {
+          await this.restoreLayer(entry.snapshot, entry.index);
+        }
+        this.activeLayerId =
+          dir === 'undo' ? op.beforeActiveId : op.afterActiveId;
+        break;
+      }
     }
   }
 
@@ -818,7 +831,11 @@ export class PaintEngine {
     this.requestRender();
   }
 
-  private snapshotLayer(l: Layer, withContent: boolean): LayerSnapshot {
+  private snapshotLayer(
+    l: Layer,
+    withContent: boolean,
+    keepCanvas = false,
+  ): LayerSnapshot {
     const snap: LayerSnapshot = {
       id: l.id,
       type: l.type,
@@ -833,11 +850,13 @@ export class PaintEngine {
       const copy = makeCanvas();
       copy.getContext('2d')!.drawImage(l.canvas, 0, 0);
       snap.canvas = copy;
-      // メモリ節約のため PNG エンコードが済んだら canvas を手放す
-      void toBlobP(copy).then((b) => {
-        snap.blob = b;
-        snap.canvas = undefined;
-      });
+      if (!keepCanvas) {
+        // メモリ節約のため PNG エンコードが済んだら canvas を手放す
+        void toBlobP(copy).then((b) => {
+          snap.blob = b;
+          snap.canvas = undefined;
+        });
+      }
     }
     return snap;
   }
@@ -937,6 +956,98 @@ export class PaintEngine {
     const [l] = this.layers.splice(from, 1);
     this.layers.splice(to, 0, l);
     this.history.push({ kind: 'layerMove', from, to }, 'レイヤー並べ替え');
+    this.committed();
+  }
+
+  private stableLayerEntries(
+    layers: { layer: Layer; index: number }[],
+  ): IndexedLayerSnapshot[] {
+    return layers.map(({ layer, index }) => ({
+      index,
+      snapshot: this.snapshotLayer(layer, layer.type === 'raster', true),
+    }));
+  }
+
+  private drawLayerOnto(
+    ctx: CanvasRenderingContext2D,
+    layer: RasterLayer,
+  ): void {
+    if (!layer.visible) return;
+    ctx.save();
+    ctx.globalAlpha = layer.opacity;
+    ctx.globalCompositeOperation = layer.blend;
+    ctx.drawImage(layer.canvas, 0, 0);
+    ctx.restore();
+  }
+
+  /** 選択中のラスターレイヤーを、直下のラスターレイヤーへ統合する。 */
+  mergeLayerDown(): void {
+    if (this.busy) return;
+    this.finishFloating();
+    const upperIndex = this.layers.findIndex((l) => l.id === this.activeLayerId);
+    const lowerIndex = upperIndex - 1;
+    if (lowerIndex < 0) return;
+    const upper = this.layers[upperIndex];
+    const lower = this.layers[lowerIndex];
+    if (upper.type !== 'raster' || lower.type !== 'raster') return;
+
+    const beforeActiveId = this.activeLayerId;
+    const before = this.stableLayerEntries([
+      { layer: lower, index: lowerIndex },
+      { layer: upper, index: upperIndex },
+    ]);
+    const merged = createRasterLayer(lower.name);
+    this.drawLayerOnto(merged.ctx, lower);
+    this.drawLayerOnto(merged.ctx, upper);
+    this.layers.splice(lowerIndex, 2, merged);
+    this.activeLayerId = merged.id;
+    this.bumpLayer(merged.id);
+    const after = this.stableLayerEntries([{ layer: merged, index: lowerIndex }]);
+    this.history.push(
+      {
+        kind: 'layerMerge',
+        before,
+        after,
+        beforeActiveId,
+        afterActiveId: merged.id,
+      },
+      '下のレイヤーと統合',
+    );
+    this.committed();
+  }
+
+  /** 現在見えている全レイヤーを、画面表示どおりの1枚へ統合する。 */
+  mergeVisibleLayers(): void {
+    if (this.busy) return;
+    this.finishFloating();
+    const visible = this.layers
+      .map((layer, index) => ({ layer, index }))
+      .filter(({ layer }) => layer.visible);
+    if (visible.length < 2) return;
+
+    this.ensureComposited();
+    if (!this.main) return;
+    const beforeActiveId = this.activeLayerId;
+    const before = this.stableLayerEntries(visible);
+    const insertAt = visible[0].index;
+    const merged = createRasterLayer('表示レイヤー統合');
+    merged.ctx.drawImage(this.main, 0, 0);
+    const removeIds = new Set(visible.map(({ layer }) => layer.id));
+    this.layers = this.layers.filter((layer) => !removeIds.has(layer.id));
+    this.layers.splice(Math.min(insertAt, this.layers.length), 0, merged);
+    this.activeLayerId = merged.id;
+    this.bumpLayer(merged.id);
+    const after = this.stableLayerEntries([{ layer: merged, index: insertAt }]);
+    this.history.push(
+      {
+        kind: 'layerMerge',
+        before,
+        after,
+        beforeActiveId,
+        afterActiveId: merged.id,
+      },
+      '表示レイヤーを統合',
+    );
     this.committed();
   }
 
@@ -1057,6 +1168,59 @@ export class PaintEngine {
 
   lassoCancel(): void {
     this.lasso.cancelSelection();
+  }
+
+  /**
+   * 参照画像DOMの画面上の四隅をアート座標へ変換し、現在のレイヤーへ転写する。
+   * 参照ウィンドウ自体はエンジン外なので、この呼び出しだけが履歴・動画に残る。
+   */
+  transferReferenceImage(
+    image: CanvasImageSource,
+    naturalWidth: number,
+    naturalHeight: number,
+    corners: {
+      topLeft: { x: number; y: number };
+      topRight: { x: number; y: number };
+      bottomLeft: { x: number; y: number };
+      bottomRight: { x: number; y: number };
+    },
+    opacity: number,
+  ): boolean {
+    if (this.busy || naturalWidth <= 0 || naturalHeight <= 0) return false;
+    this.finishFloating();
+    const layer = this.activeRaster();
+    if (!layer) return false;
+    const p0 = this.view.clientToArt(corners.topLeft.x, corners.topLeft.y);
+    const px = this.view.clientToArt(corners.topRight.x, corners.topRight.y);
+    const py = this.view.clientToArt(corners.bottomLeft.x, corners.bottomLeft.y);
+    const p3 = this.view.clientToArt(corners.bottomRight.x, corners.bottomRight.y);
+    this.captureBefore(layer);
+    layer.ctx.save();
+    layer.ctx.globalAlpha = Math.max(0, Math.min(1, opacity));
+    layer.ctx.globalCompositeOperation = 'source-over';
+    layer.ctx.setTransform(
+      (px.x - p0.x) / naturalWidth,
+      (px.y - p0.y) / naturalWidth,
+      (py.x - p0.x) / naturalHeight,
+      (py.y - p0.y) / naturalHeight,
+      p0.x,
+      p0.y,
+    );
+    layer.ctx.drawImage(image, 0, 0, naturalWidth, naturalHeight);
+    layer.ctx.restore();
+    const xs = [p0.x, px.x, py.x, p3.x];
+    const ys = [p0.y, px.y, py.y, p3.y];
+    this.commitRasterEdit(
+      layer,
+      {
+        minX: Math.min(...xs) - 2,
+        minY: Math.min(...ys) - 2,
+        maxX: Math.max(...xs) + 2,
+        maxY: Math.max(...ys) + 2,
+      },
+      '画像を転写',
+    );
+    return true;
   }
 
   exportPNG(): void {
