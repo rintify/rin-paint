@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import {
+  DEFAULT_PEN_DETAIL_SETTINGS,
   newToolInstanceId,
   TOOL_KIND_LABELS,
   type LayerMeta,
+  type PenDetailSettings,
   type ToolInstance,
   type ToolKind,
 } from '../types';
@@ -14,7 +16,14 @@ export interface RedoBranch {
 
 export function defaultTools(): ToolInstance[] {
   return [
-    { id: newToolInstanceId(), kind: 'pen', name: 'ペン', size: 14, color: '#222222' },
+    {
+      id: newToolInstanceId(),
+      kind: 'pen',
+      name: 'ペン',
+      size: 14,
+      color: '#222222',
+      penSettings: { ...DEFAULT_PEN_DETAIL_SETTINGS },
+    },
     { id: newToolInstanceId(), kind: 'lasso', name: '選択', size: 14, color: '#222222' },
   ];
 }
@@ -58,6 +67,8 @@ export interface PaintState {
   setPenSize: (n: number) => void;
   /** アクティブインスタンスの色を変更 (インスタンスにも保存) */
   setPenColor: (c: string) => void;
+  /** アクティブなペンインスタンスの詳細設定を変更 */
+  setPenDetail: (key: keyof PenDetailSettings, value: number) => void;
   /** インスタンスを切り替え、記憶された色・太さを反映する */
   activateTool: (id: string) => void;
   addTool: (kind: ToolKind) => void;
@@ -112,6 +123,22 @@ export const useStore = create<PaintState>((set) => ({
       tools: s.tools.map((t) => (t.id === s.activeToolId ? { ...t, color: c } : t)),
     })),
 
+  setPenDetail: (key, value) =>
+    set((s) => ({
+      tools: s.tools.map((t) =>
+        t.id === s.activeToolId && t.kind === 'pen'
+          ? {
+              ...t,
+              penSettings: {
+                ...DEFAULT_PEN_DETAIL_SETTINGS,
+                ...t.penSettings,
+                [key]: Math.max(0, Math.min(100, Math.round(value))),
+              },
+            }
+          : t,
+      ),
+    })),
+
   activateTool: (id) =>
     set((s) => {
       const inst = s.tools.find((t) => t.id === id);
@@ -134,6 +161,9 @@ export const useStore = create<PaintState>((set) => ({
         name: count === 0 ? base : `${base} ${count + 1}`,
         size: s.penSize,
         color: s.penColor,
+        ...(kind === 'pen'
+          ? { penSettings: { ...DEFAULT_PEN_DETAIL_SETTINGS } }
+          : {}),
       };
       return {
         tools: [...s.tools, inst],

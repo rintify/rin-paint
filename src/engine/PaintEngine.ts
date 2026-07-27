@@ -3,6 +3,7 @@ import {
   ART_H,
   ART_W,
   DEFAULT_ADJUST,
+  normalizePenDetailSettings,
   setArtSize,
   TRANSPARENT,
   type LayerMeta,
@@ -66,13 +67,23 @@ interface PanDrag {
   lastY: number;
 }
 
+interface PendingPress {
+  pointerId: number;
+  start: StrokePoint;
+  latest: StrokePoint;
+  startClientX: number;
+  startClientY: number;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 function toBlobP(c: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) =>
     c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png'),
   );
 }
 
-const DOUBLE_TAP_MS = 350;
+const EYEDROPPER_HOLD_MS = 500;
+const EYEDROPPER_MOVE_TOLERANCE_PX = 12;
 
 export class PaintEngine {
   private layers: Layer[] = [];
@@ -108,7 +119,8 @@ export class PaintEngine {
   private raf = 0;
   private busy = false;
   private activePointer: number | null = null;
-  private lastTap: { t: number; x: number; y: number } | null = null;
+  /** 長押しスポイトか通常描画かが確定するまでの入力 */
+  private pendingPress: PendingPress | null = null;
   private loupe: Loupe | null = null;
 
   readonly view = new ViewController();
@@ -186,6 +198,7 @@ export class PaintEngine {
     this.touchPts.clear();
     this.gesture = null;
     this.panDrag = null;
+    this.clearPendingPress();
     this.main = null;
     this.mainCtx = null;
     this.overlayCtx = null;
@@ -228,6 +241,10 @@ export class PaintEngine {
         typeof t.name === 'string' &&
         typeof t.size === 'number' &&
         typeof t.color === 'string',
+    ).map((tool) =>
+      tool.kind === 'pen'
+        ? { ...tool, penSettings: normalizePenDetailSettings(tool.penSettings) }
+        : tool,
     );
     if (valid.length === 0) return;
     const st = useStore.getState();
@@ -395,31 +412,33 @@ export class PaintEngine {
     }
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (this.loupe) return;
-    const p = this.toPoint(e);
-    const now = performance.now();
-    const near =
-      this.lastTap &&
-      now - this.lastTap.t < DOUBLE_TAP_MS &&
-      Math.hypot(p.x - this.lastTap.x, p.y - this.lastTap.y) < 26 * this.uiScale();
-    if (near) {
-      // ダブルタップ → スポイト。1タップ目で打たれた点は取り消す
-      this.lastTap = null;
-      void this.revertTapIfAny();
-      this.loupe = {
-        x: p.x,
-        y: p.y,
-        pointerId: e.pointerId,
-        color: this.getPixel(p.x, p.y),
-      };
-      this.area?.setPointerCapture(e.pointerId);
-      e.preventDefault();
-      return;
-    }
-    this.lastTap = { t: now, x: p.x, y: p.y };
     if (this.busy || this.activePointer !== null) return;
+    const p = this.toPoint(e);
     this.activePointer = e.pointerId;
     this.area?.setPointerCapture(e.pointerId);
-    this.activeTool().onDown(p, e);
+    const pointerId = e.pointerId;
+    this.pendingPress = {
+      pointerId,
+      start: p,
+      latest: p,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      timer: setTimeout(() => {
+        const pending = this.pendingPress;
+        if (!pending || pending.pointerId !== pointerId || this.activePointer !== pointerId) {
+          return;
+        }
+        this.pendingPress = null;
+        this.activePointer = null;
+        const point = pending.latest;
+        this.loupe = {
+          x: point.x,
+          y: point.y,
+          pointerId,
+          color: this.getPixel(point.x, point.y),
+        };
+      }, EYEDROPPER_HOLD_MS),
+    };
     e.preventDefault();
   };
 
@@ -428,11 +447,14 @@ export class PaintEngine {
   /** 2本目の指が触れた → 描画をやめてパン/回転/拡縮ジェスチャへ */
   private beginGesture(e: PointerEvent): void {
     if (this.activePointer !== null && this.touchPts.has(this.activePointer)) {
-      this.activeTool().cancel?.();
+      if (this.pendingPress?.pointerId === this.activePointer) {
+        this.clearPendingPress();
+      } else {
+        this.activeTool().cancel?.();
+      }
       this.activePointer = null;
       this.requestRender();
     }
-    this.lastTap = null;
     this.loupe = null;
     const [[id1, p1], [id2, p2]] = [...this.touchPts.entries()];
     this.gesture = {
@@ -500,6 +522,18 @@ export class PaintEngine {
       return;
     }
     if (this.activePointer !== e.pointerId) return;
+    const pending = this.pendingPress;
+    if (pending && pending.pointerId === e.pointerId) {
+      pending.latest = this.toPoint(e);
+      const moved = Math.hypot(
+        e.clientX - pending.startClientX,
+        e.clientY - pending.startClientY,
+      );
+      if (moved <= EYEDROPPER_MOVE_TOLERANCE_PX) return;
+      clearTimeout(pending.timer);
+      this.pendingPress = null;
+      this.activeTool().onDown(pending.start, e);
+    }
     const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
     const events = coalesced.length > 0 ? coalesced : [e];
     const tool = this.activeTool();
@@ -526,6 +560,15 @@ export class PaintEngine {
     }
     if (this.activePointer !== e.pointerId) return;
     this.activePointer = null;
+    const pending = this.pendingPress;
+    if (pending && pending.pointerId === e.pointerId) {
+      clearTimeout(pending.timer);
+      this.pendingPress = null;
+      const tool = this.activeTool();
+      tool.onDown(pending.start, e);
+      tool.onUp(this.toPoint(e), e);
+      return;
+    }
     this.activeTool().onUp(this.toPoint(e), e);
   };
 
@@ -545,6 +588,10 @@ export class PaintEngine {
     }
     if (this.activePointer !== e.pointerId) return;
     this.activePointer = null;
+    if (this.pendingPress?.pointerId === e.pointerId) {
+      this.clearPendingPress();
+      return;
+    }
     this.activeTool().cancel?.();
     this.requestRender();
   };
@@ -582,6 +629,12 @@ export class PaintEngine {
   };
 
   // ---------------------------------------------------------------- eyedropper
+
+  private clearPendingPress(): void {
+    if (!this.pendingPress) return;
+    clearTimeout(this.pendingPress.timer);
+    this.pendingPress = null;
+  }
 
   /** アクティブレイヤーだけから色を拾う。アルファがほぼ0なら「透明」 */
   getPixel(x: number, y: number): string {
@@ -690,24 +743,6 @@ export class PaintEngine {
     node.tapCandidate = opts?.tapCandidate;
     this.bumpLayer(layer.id);
     this.committed();
-  }
-
-  /** 直前の操作が「短いタップ1回」なら取り消して履歴からも消す (ダブルタップスポイト用) */
-  private async revertTapIfAny(): Promise<void> {
-    const node = this.history.current;
-    if (!node.tapCandidate || node.children.length > 0 || node.op?.kind !== 'raster') return;
-    const removed = this.history.removeCurrentLeaf();
-    if (!removed || removed.op?.kind !== 'raster') return;
-    this.recorder.cancelPending();
-    await removed.ready;
-    const layer = this.rasterById(removed.op.layerId);
-    if (layer) {
-      await applyTiles(layer, removed.op.tiles, 'before');
-      this.bumpLayer(layer.id);
-    }
-    this.requestRender();
-    this.syncStore();
-    this.scheduleSave();
   }
 
   // ---------------------------------------------------------------- history

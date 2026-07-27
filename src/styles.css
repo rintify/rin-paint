@@ -284,6 +284,21 @@ input[type='range'] {
   color: #fff;
 }
 
+.pen-detail-dialog {
+  width: min(360px, calc(100vw - 32px));
+}
+
+.detail-slider-row {
+  display: grid;
+  grid-template-columns: 92px minmax(120px, 1fr) 32px;
+  align-items: center;
+  gap: 10px;
+}
+
+.detail-slider-row .num {
+  text-align: right;
+}
+
 .section {
   padding: 10px 14px;
   border-top: 1px solid var(--border);
@@ -305,6 +320,11 @@ input[type='range'] {
 
 .section-title-row .section-title {
   margin-bottom: 0;
+}
+
+.compact-btn {
+  padding: 3px 7px;
+  font-size: 11px;
 }
 
 /* tools */
