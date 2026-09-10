@@ -1,5 +1,5 @@
 import { openDB, type IDBPDatabase } from 'idb';
-import type { AdjustParams, BlendMode, LayerType, ToolInstance } from '../../types';
+import type { AdjustParams, BlendMode, LayerType, ShapeParams, ToolInstance } from '../../types';
 import type { PersistedHistory } from '../history/historyTree';
 import type { ViewState } from '../view';
 
@@ -10,11 +10,16 @@ export interface SavedLayer {
   opacity: number;
   blend: BlendMode;
   visible: boolean;
+  parentId: string | null;
+  childIds: string[];
   params?: AdjustParams;
+  shape?: ShapeParams;
   blob?: Blob;
 }
 
 export interface SavedProject {
+  version: 2;
+  rootLayerIds: string[];
   layers: SavedLayer[];
   activeLayerId: string;
   penColor: string;
@@ -68,8 +73,10 @@ function savedProjectBytes(project: SavedProject | undefined): number {
     if (!op) continue;
     if (op.kind === 'raster') {
       for (const tile of op.tiles) bytes += tile.before.size + tile.after.size;
-    } else if (op.kind === 'layerAdd' || op.kind === 'layerRemove') {
+    } else if (op.kind === 'layerAdd') {
       bytes += op.snapshot.blob?.size ?? 0;
+    } else if (op.kind === 'layerRemove') {
+      for (const snapshot of op.snapshots) bytes += snapshot.blob?.size ?? 0;
     } else if (op.kind === 'layerMerge') {
       for (const entry of [...op.before, ...op.after]) {
         bytes += entry.snapshot.blob?.size ?? 0;

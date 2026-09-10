@@ -2,12 +2,7 @@ import { useRef, useState, type ChangeEvent } from 'react';
 import { engine } from '../engine/PaintEngine';
 import { exportTimelapse } from '../engine/timelapse/exporter';
 import { useStore } from '../state/store';
-import {
-  MAX_ART_SIZE,
-  MIN_ART_SIZE,
-  TOOL_KIND_LABELS,
-  type ToolKind,
-} from '../types';
+import { MAX_ART_SIZE, MIN_ART_SIZE } from '../types';
 import { importReferenceImage } from '../referenceImage';
 
 async function startTimelapse(): Promise<void> {
@@ -23,8 +18,6 @@ async function startTimelapse(): Promise<void> {
     set({ exportProgress: null });
   }
 }
-
-const TOOL_KINDS: ToolKind[] = ['pen', 'line', 'rect', 'ellipse', 'lasso', 'blur'];
 
 function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
   const canvasW = useStore((s) => s.canvasW);
@@ -98,7 +91,6 @@ function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
 /** 入出力やツール追加などをまとめたドロップダウンメニュー */
 export function MainMenu() {
   const [open, setOpen] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
   const [sizeOpen, setSizeOpen] = useState(false);
   const progress = useStore((s) => s.exportProgress);
   const timelapseEnabled = useStore((s) => s.timelapseEnabled);
@@ -108,7 +100,6 @@ export function MainMenu() {
 
   const close = () => {
     setOpen(false);
-    setToolsOpen(false);
   };
 
   const onImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -149,24 +140,6 @@ export function MainMenu() {
         <>
           <div className="menu-backdrop" onClick={close} />
           <div className="menu-pop">
-            <button onClick={() => setToolsOpen((o) => !o)}>
-              ツールを追加 {toolsOpen ? '▾' : '▸'}
-            </button>
-            {toolsOpen && (
-              <div className="menu-sub">
-                {TOOL_KINDS.map((k) => (
-                  <button
-                    key={k}
-                    onClick={() => {
-                      engine.addToolInstance(k);
-                      close();
-                    }}
-                  >
-                    {TOOL_KIND_LABELS[k]}
-                  </button>
-                ))}
-              </div>
-            )}
             <button
               onClick={() => {
                 setSizeOpen(true);

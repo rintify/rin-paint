@@ -1,4 +1,4 @@
-import type { AdjustParams, BlendMode, LayerType } from '../../types';
+import type { AdjustParams, BlendMode, LayerType, ShapeParams } from '../../types';
 import type { TilePatch } from './tilePatch';
 
 /** レイヤー構造操作の undo/redo 用スナップショット */
@@ -9,7 +9,10 @@ export interface LayerSnapshot {
   opacity: number;
   blend: BlendMode;
   visible: boolean;
+  parentId: string | null;
+  childIds: string[];
   params?: AdjustParams;
+  shape?: ShapeParams;
   /** ラスター内容。作成直後は canvas、PNG エンコード完了後は blob に置き換わる */
   canvas?: HTMLCanvasElement;
   blob?: Blob;
@@ -20,23 +23,29 @@ export interface LayerProps {
   blend?: BlendMode;
   visible?: boolean;
   params?: AdjustParams;
+  shape?: ShapeParams;
 }
 
-export interface IndexedLayerSnapshot {
+export interface LayerLocation {
+  parentId: string | null;
   index: number;
+}
+
+export interface LocatedLayerSnapshot {
+  location: LayerLocation;
   snapshot: LayerSnapshot;
 }
 
 export type Op =
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
-  | { kind: 'layerAdd'; index: number; snapshot: LayerSnapshot }
-  | { kind: 'layerRemove'; index: number; snapshot: LayerSnapshot }
-  | { kind: 'layerMove'; from: number; to: number }
+  | { kind: 'layerAdd'; location: LayerLocation; snapshot: LayerSnapshot }
+  | { kind: 'layerRemove'; location: LayerLocation; snapshots: LayerSnapshot[] }
+  | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
   | {
       kind: 'layerMerge';
-      before: IndexedLayerSnapshot[];
-      after: IndexedLayerSnapshot[];
+      before: LocatedLayerSnapshot[];
+      after: LocatedLayerSnapshot[];
       beforeActiveId: string;
       afterActiveId: string;
     };
@@ -60,20 +69,20 @@ export interface PersistedLayerSnapshot
 
 export type PersistedOp =
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
-  | { kind: 'layerAdd'; index: number; snapshot: PersistedLayerSnapshot }
-  | { kind: 'layerRemove'; index: number; snapshot: PersistedLayerSnapshot }
-  | { kind: 'layerMove'; from: number; to: number }
+  | { kind: 'layerAdd'; location: LayerLocation; snapshot: PersistedLayerSnapshot }
+  | { kind: 'layerRemove'; location: LayerLocation; snapshots: PersistedLayerSnapshot[] }
+  | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
   | {
       kind: 'layerMerge';
-      before: { index: number; snapshot: PersistedLayerSnapshot }[];
-      after: { index: number; snapshot: PersistedLayerSnapshot }[];
+      before: { location: LayerLocation; snapshot: PersistedLayerSnapshot }[];
+      after: { location: LayerLocation; snapshot: PersistedLayerSnapshot }[];
       beforeActiveId: string;
       afterActiveId: string;
     };
 
 export interface PersistedHistory {
-  version: 1;
+  version: 2;
   rootId: number;
   currentId: number;
   nodes: {
@@ -136,10 +145,10 @@ export class HistoryTree {
         blob: value.blob ?? (canvas ? await canvasToBlob(canvas) : undefined),
       };
     };
-    const indexed = async (entries: IndexedLayerSnapshot[]) =>
+    const located = async (entries: LocatedLayerSnapshot[]) =>
       Promise.all(
         entries.map(async (entry) => ({
-          index: entry.index,
+          location: { ...entry.location },
           snapshot: await snapshot(entry.snapshot),
         })),
       );
@@ -151,8 +160,9 @@ export class HistoryTree {
         case 'raster':
           return { ...op, tiles: op.tiles.map((tile) => ({ ...tile })) };
         case 'layerAdd':
-        case 'layerRemove':
           return { ...op, snapshot: await snapshot(op.snapshot) };
+        case 'layerRemove':
+          return { ...op, snapshots: await Promise.all(op.snapshots.map(snapshot)) };
         case 'layerMove':
           return { ...op };
         case 'layerProps':
@@ -164,14 +174,14 @@ export class HistoryTree {
         case 'layerMerge':
           return {
             ...op,
-            before: await indexed(op.before),
-            after: await indexed(op.after),
+            before: await located(op.before),
+            after: await located(op.after),
           };
       }
     };
 
     return {
-      version: 1,
+      version: 2,
       rootId,
       currentId,
       nodes: await Promise.all(
@@ -191,7 +201,7 @@ export class HistoryTree {
   restore(value: unknown): boolean {
     if (!value || typeof value !== 'object') return false;
     const saved = value as Partial<PersistedHistory>;
-    if (saved.version !== 1 || !Array.isArray(saved.nodes) || saved.nodes.length === 0) {
+    if (saved.version !== 2 || !Array.isArray(saved.nodes) || saved.nodes.length === 0) {
       return false;
     }
     try {
@@ -341,9 +351,10 @@ export class HistoryTree {
           0,
         );
       }
-      if (op.kind === 'layerAdd' || op.kind === 'layerRemove') {
+      if (op.kind === 'layerAdd') {
         return snapshotBytes(op.snapshot);
       }
+      if (op.kind === 'layerRemove') return op.snapshots.reduce((sum, snapshot) => sum + snapshotBytes(snapshot), 0);
       if (op.kind === 'layerMerge') {
         return [...op.before, ...op.after].reduce(
           (sum, entry) => sum + snapshotBytes(entry.snapshot),

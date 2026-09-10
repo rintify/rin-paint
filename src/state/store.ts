@@ -86,6 +86,7 @@ export interface PaintState {
   activateTool: (id: string) => void;
   addTool: (kind: ToolKind) => void;
   removeTool: (id: string) => void;
+  reorderTools: (from: number, to: number) => void;
 }
 
 const initialTools = defaultTools();
@@ -207,5 +208,14 @@ export const useStore = create<PaintState>((set) => ({
         penSize: next.size,
         penColor: next.color,
       };
+    }),
+
+  reorderTools: (from, to) =>
+    set((s) => {
+      if (from < 0 || to < 0 || from >= s.tools.length || to >= s.tools.length || from === to) return s;
+      const tools = [...s.tools];
+      const [tool] = tools.splice(from, 1);
+      tools.splice(to, 0, tool);
+      return { tools };
     }),
 }));

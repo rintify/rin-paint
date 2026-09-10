@@ -101,7 +101,41 @@ export const DEFAULT_ADJUST: AdjustParams = {
   saturation: 100,
 };
 
-export type LayerType = 'raster' | 'adjust';
+export type ShapeKind = 'line' | 'rect' | 'ellipse';
+
+export interface LineShapeParams {
+  kind: 'line';
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  color: string;
+  width: number;
+}
+
+export interface RectShapeParams {
+  kind: 'rect';
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color: string;
+  strokeWidth: number;
+}
+
+export interface EllipseShapeParams {
+  kind: 'ellipse';
+  cx: number;
+  cy: number;
+  rx: number;
+  ry: number;
+  color: string;
+  strokeWidth: number;
+}
+
+export type ShapeParams = LineShapeParams | RectShapeParams | EllipseShapeParams;
+
+export type LayerType = 'raster' | 'adjust' | 'shape';
 
 /** React 側に渡すレイヤーの読み取り専用メタデータ */
 export interface LayerMeta {
@@ -111,7 +145,10 @@ export interface LayerMeta {
   opacity: number;
   blend: BlendMode;
   visible: boolean;
+  parentId: string | null;
+  childIds: string[];
   params?: AdjustParams;
+  shape?: ShapeParams;
   /** ラスター内容が変わるたびに増える (サムネイル再描画用) */
   version: number;
 }

@@ -4,9 +4,15 @@ import {
   DEFAULT_ADJUST,
   type AdjustParams,
   type BlendMode,
+  type ShapeParams,
 } from '../types';
 
-export interface RasterLayer {
+interface LayerTreeFields {
+  parentId: string | null;
+  childIds: string[];
+}
+
+export interface RasterLayer extends LayerTreeFields {
   id: string;
   type: 'raster';
   name: string;
@@ -17,7 +23,7 @@ export interface RasterLayer {
   visible: boolean;
 }
 
-export interface AdjustLayer {
+export interface AdjustLayer extends LayerTreeFields {
   id: string;
   type: 'adjust';
   name: string;
@@ -27,7 +33,17 @@ export interface AdjustLayer {
   visible: boolean;
 }
 
-export type Layer = RasterLayer | AdjustLayer;
+export interface ShapeLayer extends LayerTreeFields {
+  id: string;
+  type: 'shape';
+  name: string;
+  shape: ShapeParams;
+  opacity: number;
+  blend: BlendMode;
+  visible: boolean;
+}
+
+export type Layer = RasterLayer | AdjustLayer | ShapeLayer;
 
 let idCounter = 0;
 export function newLayerId(): string {
@@ -53,6 +69,8 @@ export function createRasterLayer(name: string, id = newLayerId()): RasterLayer 
     opacity: 1,
     blend: 'source-over',
     visible: true,
+    parentId: null,
+    childIds: [],
   };
 }
 
@@ -65,6 +83,26 @@ export function createAdjustLayer(name: string, id = newLayerId()): AdjustLayer 
     opacity: 1,
     blend: 'source-over',
     visible: true,
+    parentId: null,
+    childIds: [],
+  };
+}
+
+export function createShapeLayer(
+  name: string,
+  shape: ShapeParams,
+  id = newLayerId(),
+): ShapeLayer {
+  return {
+    id,
+    type: 'shape',
+    name,
+    shape,
+    opacity: 1,
+    blend: 'source-over',
+    visible: true,
+    parentId: null,
+    childIds: [],
   };
 }
 

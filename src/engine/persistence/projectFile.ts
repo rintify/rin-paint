@@ -1,4 +1,4 @@
-import type { AdjustParams, BlendMode, LayerType, ToolInstance } from '../../types';
+import type { AdjustParams, BlendMode, LayerType, ShapeParams, ToolInstance } from '../../types';
 
 export interface ProjectFileLayer {
   id: string;
@@ -7,14 +7,18 @@ export interface ProjectFileLayer {
   opacity: number;
   blend: BlendMode;
   visible: boolean;
+  parentId: string | null;
+  childIds: string[];
   params?: AdjustParams;
+  shape?: ShapeParams;
   /** ラスター内容の PNG data URL */
   png?: string;
 }
 
 export interface ProjectFile {
   app: 'rin-paint';
-  version: 1;
+  version: 2;
+  rootLayerIds: string[];
   activeLayerId: string;
   penColor: string;
   penSize: number;
@@ -42,7 +46,7 @@ export async function dataURLToBlob(url: string): Promise<Blob> {
 
 export function parseProjectFile(text: string): ProjectFile {
   const data = JSON.parse(text) as ProjectFile;
-  if (data?.app !== 'rin-paint' || !Array.isArray(data.layers)) {
+  if (data?.app !== 'rin-paint' || data.version !== 2 || !Array.isArray(data.layers) || !Array.isArray(data.rootLayerIds)) {
     throw new Error('rin-paint のプロジェクトファイルではありません');
   }
   return data;

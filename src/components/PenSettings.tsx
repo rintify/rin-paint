@@ -35,7 +35,7 @@ export function PenSettings() {
       <div className="section">
         <div className="section-title-row">
           <div className="section-title">
-            {kind === 'blur' ? 'ぼかしの太さ' : 'ペンの太さ'}
+            {kind === 'blur' ? 'ぼかしの太さ' : kind === 'line' || kind === 'rect' || kind === 'ellipse' ? '線の太さ' : 'ペンの太さ'}
           </div>
           {kind === 'pen' && (
             <button

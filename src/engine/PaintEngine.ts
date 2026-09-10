@@ -7,6 +7,7 @@ import {
   setArtSize,
   TRANSPARENT,
   type LayerMeta,
+  type ShapeParams,
   type StrokePoint,
   type ToolInstance,
   type ToolKind,
@@ -14,7 +15,8 @@ import {
 import { checkerPattern, rectValid, type DirtyRect } from './brush';
 import {
   HistoryTree,
-  type IndexedLayerSnapshot,
+  type LayerLocation,
+  type LocatedLayerSnapshot,
   type LayerProps,
   type LayerSnapshot,
   type Op,
@@ -24,10 +26,14 @@ import {
   buildFilter,
   createAdjustLayer,
   createRasterLayer,
+  createShapeLayer,
   makeCanvas,
   type Layer,
   type RasterLayer,
+  type ShapeLayer,
 } from './layers';
+import { drawShape, shapeBounds, translateShape } from './shapes';
+import { canReparent, closestRasterOrRoot, structuralLowerId, validateLayerTree } from './layerTree';
 import {
   getPersistenceUsage,
   loadProject,
@@ -83,6 +89,13 @@ interface PendingPress {
   timer: ReturnType<typeof setTimeout>;
 }
 
+interface ShapeEdit {
+  layerId: string;
+  mode: 'move' | 'start' | 'end' | 'nw' | 'ne' | 'sw' | 'se';
+  start: StrokePoint;
+  before: ShapeParams;
+}
+
 function toBlobP(c: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) =>
     c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png'),
@@ -94,7 +107,9 @@ const EYEDROPPER_MOVE_TOLERANCE_PX = 12;
 
 export class PaintEngine {
   private layers: Layer[] = [];
+  private rootLayerIds: string[] = [];
   private activeLayerId = '';
+  private shapeEdit: ShapeEdit | null = null;
   private versions = new Map<string, number>();
   private layerCounter = 0;
   private adjustCounter = 0;
@@ -108,6 +123,9 @@ export class PaintEngine {
   /** 調整レイヤー適用用の作業キャンバス */
   private tmp = makeCanvas();
   private tmpCtx = this.tmp.getContext('2d')!;
+  /** 透明図形を直親ラスターだけへ非破壊で反映する作業キャンバス */
+  private shapeTmp = makeCanvas();
+  private shapeTmpCtx = this.shapeTmp.getContext('2d')!;
 
   private history = new HistoryTree();
   private recorder = new TimelapseRecorder(this, () => this.scheduleStorageRefresh());
@@ -246,7 +264,7 @@ export class PaintEngine {
 
   /** ART サイズ変更後に作業キャンバスを追従させる */
   private syncWorkCanvases(): void {
-    for (const c of [this.scratch, this.tmp]) {
+    for (const c of [this.scratch, this.tmp, this.shapeTmp]) {
       if (c.width !== ART_W || c.height !== ART_H) {
         c.width = ART_W;
         c.height = ART_H;
@@ -290,7 +308,7 @@ export class PaintEngine {
     }
     try {
       const proj = await loadProject();
-      if (proj && proj.layers.length > 0) {
+      if (proj?.version === 2 && proj.layers.length > 0) {
         if (proj.width && proj.height) setArtSize(proj.width, proj.height);
         this.syncWorkCanvases();
         for (const sl of proj.layers) {
@@ -304,18 +322,32 @@ export class PaintEngine {
               l.ctx.drawImage(bmp, 0, 0);
               bmp.close();
             }
+            l.parentId = sl.parentId;
+            l.childIds = [...sl.childIds];
             this.layers.push(l);
             this.layerCounter++;
-          } else {
+          } else if (sl.type === 'adjust') {
             const l = createAdjustLayer(sl.name, sl.id);
             l.opacity = sl.opacity;
             l.blend = sl.blend;
             l.visible = sl.visible;
             l.params = { ...(sl.params ?? DEFAULT_ADJUST) };
+            l.parentId = sl.parentId;
+            l.childIds = [...sl.childIds];
             this.layers.push(l);
             this.adjustCounter++;
+          } else if (sl.shape) {
+            const l = createShapeLayer(sl.name, { ...sl.shape }, sl.id);
+            l.opacity = sl.opacity;
+            l.blend = sl.blend;
+            l.visible = sl.visible;
+            l.parentId = sl.parentId;
+            l.childIds = [...sl.childIds];
+            this.layers.push(l);
           }
         }
+        this.rootLayerIds = [...proj.rootLayerIds];
+        if (!validateLayerTree(this.rootLayerIds, this.layers)) throw new Error('invalid layer tree');
         this.activeLayerId = proj.activeLayerId;
         useStore.getState().set({
           penColor: proj.penColor,
@@ -335,6 +367,7 @@ export class PaintEngine {
     if (this.layers.length === 0) {
       const l = createRasterLayer('レイヤー 1');
       this.layers.push(l);
+      this.rootLayerIds = [l.id];
       this.activeLayerId = l.id;
       this.layerCounter = 1;
     }
@@ -379,14 +412,36 @@ export class PaintEngine {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, ART_W, ART_H);
     const tool = this.activeTool();
-    for (const l of this.layers) {
-      if (!l.visible) continue;
-      if (l.type === 'raster') {
+    const render = (id: string) => {
+      const l = this.byId(id);
+      if (!l) return;
+      if (l.visible && l.type === 'raster') {
+        let source: HTMLCanvasElement = l.canvas;
+        const erasers = l.childIds
+          .map((childId) => this.shapeById(childId))
+          .filter((child): child is ShapeLayer => !!child && child.visible && child.shape.color === TRANSPARENT);
+        if (erasers.length) {
+          this.shapeTmpCtx.save();
+          this.shapeTmpCtx.clearRect(0, 0, ART_W, ART_H);
+          this.shapeTmpCtx.globalAlpha = 1;
+          this.shapeTmpCtx.globalCompositeOperation = 'source-over';
+          this.shapeTmpCtx.drawImage(l.canvas, 0, 0);
+          for (const eraser of erasers) {
+            this.shapeTmpCtx.globalAlpha = eraser.opacity;
+            drawShape(this.shapeTmpCtx, eraser.shape);
+          }
+          this.shapeTmpCtx.restore();
+          source = this.shapeTmp;
+        }
         ctx.globalAlpha = l.opacity;
         ctx.globalCompositeOperation = l.blend;
-        ctx.drawImage(l.canvas, 0, 0);
+        ctx.drawImage(source, 0, 0);
         if (l.id === this.activeLayerId) tool.drawAboveLayer?.(ctx);
-      } else {
+      } else if (l.visible && l.type === 'shape' && l.shape.color !== TRANSPARENT) {
+        ctx.globalAlpha = l.opacity;
+        ctx.globalCompositeOperation = l.blend;
+        drawShape(ctx, l.shape);
+      } else if (l.visible && l.type === 'adjust') {
         this.tmpCtx.save();
         this.tmpCtx.clearRect(0, 0, ART_W, ART_H);
         this.tmpCtx.filter = buildFilter(l.params);
@@ -396,6 +451,10 @@ export class PaintEngine {
         ctx.globalCompositeOperation = 'source-over';
         ctx.drawImage(this.tmp, 0, 0);
       }
+      for (const childId of l.childIds) render(childId);
+    };
+    for (const id of this.rootLayerIds) {
+      render(id);
     }
     ctx.restore();
     this.dirty = false;
@@ -406,6 +465,7 @@ export class PaintEngine {
     if (!ctx) return;
     ctx.clearRect(0, 0, ART_W, ART_H);
     this.activeTool().drawOverlay?.(ctx);
+    this.drawActiveShapeHandles(ctx);
     if (this.loupe) this.drawLoupe(ctx);
   }
 
@@ -571,7 +631,11 @@ export class PaintEngine {
       if (moved <= EYEDROPPER_MOVE_TOLERANCE_PX) return;
       clearTimeout(pending.timer);
       this.pendingPress = null;
-      this.activeTool().onDown(pending.start, e);
+      if (!this.beginShapeEdit(pending.start, e)) this.activeTool().onDown(pending.start, e);
+    }
+    if (this.shapeEdit) {
+      this.updateShapeEdit(this.toPoint(e), e);
+      return;
     }
     const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
     const events = coalesced.length > 0 ? coalesced : [e];
@@ -599,13 +663,20 @@ export class PaintEngine {
     }
     if (this.activePointer !== e.pointerId) return;
     this.activePointer = null;
+    if (this.shapeEdit) {
+      this.finishShapeEdit(this.toPoint(e));
+      return;
+    }
     const pending = this.pendingPress;
     if (pending && pending.pointerId === e.pointerId) {
       clearTimeout(pending.timer);
       this.pendingPress = null;
       const tool = this.activeTool();
-      tool.onDown(pending.start, e);
-      tool.onUp(this.toPoint(e), e);
+      if (this.beginShapeEdit(pending.start, e)) this.finishShapeEdit(this.toPoint(e));
+      else {
+        tool.onDown(pending.start, e);
+        tool.onUp(this.toPoint(e), e);
+      }
       return;
     }
     this.activeTool().onUp(this.toPoint(e), e);
@@ -629,6 +700,10 @@ export class PaintEngine {
     this.activePointer = null;
     if (this.pendingPress?.pointerId === e.pointerId) {
       this.clearPendingPress();
+      return;
+    }
+    if (this.shapeEdit) {
+      this.cancelShapeEdit();
       return;
     }
     this.activeTool().cancel?.();
@@ -845,19 +920,24 @@ export class PaintEngine {
         break;
       }
       case 'layerAdd': {
-        if (dir === 'redo') await this.restoreLayer(op.snapshot, op.index);
+        if (dir === 'redo') await this.restoreLayer(op.snapshot, op.location);
         else this.removeLayerInternal(op.snapshot.id);
         break;
       }
       case 'layerRemove': {
-        if (dir === 'undo') await this.restoreLayer(op.snapshot, op.index);
-        else this.removeLayerInternal(op.snapshot.id);
+        if (dir === 'undo') {
+          const entries = op.snapshots.map((snapshot) => ({
+            location: snapshot.id === op.snapshots[0].id ? op.location : { parentId: snapshot.parentId, index: 0 },
+            snapshot,
+          }));
+          await this.restoreEntries(entries);
+        } else this.removeLayerInternal(op.snapshots[0].id);
         break;
       }
       case 'layerMove': {
-        const [from, to] = dir === 'redo' ? [op.from, op.to] : [op.to, op.from];
-        const [l] = this.layers.splice(from, 1);
-        this.layers.splice(to, 0, l);
+        const to = dir === 'redo' ? op.to : op.from;
+        this.detachLayer(op.layerId);
+        this.insertAt(op.layerId, to);
         break;
       }
       case 'layerProps': {
@@ -868,11 +948,8 @@ export class PaintEngine {
       case 'layerMerge': {
         const remove = dir === 'undo' ? op.after : op.before;
         const restore = dir === 'undo' ? op.before : op.after;
-        const removeIds = new Set(remove.map((entry) => entry.snapshot.id));
-        this.layers = this.layers.filter((layer) => !removeIds.has(layer.id));
-        for (const entry of [...restore].sort((a, b) => a.index - b.index)) {
-          await this.restoreLayer(entry.snapshot, entry.index);
-        }
+        for (const entry of remove) this.removeLayerExact(entry.snapshot.id);
+        await this.restoreEntries(restore);
         this.activeLayerId =
           dir === 'undo' ? op.beforeActiveId : op.afterActiveId;
         break;
@@ -924,9 +1001,59 @@ export class PaintEngine {
     return l && l.type === 'raster' ? l : null;
   }
 
+  private shapeById(id: string): ShapeLayer | null {
+    const l = this.byId(id);
+    return l && l.type === 'shape' ? l : null;
+  }
+
+  private siblingIds(parentId: string | null): string[] {
+    if (parentId === null) return this.rootLayerIds;
+    return this.byId(parentId)?.childIds ?? [];
+  }
+
+  private locationOf(id: string): LayerLocation | null {
+    const layer = this.byId(id);
+    if (!layer) return null;
+    const siblings = this.siblingIds(layer.parentId);
+    const index = siblings.indexOf(id);
+    return index < 0 ? null : { parentId: layer.parentId, index };
+  }
+
+  private insertAt(id: string, location: LayerLocation): void {
+    const layer = this.byId(id);
+    if (!layer) return;
+    layer.parentId = location.parentId;
+    const siblings = this.siblingIds(location.parentId);
+    siblings.splice(Math.max(0, Math.min(location.index, siblings.length)), 0, id);
+  }
+
+  private detachLayer(id: string): LayerLocation | null {
+    const location = this.locationOf(id);
+    if (!location) return null;
+    this.siblingIds(location.parentId).splice(location.index, 1);
+    return location;
+  }
+
+  private descendantIds(id: string): string[] {
+    const result: string[] = [];
+    const visit = (layerId: string) => {
+      const layer = this.byId(layerId);
+      if (!layer) return;
+      result.push(layerId);
+      for (const child of layer.childIds) visit(child);
+    };
+    visit(id);
+    return result;
+  }
+
   getLayerCanvas(id: string): HTMLCanvasElement | null {
     const l = this.byId(id);
     return l && l.type === 'raster' ? l.canvas : null;
+  }
+
+  getShape(id: string): ShapeParams | null {
+    const layer = this.shapeById(id);
+    return layer ? { ...layer.shape } : null;
   }
 
   bumpLayer(id: string): void {
@@ -946,9 +1073,13 @@ export class PaintEngine {
       opacity: l.opacity,
       blend: l.blend,
       visible: l.visible,
+      parentId: l.parentId,
+      childIds: [...l.childIds],
     };
     if (l.type === 'adjust') {
       snap.params = { ...l.params };
+    } else if (l.type === 'shape') {
+      snap.shape = { ...l.shape };
     } else if (withContent) {
       const copy = makeCanvas();
       copy.getContext('2d')!.drawImage(l.canvas, 0, 0);
@@ -965,7 +1096,7 @@ export class PaintEngine {
     return snap;
   }
 
-  private async restoreLayer(snap: LayerSnapshot, index: number): Promise<void> {
+  private async restoreLayer(snap: LayerSnapshot, location?: LayerLocation): Promise<void> {
     let layer: Layer;
     if (snap.type === 'raster') {
       const l = createRasterLayer(snap.name, snap.id);
@@ -977,26 +1108,42 @@ export class PaintEngine {
         bmp.close();
       }
       layer = l;
-    } else {
+    } else if (snap.type === 'adjust') {
       const l = createAdjustLayer(snap.name, snap.id);
       l.params = { ...(snap.params ?? DEFAULT_ADJUST) };
       layer = l;
+    } else {
+      layer = createShapeLayer(snap.name, { ...snap.shape! }, snap.id);
     }
     layer.opacity = snap.opacity;
     layer.blend = snap.blend;
     layer.visible = snap.visible;
-    this.layers.splice(Math.min(index, this.layers.length), 0, layer);
+    layer.parentId = snap.parentId;
+    layer.childIds = [...snap.childIds];
+    this.layers.push(layer);
+    if (location) this.insertAt(layer.id, location);
     this.bumpLayer(layer.id);
   }
 
   private removeLayerInternal(id: string): void {
-    const i = this.layers.findIndex((l) => l.id === id);
-    if (i >= 0) this.layers.splice(i, 1);
+    this.detachLayer(id);
+    const ids = new Set(this.descendantIds(id));
+    this.layers = this.layers.filter((l) => !ids.has(l.id));
   }
 
-  private activeIndex(): number {
-    const i = this.layers.findIndex((l) => l.id === this.activeLayerId);
-    return i < 0 ? this.layers.length - 1 : i;
+  private removeLayerExact(id: string): void {
+    this.detachLayer(id);
+    this.layers = this.layers.filter((layer) => layer.id !== id);
+  }
+
+  private async restoreEntries(entries: LocatedLayerSnapshot[]): Promise<void> {
+    const ids = new Set(entries.map((entry) => entry.snapshot.id));
+    for (const entry of entries) await this.restoreLayer(entry.snapshot);
+    for (const entry of [...entries].sort((a, b) => a.location.index - b.location.index)) {
+      if (!entry.location.parentId || !ids.has(entry.location.parentId)) {
+        this.insertAt(entry.snapshot.id, entry.location);
+      }
+    }
   }
 
   private fixActive(): void {
@@ -1012,12 +1159,16 @@ export class PaintEngine {
   addRasterLayer(): void {
     if (this.busy) return;
     this.finishFloating();
-    const index = this.activeIndex() + 1;
+    const activeLocation = this.locationOf(this.activeLayerId);
+    const location = activeLocation
+      ? { ...activeLocation, index: activeLocation.index + 1 }
+      : { parentId: null, index: this.rootLayerIds.length };
     const layer = createRasterLayer(`レイヤー ${++this.layerCounter}`);
-    this.layers.splice(index, 0, layer);
+    this.layers.push(layer);
+    this.insertAt(layer.id, location);
     this.activeLayerId = layer.id;
     this.history.push(
-      { kind: 'layerAdd', index, snapshot: this.snapshotLayer(layer, false) },
+      { kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, false) },
       'レイヤー追加',
     );
     this.committed();
@@ -1026,131 +1177,184 @@ export class PaintEngine {
   addAdjustLayer(): void {
     if (this.busy) return;
     this.finishFloating();
-    const index = this.activeIndex() + 1;
+    const activeLocation = this.locationOf(this.activeLayerId);
+    const location = activeLocation
+      ? { ...activeLocation, index: activeLocation.index + 1 }
+      : { parentId: null, index: this.rootLayerIds.length };
     const layer = createAdjustLayer(`色調補正 ${++this.adjustCounter}`);
-    this.layers.splice(index, 0, layer);
+    this.layers.push(layer);
+    this.insertAt(layer.id, location);
     this.activeLayerId = layer.id;
     this.history.push(
-      { kind: 'layerAdd', index, snapshot: this.snapshotLayer(layer, false) },
+      { kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, false) },
       '補正レイヤー追加',
     );
     this.committed();
   }
 
+  addShapeLayer(shape: ShapeParams): void {
+    if (this.busy) return;
+    const parentId = closestRasterOrRoot(this.layers, this.activeLayerId);
+    const siblings = this.siblingIds(parentId);
+    const location: LayerLocation = { parentId, index: siblings.length };
+    const names = { line: '直線', rect: '四角形', ellipse: '楕円' } as const;
+    const layer = createShapeLayer(names[shape.kind], shape);
+    this.layers.push(layer);
+    this.insertAt(layer.id, location);
+    this.activeLayerId = layer.id;
+    this.history.push({ kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, false) }, '図形を追加');
+    useStore.getState().pushColor(shape.color);
+    this.committed();
+  }
+
+  layerChildren(id: string): string[] {
+    return [...(this.byId(id)?.childIds ?? [])];
+  }
+
+  layerRootIds(): string[] {
+    return [...this.rootLayerIds];
+  }
+
+  canMoveLayer(id: string, parentId: string | null): boolean {
+    return canReparent(this.layers, id, parentId);
+  }
+
+  moveLayerAsTopChild(id: string, parentId: string): void {
+    const parent = this.byId(parentId);
+    if (parent && this.canMoveLayer(id, parentId)) this.moveLayer(id, { parentId, index: parent.childIds.length });
+  }
+
+  moveLayerOut(id: string): void {
+    const layer = this.byId(id);
+    if (!layer?.parentId) return;
+    const parentLocation = this.locationOf(layer.parentId);
+    if (parentLocation) this.moveLayer(id, { parentId: parentLocation.parentId, index: parentLocation.index + 1 });
+  }
+
   removeLayer(id: string): void {
     if (this.busy) return;
     this.finishFloating();
-    const index = this.layers.findIndex((l) => l.id === id);
-    if (index < 0) return;
-    const layer = this.layers[index];
+    const location = this.locationOf(id);
+    if (!location) return;
+    const ids = this.descendantIds(id);
+    const removeIds = new Set(ids);
     const rasterCount = this.layers.filter((l) => l.type === 'raster').length;
-    if (layer.type === 'raster' && rasterCount <= 1) return;
-    const snapshot = this.snapshotLayer(layer, true);
-    this.layers.splice(index, 1);
-    this.history.push({ kind: 'layerRemove', index, snapshot }, 'レイヤー削除');
+    const removedRasterCount = this.layers.filter((l) => removeIds.has(l.id) && l.type === 'raster').length;
+    if (rasterCount - removedRasterCount < 1) return;
+    const snapshots = ids.map((layerId) => this.snapshotLayer(this.byId(layerId)!, true));
+    this.removeLayerInternal(id);
+    this.history.push({ kind: 'layerRemove', location, snapshots }, 'レイヤー削除');
     this.fixActive();
     this.committed();
   }
 
-  moveLayer(id: string, delta: 1 | -1): void {
+  moveLayer(id: string, to: LayerLocation): void {
     if (this.busy) return;
-    const from = this.layers.findIndex((l) => l.id === id);
-    const to = from + delta;
-    if (from < 0 || to < 0 || to >= this.layers.length) return;
-    const [l] = this.layers.splice(from, 1);
-    this.layers.splice(to, 0, l);
-    this.history.push({ kind: 'layerMove', from, to }, 'レイヤー並べ替え');
+    const from = this.locationOf(id);
+    if (!from || !canReparent(this.layers, id, to.parentId)) return;
+    this.detachLayer(id);
+    const adjusted = { ...to };
+    if (from.parentId === to.parentId && from.index < to.index) adjusted.index--;
+    this.insertAt(id, adjusted);
+    this.history.push({ kind: 'layerMove', layerId: id, from, to: adjusted }, 'レイヤー並べ替え');
     this.committed();
   }
 
   private stableLayerEntries(
-    layers: { layer: Layer; index: number }[],
-  ): IndexedLayerSnapshot[] {
-    return layers.map(({ layer, index }) => ({
-      index,
+    layers: Layer[],
+  ): LocatedLayerSnapshot[] {
+    return layers.map((layer) => ({
+      location: this.locationOf(layer.id)!,
       snapshot: this.snapshotLayer(layer, layer.type === 'raster', true),
     }));
   }
 
-  private drawLayerOnto(
-    ctx: CanvasRenderingContext2D,
-    layer: RasterLayer,
-  ): void {
-    if (!layer.visible) return;
-    ctx.save();
-    ctx.globalAlpha = layer.opacity;
-    ctx.globalCompositeOperation = layer.blend;
-    ctx.drawImage(layer.canvas, 0, 0);
-    ctx.restore();
+  private mergeTarget(layer: Layer): RasterLayer | null {
+    const targetId = structuralLowerId(layer, this.rootLayerIds, this.layers);
+    return targetId ? this.rasterById(targetId) : null;
   }
 
-  /** 選択中のラスターレイヤーを、直下のラスターレイヤーへ統合する。 */
+  canMergeLayerDown(id = this.activeLayerId): boolean {
+    const layer = this.byId(id);
+    return !!layer && !!this.mergeTarget(layer);
+  }
+
+  canTransferShape(id = this.activeLayerId): boolean {
+    const layer = this.shapeById(id);
+    return !!layer && layer.childIds.length === 0 && !!layer.parentId && !!this.rasterById(layer.parentId);
+  }
+
+  private bakeLayerOnto(target: RasterLayer, source: Layer): void {
+    if (source.type === 'adjust') {
+      this.tmpCtx.save();
+      this.tmpCtx.clearRect(0, 0, ART_W, ART_H);
+      this.tmpCtx.filter = buildFilter(source.params);
+      this.tmpCtx.drawImage(target.canvas, 0, 0);
+      this.tmpCtx.restore();
+      target.ctx.save();
+      target.ctx.globalAlpha = source.opacity;
+      target.ctx.globalCompositeOperation = 'source-over';
+      target.ctx.drawImage(this.tmp, 0, 0);
+      target.ctx.restore();
+    } else {
+      target.ctx.save();
+      target.ctx.globalAlpha = source.opacity;
+      target.ctx.globalCompositeOperation = source.blend;
+      if (source.type === 'raster') target.ctx.drawImage(source.canvas, 0, 0);
+      else drawShape(target.ctx, source.shape);
+      target.ctx.restore();
+    }
+  }
+
+  /** 選択中の葉レイヤーを、構造上の直下のラスターへ統合する。 */
   mergeLayerDown(): void {
     if (this.busy) return;
     this.finishFloating();
-    const upperIndex = this.layers.findIndex((l) => l.id === this.activeLayerId);
-    const lowerIndex = upperIndex - 1;
-    if (lowerIndex < 0) return;
-    const upper = this.layers[upperIndex];
-    const lower = this.layers[lowerIndex];
-    if (upper.type !== 'raster' || lower.type !== 'raster') return;
+    const upper = this.byId(this.activeLayerId);
+    if (!upper) return;
+    const lower = this.mergeTarget(upper);
+    if (!lower) return;
 
     const beforeActiveId = this.activeLayerId;
-    const before = this.stableLayerEntries([
-      { layer: lower, index: lowerIndex },
-      { layer: upper, index: upperIndex },
-    ]);
-    const merged = createRasterLayer(lower.name);
-    this.drawLayerOnto(merged.ctx, lower);
-    this.drawLayerOnto(merged.ctx, upper);
-    this.layers.splice(lowerIndex, 2, merged);
-    this.activeLayerId = merged.id;
-    this.bumpLayer(merged.id);
-    const after = this.stableLayerEntries([{ layer: merged, index: lowerIndex }]);
+    const before = this.stableLayerEntries([lower, upper]);
+    this.bakeLayerOnto(lower, upper);
+    this.removeLayerInternal(upper.id);
+    this.activeLayerId = lower.id;
+    this.bumpLayer(lower.id);
+    const after = this.stableLayerEntries([lower]);
     this.history.push(
       {
         kind: 'layerMerge',
         before,
         after,
         beforeActiveId,
-        afterActiveId: merged.id,
+        afterActiveId: lower.id,
       },
       '下のレイヤーと統合',
     );
     this.committed();
   }
 
-  /** 現在見えている全レイヤーを、画面表示どおりの1枚へ統合する。 */
-  mergeVisibleLayers(): void {
-    if (this.busy) return;
-    this.finishFloating();
-    const visible = this.layers
-      .map((layer, index) => ({ layer, index }))
-      .filter(({ layer }) => layer.visible);
-    if (visible.length < 2) return;
-
-    this.ensureComposited();
-    if (!this.main) return;
-    const beforeActiveId = this.activeLayerId;
-    const before = this.stableLayerEntries(visible);
-    const insertAt = visible[0].index;
-    const merged = createRasterLayer('表示レイヤー統合');
-    merged.ctx.drawImage(this.main, 0, 0);
-    const removeIds = new Set(visible.map(({ layer }) => layer.id));
-    this.layers = this.layers.filter((layer) => !removeIds.has(layer.id));
-    this.layers.splice(Math.min(insertAt, this.layers.length), 0, merged);
-    this.activeLayerId = merged.id;
-    this.bumpLayer(merged.id);
-    const after = this.stableLayerEntries([{ layer: merged, index: insertAt }]);
+  transferShapeLayer(): void {
+    if (!this.canTransferShape()) return;
+    const shape = this.shapeById(this.activeLayerId)!;
+    const parent = this.rasterById(shape.parentId!)!;
+    const beforeActiveId = shape.id;
+    const before = this.stableLayerEntries([parent, shape]);
+    this.bakeLayerOnto(parent, shape);
+    this.removeLayerInternal(shape.id);
+    this.activeLayerId = parent.id;
+    this.bumpLayer(parent.id);
+    const after = this.stableLayerEntries([parent]);
     this.history.push(
       {
         kind: 'layerMerge',
         before,
         after,
         beforeActiveId,
-        afterActiveId: merged.id,
+        afterActiveId: parent.id,
       },
-      '表示レイヤーを統合',
+      '図形を転写',
     );
     this.committed();
   }
@@ -1169,6 +1373,7 @@ export class PaintEngine {
     if (p.blend !== undefined) l.blend = p.blend;
     if (p.visible !== undefined) l.visible = p.visible;
     if (p.params !== undefined && l.type === 'adjust') l.params = { ...p.params };
+    if (p.shape !== undefined && l.type === 'shape') l.shape = { ...p.shape };
   }
 
   /** スライダードラッグ中のライブ反映 (履歴は積まない) */
@@ -1187,6 +1392,117 @@ export class PaintEngine {
     this.assignProps(l, after);
     this.history.push({ kind: 'layerProps', layerId: id, before, after }, label);
     this.committed();
+  }
+
+  updateShapeParams(id: string, before: ShapeParams, after: ShapeParams, preview = false): void {
+    if (preview) this.previewLayerProps(id, { shape: after });
+    else this.commitLayerProps(id, { shape: before }, { shape: after }, '図形を編集');
+  }
+
+  beginShapeEdit(point: StrokePoint, _event?: PointerEvent): boolean {
+    const layer = this.shapeById(this.activeLayerId);
+    if (!layer) return false;
+    const shape = layer.shape;
+    const radius = 11 * this.uiScale();
+    const near = (x: number, y: number) => Math.hypot(point.x - x, point.y - y) <= radius;
+    let mode: ShapeEdit['mode'] | null = null;
+    if (shape.kind === 'line') {
+      if (near(shape.x1, shape.y1)) mode = 'start';
+      else if (near(shape.x2, shape.y2)) mode = 'end';
+    } else {
+      const b = shapeBounds(shape);
+      const corners = [
+        ['nw', b.x, b.y], ['ne', b.x + b.w, b.y],
+        ['sw', b.x, b.y + b.h], ['se', b.x + b.w, b.y + b.h],
+      ] as const;
+      mode = corners.find(([, x, y]) => near(x, y))?.[0] ?? null;
+    }
+    const b = shapeBounds(shape);
+    const inside = point.x >= b.x - radius && point.x <= b.x + b.w + radius && point.y >= b.y - radius && point.y <= b.y + b.h + radius;
+    if (!mode && inside) mode = 'move';
+    if (!mode) return false;
+    this.shapeEdit = { layerId: layer.id, mode, start: point, before: { ...shape } };
+    return true;
+  }
+
+  updateShapeEdit(point: StrokePoint, _event?: PointerEvent): boolean {
+    const edit = this.shapeEdit;
+    if (!edit) return false;
+    const layer = this.shapeById(edit.layerId);
+    if (!layer) return false;
+    const dx = point.x - edit.start.x;
+    const dy = point.y - edit.start.y;
+    let next: ShapeParams = { ...edit.before };
+    if (edit.mode === 'move') next = translateShape(edit.before, dx, dy);
+    else if (edit.before.kind === 'line') {
+      next = edit.mode === 'start'
+        ? { ...edit.before, x1: point.x, y1: point.y }
+        : { ...edit.before, x2: point.x, y2: point.y };
+    } else {
+      const b = shapeBounds(edit.before);
+      const left = edit.mode.endsWith('w') ? point.x : b.x;
+      const right = edit.mode.endsWith('e') ? point.x : b.x + b.w;
+      const top = edit.mode.startsWith('n') ? point.y : b.y;
+      const bottom = edit.mode.startsWith('s') ? point.y : b.y + b.h;
+      const x = Math.min(left, right);
+      const y = Math.min(top, bottom);
+      const w = Math.max(0.01, Math.abs(right - left));
+      const h = Math.max(0.01, Math.abs(bottom - top));
+      next = edit.before.kind === 'rect'
+        ? { ...edit.before, x, y, width: w, height: h }
+        : { ...edit.before, cx: x + w / 2, cy: y + h / 2, rx: w / 2, ry: h / 2 };
+    }
+    layer.shape = next;
+    this.requestRender();
+    this.syncStore();
+    return true;
+  }
+
+  finishShapeEdit(_point: StrokePoint): boolean {
+    const edit = this.shapeEdit;
+    if (!edit) return false;
+    this.shapeEdit = null;
+    const layer = this.shapeById(edit.layerId);
+    if (layer && JSON.stringify(layer.shape) !== JSON.stringify(edit.before)) {
+      this.history.push({ kind: 'layerProps', layerId: layer.id, before: { shape: edit.before }, after: { shape: { ...layer.shape } } }, '図形を編集');
+      this.committed();
+    }
+    return true;
+  }
+
+  cancelShapeEdit(): void {
+    const edit = this.shapeEdit;
+    if (!edit) return;
+    const layer = this.shapeById(edit.layerId);
+    if (layer) layer.shape = edit.before;
+    this.shapeEdit = null;
+    this.requestRender();
+    this.syncStore();
+  }
+
+  drawActiveShapeHandles(ctx: CanvasRenderingContext2D): void {
+    const layer = this.shapeById(this.activeLayerId);
+    if (!layer) return;
+    const shape = layer.shape;
+    const b = shapeBounds(shape);
+    const points = shape.kind === 'line'
+      ? [[shape.x1, shape.y1], [shape.x2, shape.y2]]
+      : [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]];
+    const scale = this.uiScale();
+    ctx.save();
+    ctx.strokeStyle = '#4f8cff';
+    ctx.fillStyle = '#fff';
+    ctx.lineWidth = 1.5 * scale;
+    ctx.setLineDash([4 * scale, 3 * scale]);
+    ctx.strokeRect(b.x, b.y, b.w, b.h);
+    ctx.setLineDash([]);
+    for (const [x, y] of points) {
+      ctx.beginPath();
+      ctx.rect(x - 4 * scale, y - 4 * scale, 8 * scale, 8 * scale);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   // ---------------------------------------------------------------- tools / misc
@@ -1225,6 +1541,11 @@ export class PaintEngine {
     st.removeTool(id);
     this.requestRender();
     this.syncStore();
+  }
+
+  reorderToolInstance(from: number, to: number): void {
+    useStore.getState().reorderTools(from, to);
+    this.scheduleSave();
   }
 
   /** 浮動選択の自由変形モードを切り替える */
@@ -1349,16 +1670,21 @@ export class PaintEngine {
         opacity: l.opacity,
         blend: l.blend,
         visible: l.visible,
+        parentId: l.parentId,
+        childIds: [...l.childIds],
       };
       if (l.type === 'adjust') {
         layers.push({ ...base, params: { ...l.params } });
+      } else if (l.type === 'shape') {
+        layers.push({ ...base, shape: { ...l.shape } });
       } else {
         layers.push({ ...base, png: await blobToDataURL(await toBlobP(l.canvas)) });
       }
     }
     const file: ProjectFile = {
       app: 'rin-paint',
-      version: 1,
+      version: 2,
+      rootLayerIds: [...this.rootLayerIds],
       activeLayerId: this.activeLayerId,
       penColor: st.penColor,
       penSize: st.penSize,
@@ -1392,24 +1718,40 @@ export class PaintEngine {
           l.opacity = pl.opacity ?? 1;
           l.blend = pl.blend ?? 'source-over';
           l.visible = pl.visible ?? true;
+          l.parentId = pl.parentId;
+          l.childIds = [...pl.childIds];
           layers.push(l);
-        } else {
+        } else if (pl.type === 'raster') {
           const l = createRasterLayer(pl.name ?? `レイヤー ${++rasterCount}`, pl.id);
           l.opacity = pl.opacity ?? 1;
           l.blend = pl.blend ?? 'source-over';
           l.visible = pl.visible ?? true;
+          l.parentId = pl.parentId;
+          l.childIds = [...pl.childIds];
           if (pl.png) {
             const bmp = await createImageBitmap(await dataURLToBlob(pl.png));
             l.ctx.drawImage(bmp, 0, 0);
             bmp.close();
           }
           layers.push(l);
+        } else if (pl.shape) {
+          const l = createShapeLayer(pl.name, { ...pl.shape }, pl.id);
+          l.opacity = pl.opacity;
+          l.blend = pl.blend;
+          l.visible = pl.visible;
+          l.parentId = pl.parentId;
+          l.childIds = [...pl.childIds];
+          layers.push(l);
         }
       }
       if (!layers.some((l) => l.type === 'raster')) {
-        layers.push(createRasterLayer('レイヤー 1'));
+        const fallback = createRasterLayer('レイヤー 1');
+        layers.push(fallback);
+        proj.rootLayerIds.push(fallback.id);
       }
+      if (!validateLayerTree(proj.rootLayerIds, layers)) throw new Error('invalid layer tree');
       this.layers = layers;
+      this.rootLayerIds = [...proj.rootLayerIds];
       this.activeLayerId = proj.activeLayerId ?? '';
       this.layerCounter = layers.filter((l) => l.type === 'raster').length;
       this.adjustCounter = layers.filter((l) => l.type === 'adjust').length;
@@ -1444,7 +1786,10 @@ export class PaintEngine {
       opacity: l.opacity,
       blend: l.blend,
       visible: l.visible,
+      parentId: l.parentId,
+      childIds: [...l.childIds],
       params: l.type === 'adjust' ? { ...l.params } : undefined,
+      shape: l.type === 'shape' ? { ...l.shape } : undefined,
       version: this.versions.get(l.id) ?? 0,
     }));
     useStore.getState().set({
@@ -1521,6 +1866,21 @@ export class PaintEngine {
           blend: l.blend,
           visible: l.visible,
           params: { ...l.params },
+          parentId: l.parentId,
+          childIds: [...l.childIds],
+        };
+      }
+      if (l.type === 'shape') {
+        return {
+          id: l.id,
+          type: l.type,
+          name: l.name,
+          opacity: l.opacity,
+          blend: l.blend,
+          visible: l.visible,
+          parentId: l.parentId,
+          childIds: [...l.childIds],
+          shape: { ...l.shape },
         };
       }
       const canvas = makeCanvas();
@@ -1532,6 +1892,8 @@ export class PaintEngine {
         opacity: l.opacity,
         blend: l.blend,
         visible: l.visible,
+        parentId: l.parentId,
+        childIds: [...l.childIds],
         canvas,
       };
     });
@@ -1550,12 +1912,14 @@ export class PaintEngine {
     const historyPromise = this.history.serialize(toBlobP);
     const layers: SavedLayer[] = await Promise.all(
       layerSources.map(async (l) => {
-        if (l.type === 'adjust') return l;
+        if (l.type !== 'raster') return l;
         const { canvas, ...meta } = l;
         return { ...meta, blob: await toBlobP(canvas) };
       }),
     );
     await saveProject({
+      version: 2,
+      rootLayerIds: [...this.rootLayerIds],
       layers,
       activeLayerId,
       penColor,
