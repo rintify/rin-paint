@@ -23,7 +23,7 @@ export class TimelapseRecorder {
     }, CAPTURE_DELAY_MS);
   }
 
-  /** ダブルタップでタップ描画を取り消したときなどに保留中の記録を破棄 */
+  /** 直前の確定操作に対する保留中の記録を破棄 */
   cancelPending(): void {
     if (this.timer !== null) {
       clearTimeout(this.timer);

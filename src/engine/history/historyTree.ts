@@ -51,8 +51,6 @@ export interface HistoryNode {
   lastChild: number;
   /** タイルの Blob エンコード完了待ち */
   ready?: Promise<void>;
-  /** 短いタップ1回分のノード (ダブルタップスポイト時に取り消す候補) */
-  tapCandidate?: boolean;
 }
 
 /**

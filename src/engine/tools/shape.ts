@@ -15,7 +15,6 @@ const LABELS: Record<ShapeKind, string> = {
 export class ShapeTool implements Tool {
   private start: StrokePoint | null = null;
   private cur: StrokePoint | null = null;
-  private t0 = 0;
 
   constructor(
     private engine: PaintEngine,
@@ -26,7 +25,6 @@ export class ShapeTool implements Tool {
     if (!this.engine.activeRaster()) return;
     this.start = p;
     this.cur = p;
-    this.t0 = performance.now();
   }
 
   onMove(p: StrokePoint): void {
@@ -40,16 +38,12 @@ export class ShapeTool implements Tool {
     if (!start || !layer) return;
     this.cur = p;
     const size = useStore.getState().penSize;
-    const moved = Math.hypot(p.x - start.x, p.y - start.y);
     this.engine.captureBefore(layer);
     this.paint(layer.ctx, start, p, true);
     const rect: DirtyRect = emptyRect();
     expandRect(rect, start.x, start.y, size + 2);
     expandRect(rect, p.x, p.y, size + 2);
-    const quick = performance.now() - this.t0 < 250 && moved < 8;
-    this.engine.commitRasterEdit(layer, rect, LABELS[this.kind], {
-      tapCandidate: quick,
-    });
+    this.engine.commitRasterEdit(layer, rect, LABELS[this.kind]);
     useStore.getState().pushColor(useStore.getState().penColor);
   }
 

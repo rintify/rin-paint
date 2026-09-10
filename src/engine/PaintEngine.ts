@@ -733,14 +733,12 @@ export class PaintEngine {
     layer: RasterLayer,
     rect: DirtyRect,
     label: string,
-    opts?: { tapCandidate?: boolean },
   ): void {
     if (!rectValid(rect)) return;
     const { tiles, ready } = extractTiles(this.scratchCtx, layer.ctx, rect, ART_W, ART_H);
     if (tiles.length === 0) return;
     const node = this.history.push({ kind: 'raster', layerId: layer.id, tiles }, label);
     node.ready = ready;
-    node.tapCandidate = opts?.tapCandidate;
     this.bumpLayer(layer.id);
     this.committed();
   }

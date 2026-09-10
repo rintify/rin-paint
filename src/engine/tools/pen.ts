@@ -126,10 +126,15 @@ export class PenTool implements Tool {
     this.engine.requestRender();
   }
 
-  onUp(p: StrokePoint): void {
+  onUp(p: StrokePoint, event: PointerEvent): void {
     if (!this.layer) return;
     if (Math.hypot(p.x - this.lastX, p.y - this.lastY) > 0.01) {
-      this.onMove(p);
+      // pointerup 時の筆圧0は接地解除を表すため、線端の筆圧には使わない。
+      const lastPressure = this.points[this.points.length - 1]?.pressure ?? p.pressure;
+      this.onMove({
+        ...p,
+        pressure: event.pressure > 0 ? p.pressure : lastPressure,
+      });
     }
     // 抜きは終点が確定して初めて長さを計算できるため、確定時に再描画する。
     if (this.settings.taperOut > 0) this.repaintWithTaperOut();

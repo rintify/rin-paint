@@ -37,7 +37,7 @@ export function ColorControls() {
         ))}
       </div>
       <div className="hint">
-        ダブルタップでスポイト (アクティブレイヤーの色を拾います)
+        同じ位置付近を0.5秒長押しでスポイト (アクティブレイヤーの色を拾います)
       </div>
     </div>
   );
