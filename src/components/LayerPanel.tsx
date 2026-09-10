@@ -11,6 +11,7 @@ import {
   FormControl,
   IconButton,
   MenuItem,
+  Paper,
   Select,
   Slider,
   Stack,
@@ -18,7 +19,7 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { engine } from '../engine/PaintEngine';
 import { drawShape } from '../engine/shapes';
 import { useStore } from '../state/store';
@@ -242,7 +243,7 @@ function ShapeControls({ meta }: { meta: LayerMeta }) {
 function LayerControls({ meta }: { meta: LayerMeta }) {
   const pct = Math.round(meta.opacity * 100);
   return (
-    <Stack spacing={1} sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
+    <Stack spacing={1}>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
         <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>
           不透明度
@@ -326,6 +327,73 @@ function LayerControls({ meta }: { meta: LayerMeta }) {
   );
 }
 
+function LayerControlsPalette({ meta }: { meta: LayerMeta }) {
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const paper = useRef<HTMLDivElement | null>(null);
+  const drag = useRef<{
+    pointerId: number;
+    x: number;
+    y: number;
+    left: number;
+    top: number;
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+  } | null>(null);
+  const move = (event: ReactPointerEvent<HTMLElement>) => {
+    const current = drag.current;
+    if (!current || current.pointerId !== event.pointerId) return;
+    setPosition({
+      x: Math.max(current.minX, Math.min(current.maxX, current.left + event.clientX - current.x)),
+      y: Math.max(current.minY, Math.min(current.maxY, current.top + event.clientY - current.y)),
+    });
+  };
+  const finish = (event: ReactPointerEvent<HTMLElement>) => {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    drag.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+
+  return (
+    <Paper
+      ref={paper}
+      elevation={12}
+      className="layer-controls-palette"
+      sx={{ transform: `translate(${position.x}px, ${position.y}px)` }}
+    >
+      <Box
+        className="layer-controls-palette-title"
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          const rect = paper.current?.getBoundingClientRect();
+          drag.current = {
+            pointerId: event.pointerId,
+            x: event.clientX,
+            y: event.clientY,
+            left: position.x,
+            top: position.y,
+            minX: position.x + 8 - (rect?.left ?? 8),
+            maxX: position.x + window.innerWidth - 8 - (rect?.right ?? window.innerWidth - 8),
+            minY: position.y + 8 - (rect?.top ?? 8),
+            maxY: position.y + window.innerHeight - 8 - (rect?.bottom ?? window.innerHeight - 8),
+          };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={move}
+        onPointerUp={finish}
+        onPointerCancel={finish}
+      >
+        <Typography variant="subtitle2" noWrap>{meta.name}</Typography>
+        <Typography variant="caption" color="text.secondary">パラメータ</Typography>
+      </Box>
+      <Box className="layer-controls-palette-content">
+        <LayerControls meta={meta} />
+      </Box>
+    </Paper>
+  );
+}
+
 interface TreeProps {
   id: string;
   byId: Map<string, LayerMeta>;
@@ -334,28 +402,64 @@ interface TreeProps {
   setExpandedPath: (id: string) => void;
   dragId: string | null;
   setDragId: (id: string | null) => void;
+  dropTarget: LayerDropTarget | null;
+  setDropTarget: (target: LayerDropTarget | null) => void;
+  registerRow: (id: string, element: HTMLElement | null) => void;
+  moveLayer: (id: string, parentId: string | null, index: number) => void;
+}
+
+interface LayerDropTarget {
+  parentId: string | null;
+  index: number;
+  kind: 'between' | 'inside' | 'outdent';
+  anchorId: string;
+}
+
+function sameDropTarget(a: LayerDropTarget | null, b: LayerDropTarget): boolean {
+  return (
+    !!a &&
+    a.parentId === b.parentId &&
+    a.index === b.index &&
+    a.kind === b.kind &&
+    a.anchorId === b.anchorId
+  );
 }
 
 function DropGap({
   parentId,
   index,
   dragId,
+  anchorId,
+  dropTarget,
+  setDropTarget,
+  moveLayer,
 }: {
   parentId: string | null;
   index: number;
   dragId: string | null;
+  anchorId: string;
+  dropTarget: LayerDropTarget | null;
+  setDropTarget: (target: LayerDropTarget | null) => void;
+  moveLayer: (id: string, parentId: string | null, index: number) => void;
 }) {
+  const target: LayerDropTarget = { parentId, index, kind: 'between', anchorId };
+  const valid = !!dragId && engine.canMoveLayer(dragId, parentId);
   return (
     <Box
-      className={`layer-drop-gap${dragId ? ' dragging' : ''}`}
+      className={`layer-drop-gap${dragId ? ' dragging' : ''}${sameDropTarget(dropTarget, target) ? ' active' : ''}`}
       onDragOver={(e) => {
-        if (dragId) e.preventDefault();
+        if (!valid) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        setDropTarget(target);
       }}
       onDrop={(e) => {
         e.preventDefault();
-        if (dragId && engine.canMoveLayer(dragId, parentId)) {
-          engine.moveLayer(dragId, { parentId, index });
+        e.stopPropagation();
+        if (valid && dragId) {
+          moveLayer(dragId, parentId, index);
         }
+        setDropTarget(null);
       }}
     />
   );
@@ -366,26 +470,78 @@ function LayerNode(props: TreeProps) {
   const children = meta.childIds.map((id) => props.byId.get(id)).filter(Boolean) as LayerMeta[];
   const open = props.expanded.has(meta.id);
   const active = meta.id === props.activeId;
+  const rowTarget = props.dropTarget?.anchorId === meta.id ? props.dropTarget : null;
+  const parent = meta.parentId ? props.byId.get(meta.parentId) : undefined;
+  const outdentTarget: LayerDropTarget | null = parent
+    ? {
+        parentId: parent.parentId,
+        index: (parent.parentId ? props.byId.get(parent.parentId)?.childIds ?? [] : engine.layerRootIds()).indexOf(parent.id) + 1,
+        kind: 'outdent',
+        anchorId: meta.id,
+      }
+    : null;
+
+  const performDrop = (target: LayerDropTarget) => {
+    if (props.dragId && engine.canMoveLayer(props.dragId, target.parentId)) {
+      props.moveLayer(props.dragId, target.parentId, target.index);
+      if (target.kind === 'inside' && !props.expanded.has(meta.id)) props.setExpandedPath(meta.id);
+    }
+    props.setDropTarget(null);
+  };
 
   return (
-    <Box className="layer-tree-node">
+    <Box className={`layer-tree-node${props.dragId === meta.id ? ' is-dragging' : ''}`}>
+      {outdentTarget && props.dragId && engine.canMoveLayer(props.dragId, outdentTarget.parentId) && (
+        <Box
+          className={`layer-outdent-zone${sameDropTarget(props.dropTarget, outdentTarget) ? ' active' : ''}`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'move';
+            props.setDropTarget(outdentTarget);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            performDrop(outdentTarget);
+          }}
+          aria-hidden
+        />
+      )}
       <Box
-        className={`layer-row${active ? ' active' : ''}${meta.visible ? '' : ' hidden-layer'}`}
+        ref={(element: HTMLElement | null) => props.registerRow(meta.id, element)}
+        className={`layer-row${active ? ' active' : ''}${meta.visible ? '' : ' hidden-layer'}${rowTarget?.kind === 'inside' ? ' drop-inside' : ''}${rowTarget?.kind === 'between' && rowTarget.index > (meta.parentId ? props.byId.get(meta.parentId)?.childIds.indexOf(meta.id) ?? -1 : engine.layerRootIds().indexOf(meta.id)) ? ' drop-before' : ''}${rowTarget?.kind === 'between' && rowTarget.index === (meta.parentId ? props.byId.get(meta.parentId)?.childIds.indexOf(meta.id) ?? -1 : engine.layerRootIds().indexOf(meta.id)) ? ' drop-after' : ''}${rowTarget?.kind === 'outdent' ? ' drop-outdent' : ''}`}
         draggable
         onDragStart={(e) => {
           e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', meta.id);
           props.setDragId(meta.id);
         }}
-        onDragEnd={() => props.setDragId(null)}
+        onDragEnd={() => {
+          props.setDragId(null);
+          props.setDropTarget(null);
+        }}
         onDragOver={(e) => {
-          if (props.dragId && props.dragId !== meta.id) e.preventDefault();
+          if (!props.dragId || props.dragId === meta.id) return;
+          const rect = e.currentTarget.getBoundingClientRect();
+          const ratio = (e.clientY - rect.top) / rect.height;
+          const siblings = meta.parentId ? props.byId.get(meta.parentId)?.childIds ?? [] : engine.layerRootIds();
+          const ownIndex = siblings.indexOf(meta.id);
+          const target: LayerDropTarget = ratio < 0.28
+            ? { parentId: meta.parentId, index: ownIndex + 1, kind: 'between', anchorId: meta.id }
+            : ratio > 0.72
+              ? { parentId: meta.parentId, index: ownIndex, kind: 'between', anchorId: meta.id }
+              : { parentId: meta.id, index: meta.childIds.length, kind: 'inside', anchorId: meta.id };
+          if (!engine.canMoveLayer(props.dragId, target.parentId)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = 'move';
+          props.setDropTarget(target);
         }}
         onDrop={(e) => {
           e.preventDefault();
-          if (props.dragId) {
-            engine.moveLayerAsTopChild(props.dragId, meta.id);
-            props.setExpandedPath(meta.id);
-          }
+          e.stopPropagation();
+          if (props.dropTarget) performDrop(props.dropTarget);
         }}
         onClick={() => engine.setActiveLayer(meta.id)}
         sx={{
@@ -458,11 +614,23 @@ function LayerNode(props: TreeProps) {
                 parentId={meta.id}
                 index={meta.childIds.indexOf(child.id) + 1}
                 dragId={props.dragId}
+                anchorId={`before-${child.id}`}
+                dropTarget={props.dropTarget}
+                setDropTarget={props.setDropTarget}
+                moveLayer={props.moveLayer}
               />
               <LayerNode {...props} id={child.id} />
             </Box>
           ))}
-          <DropGap parentId={meta.id} index={0} dragId={props.dragId} />
+          <DropGap
+            parentId={meta.id}
+            index={0}
+            dragId={props.dragId}
+            anchorId={`end-${meta.id}`}
+            dropTarget={props.dropTarget}
+            setDropTarget={props.setDropTarget}
+            moveLayer={props.moveLayer}
+          />
         </Box>
       </Box>
     </Box>
@@ -474,9 +642,52 @@ export function LayerPanel() {
   const activeId = useStore((s) => s.activeLayerId);
   const [expandedPath, setExpanded] = useState<string[]>([]);
   const [dragId, setDragId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<LayerDropTarget | null>(null);
+  const rowElements = useRef(new Map<string, HTMLElement>());
+  const beforeMove = useRef<Map<string, DOMRect> | null>(null);
+  const movedId = useRef<string | null>(null);
   const byId = useMemo(() => new Map(layers.map((l) => [l.id, l])), [layers]);
   const roots = engine.layerRootIds().map((id) => byId.get(id)).filter(Boolean) as LayerMeta[];
   const active = byId.get(activeId);
+  const registerRow = (id: string, element: HTMLElement | null) => {
+    if (element) rowElements.current.set(id, element);
+    else rowElements.current.delete(id);
+  };
+  const moveLayer = (id: string, parentId: string | null, index: number) => {
+    const previous = new Map(
+      [...rowElements.current].map(([rowId, element]) => [rowId, element.getBoundingClientRect()]),
+    );
+    if (engine.moveLayer(id, { parentId, index })) {
+      beforeMove.current = previous;
+      movedId.current = id;
+    } else {
+      beforeMove.current = null;
+      movedId.current = null;
+    }
+  };
+  useLayoutEffect(() => {
+    const previous = beforeMove.current;
+    if (!previous) return;
+    beforeMove.current = null;
+    for (const [id, element] of rowElements.current) {
+      const oldRect = previous.get(id);
+      if (!oldRect) continue;
+      const nextRect = element.getBoundingClientRect();
+      const dx = oldRect.left - nextRect.left;
+      const dy = oldRect.top - nextRect.top;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+      element.animate(
+        [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }],
+        { duration: 260, easing: 'cubic-bezier(.2,.8,.2,1)' },
+      );
+    }
+    const moved = movedId.current ? rowElements.current.get(movedId.current) : null;
+    movedId.current = null;
+    moved?.animate(
+      [{ filter: 'brightness(1.35)' }, { filter: 'brightness(1)' }],
+      { duration: 520, easing: 'ease-out' },
+    );
+  }, [layers]);
   const setExpandedPath = (id: string) => {
     if (expandedPath.includes(id)) {
       setExpanded(expandedPath.slice(0, expandedPath.indexOf(id)));
@@ -525,6 +736,10 @@ export function LayerPanel() {
               parentId={null}
               index={engine.layerRootIds().indexOf(root.id) + 1}
               dragId={dragId}
+              anchorId={`before-${root.id}`}
+              dropTarget={dropTarget}
+              setDropTarget={setDropTarget}
+              moveLayer={moveLayer}
             />
             <LayerNode
               id={root.id}
@@ -534,29 +749,29 @@ export function LayerPanel() {
               setExpandedPath={setExpandedPath}
               dragId={dragId}
               setDragId={setDragId}
+              dropTarget={dropTarget}
+              setDropTarget={setDropTarget}
+              registerRow={registerRow}
+              moveLayer={moveLayer}
             />
           </Box>
         ))}
-        <DropGap parentId={null} index={0} dragId={dragId} />
-        {dragId && byId.get(dragId)?.parentId && (
-          <Box
-            className="layer-out-drop"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              engine.moveLayerOut(dragId);
-            }}
-          >
-            親の外へ
-          </Box>
-        )}
+        <DropGap
+          parentId={null}
+          index={0}
+          dragId={dragId}
+          anchorId="root-end"
+          dropTarget={dropTarget}
+          setDropTarget={setDropTarget}
+          moveLayer={moveLayer}
+        />
       </Box>
       <Box sx={{ mt: 1 }}>
         <Button fullWidth onClick={() => engine.mergeLayerDown()} disabled={!engine.canMergeLayerDown()} sx={{ fontSize: 11 }}>
           下と統合
         </Button>
       </Box>
-      {active && <LayerControls meta={active} />}
+      {active && <LayerControlsPalette meta={active} />}
     </Box>
   );
 }

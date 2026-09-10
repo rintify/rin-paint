@@ -65,6 +65,14 @@
   min-height: 60px;
 }
 
+.layer-tree-node {
+  position: relative;
+}
+
+.layer-tree-node.is-dragging > .layer-row {
+  opacity: 0.38 !important;
+}
+
 .layer-children {
   display: grid;
   grid-template-rows: 0fr;
@@ -82,30 +90,168 @@
   overflow: hidden;
 }
 
+.layer-children.open > div {
+  overflow: visible;
+}
+
 .layer-drop-gap {
-  height: 2px;
-  margin: 1px 4px;
-  border-radius: 2px;
-  transition: height 0.12s ease, background 0.12s ease;
+  position: relative;
+  height: 3px;
+  margin: 0 5px;
+  transition: height 0.12s ease;
 }
 
 .layer-drop-gap.dragging {
-  height: 8px;
+  height: 9px;
 }
 
-.layer-drop-gap.dragging:hover {
+.layer-drop-gap::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transform: translateY(-50%) scaleX(0.96);
+  transition: background 0.1s ease, transform 0.1s ease;
+}
+
+.layer-drop-gap.active::after {
   background: var(--accent);
+  box-shadow: 0 0 0 1px rgba(79, 140, 255, 0.2), 0 0 8px rgba(79, 140, 255, 0.45);
+  transform: translateY(-50%) scaleX(1);
 }
 
-.layer-out-drop {
-  position: sticky;
-  bottom: 0;
-  padding: 10px;
-  border: 1px dashed var(--accent);
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--accent-dim) 85%, var(--panel));
-  text-align: center;
+.layer-row.drop-before,
+.layer-row.drop-after,
+.layer-row.drop-outdent {
+  box-shadow: 0 -3px 0 -1px var(--accent);
+}
+
+.layer-row.drop-after {
+  box-shadow: 0 3px 0 -1px var(--accent);
+}
+
+.layer-row.drop-inside {
+  border-color: var(--accent) !important;
+  background: color-mix(in srgb, var(--accent-dim) 70%, var(--panel)) !important;
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px rgba(79, 140, 255, 0.2);
+}
+
+.layer-outdent-zone {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: -16px;
+  width: 16px;
+  height: 43px;
+}
+
+.layer-outdent-zone::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 50%;
+  height: 2px;
+  border-radius: 2px;
+  background: transparent;
+}
+
+.layer-outdent-zone.active::after {
+  background: var(--accent);
+  box-shadow: 0 0 7px rgba(79, 140, 255, 0.6);
+}
+
+.layer-controls-palette {
+  position: fixed;
+  z-index: 1200;
+  top: 72px;
+  right: 20px;
+  width: min(360px, calc(100vw - 40px));
+  max-height: calc(100vh - 92px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.layer-controls-palette-title {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.layer-controls-palette-title:active {
+  cursor: grabbing;
+}
+
+.layer-controls-palette-content {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.manage-tool-card-grid {
+  max-height: min(360px, 48vh);
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 3px;
+}
+
+.manage-tool-card {
+  position: relative;
+  min-width: 0;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 9px;
+  transition: border-color 0.12s ease, opacity 0.12s ease;
+}
+
+.manage-tool-card.drop-before::before,
+.manage-tool-card.drop-after::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(79, 140, 255, 0.55);
+}
+
+.manage-tool-card.drop-before::before {
+  left: -5px;
+}
+
+.manage-tool-card.drop-after::after {
+  right: -5px;
+}
+
+.manage-tool-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   color: var(--text);
+  background: var(--panel-2);
 }
 
 .canvas-area {
@@ -214,6 +360,10 @@
 }
 
 @media (max-width: 880px) {
+  .manage-tool-card-grid {
+    grid-template-columns: 1fr;
+  }
+
   .reference-toolbar {
     flex-wrap: wrap;
     justify-content: center;

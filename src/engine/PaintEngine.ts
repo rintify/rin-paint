@@ -1248,16 +1248,18 @@ export class PaintEngine {
     this.committed();
   }
 
-  moveLayer(id: string, to: LayerLocation): void {
-    if (this.busy) return;
+  moveLayer(id: string, to: LayerLocation): boolean {
+    if (this.busy) return false;
     const from = this.locationOf(id);
-    if (!from || !canReparent(this.layers, id, to.parentId)) return;
-    this.detachLayer(id);
+    if (!from || !canReparent(this.layers, id, to.parentId)) return false;
     const adjusted = { ...to };
     if (from.parentId === to.parentId && from.index < to.index) adjusted.index--;
+    if (from.parentId === adjusted.parentId && from.index === adjusted.index) return false;
+    this.detachLayer(id);
     this.insertAt(id, adjusted);
     this.history.push({ kind: 'layerMove', layerId: id, from, to: adjusted }, 'レイヤー並べ替え');
     this.committed();
+    return true;
   }
 
   private stableLayerEntries(

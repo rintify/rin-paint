@@ -1,4 +1,5 @@
 import BlurOnIcon from '@mui/icons-material/BlurOn';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import CircleOutlinedIcon from '@mui/icons-material/CircleOutlined';
 import CropSquareIcon from '@mui/icons-material/CropSquare';
 import DeleteOutlinedIcon from '@mui/icons-material/DeleteOutlined';
@@ -15,15 +16,11 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
-  ListItemIcon,
-  ListItemText,
-  Menu,
-  MenuItem,
   Stack,
   Tooltip,
   Typography,
 } from '@mui/material';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { engine } from '../engine/PaintEngine';
 import { useStore } from '../state/store';
 import { TOOL_KIND_LABELS, type ToolKind } from '../types';
@@ -45,6 +42,7 @@ function AddToolDialog({ onClose }: { onClose: () => void }) {
     engine.addToolInstance(kind);
     onClose();
   };
+
   return (
     <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
       <DialogTitle>ツールを追加</DialogTitle>
@@ -61,7 +59,13 @@ function AddToolDialog({ onClose }: { onClose: () => void }) {
             <Button fullWidth onClick={() => add('pen')} startIcon={TOOL_ICONS.pen} sx={{ justifyContent: 'flex-start', minHeight: 42 }}>
               ペン
             </Button>
-            <Button fullWidth onClick={() => setShapePage(true)} startIcon={TOOL_ICONS.rect} endIcon={<Typography component="span">›</Typography>} sx={{ justifyContent: 'flex-start', minHeight: 42 }}>
+            <Button
+              fullWidth
+              onClick={() => setShapePage(true)}
+              startIcon={TOOL_ICONS.rect}
+              endIcon={<ChevronRightIcon />}
+              sx={{ justifyContent: 'flex-start', minHeight: 42, '& .MuiButton-endIcon': { ml: 'auto' } }}
+            >
               図形
             </Button>
             <Button fullWidth onClick={() => add('lasso')} startIcon={TOOL_ICONS.lasso} sx={{ justifyContent: 'flex-start', minHeight: 42 }}>
@@ -71,18 +75,12 @@ function AddToolDialog({ onClose }: { onClose: () => void }) {
               ぼかし
             </Button>
           </Stack>
-          <Stack spacing={0.75} sx={{ width: '50%', pr: 0.25 }}>
+          <Stack spacing={0.75} sx={{ width: '50%', pl: 0.25 }}>
             <Button fullWidth onClick={() => setShapePage(false)} sx={{ justifyContent: 'flex-start' }}>
               ‹ 戻る
             </Button>
             {(['line', 'rect', 'ellipse'] as ToolKind[]).map((kind) => (
-              <Button
-                key={kind}
-                fullWidth
-                onClick={() => add(kind)}
-                startIcon={TOOL_ICONS[kind]}
-                sx={{ justifyContent: 'flex-start', minHeight: 42 }}
-              >
+              <Button key={kind} fullWidth onClick={() => add(kind)} startIcon={TOOL_ICONS[kind]} sx={{ justifyContent: 'flex-start', minHeight: 42 }}>
                 {TOOL_KIND_LABELS[kind]}
               </Button>
             ))}
@@ -98,78 +96,126 @@ function AddToolDialog({ onClose }: { onClose: () => void }) {
 
 function ManageToolsDialog({ onClose }: { onClose: () => void }) {
   const tools = useStore((s) => s.tools);
+  const activeId = useStore((s) => s.activeToolId);
   const [addOpen, setAddOpen] = useState(false);
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ anchorId: string; slot: number; side: 'before' | 'after' } | null>(null);
+  const cardElements = useRef(new Map<string, HTMLElement>());
+  const beforeMove = useRef<Map<string, DOMRect> | null>(null);
+  const movedId = useRef<string | null>(null);
 
-  useEffect(() => {
-    const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') addOpen ? setAddOpen(false) : onClose();
-    };
-    window.addEventListener('keydown', key);
-    return () => window.removeEventListener('keydown', key);
-  }, [addOpen, onClose]);
+  useLayoutEffect(() => {
+    const previous = beforeMove.current;
+    if (!previous) return;
+    beforeMove.current = null;
+    for (const [id, element] of cardElements.current) {
+      const oldRect = previous.get(id);
+      if (!oldRect) continue;
+      const nextRect = element.getBoundingClientRect();
+      const dx = oldRect.left - nextRect.left;
+      const dy = oldRect.top - nextRect.top;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) continue;
+      element.animate(
+        [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }],
+        { duration: 240, easing: 'cubic-bezier(.2,.8,.2,1)' },
+      );
+    }
+    const moved = movedId.current ? cardElements.current.get(movedId.current) : null;
+    movedId.current = null;
+    moved?.animate(
+      [{ boxShadow: '0 0 0 2px rgba(79, 140, 255, .95)' }, { boxShadow: '0 0 0 0 rgba(79, 140, 255, 0)' }],
+      { duration: 520, easing: 'ease-out' },
+    );
+  }, [tools]);
+
+  const finishDrag = () => {
+    setDragId(null);
+    setDropTarget(null);
+  };
+  const dropAt = (slot: number) => {
+    if (!dragId) return finishDrag();
+    const from = tools.findIndex((tool) => tool.id === dragId);
+    if (from < 0) return finishDrag();
+    const to = from < slot ? slot - 1 : slot;
+    if (from !== to) {
+      beforeMove.current = new Map(
+        [...cardElements.current].map(([id, element]) => [id, element.getBoundingClientRect()]),
+      );
+      movedId.current = dragId;
+      engine.reorderToolInstance(from, to);
+    }
+    finishDrag();
+  };
 
   return (
     <>
-      <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
-        <DialogTitle>ツールを管理</DialogTitle>
-        <DialogContent>
-          <Stack spacing={0.75} sx={{ maxHeight: 'min(420px, 55vh)', overflowY: 'auto' }}>
-            {tools.map((tool, index) => (
-              <Box
-                key={tool.id}
-                draggable
-                onDragStart={() => setDragIndex(index)}
-                onDragEnd={() => setDragIndex(null)}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  if (dragIndex !== null) engine.reorderToolInstance(dragIndex, index);
-                  setDragIndex(null);
-                }}
-                sx={{
-                  minHeight: 43,
-                  display: 'grid',
-                  gridTemplateColumns: '18px 25px 1fr 34px',
-                  alignItems: 'center',
-                  gap: 1,
-                  px: 0.75,
-                  py: 0.5,
-                  border: 1,
-                  borderColor: 'divider',
-                  borderRadius: 1,
-                  bgcolor: 'action.hover',
-                  cursor: 'grab',
-                }}
-              >
-                <DragIndicatorIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                {TOOL_ICONS[tool.kind]}
-                <Typography variant="body2" noWrap>
-                  {tool.name}
-                </Typography>
-                <Tooltip title={`${tool.name}を削除`}>
-                  <span>
-                    <IconButton
-                      size="small"
-                      disabled={tools.length <= 1}
-                      onClick={() => engine.removeToolInstance(tool.id)}
-                      aria-label={`${tool.name}を削除`}
-                    >
-                      <DeleteOutlinedIcon fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              </Box>
-            ))}
-          </Stack>
-          <Button fullWidth sx={{ mt: 1.5 }} onClick={() => setAddOpen(true)}>
+      <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ pb: 0.5 }}>ツールを管理</DialogTitle>
+        <DialogContent sx={{ pt: '8px !important' }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+            カードをドラッグして表示順を変更できます。
+          </Typography>
+          <Box className="manage-tool-card-grid">
+            {tools.map((tool, index) => {
+              const target = dropTarget?.anchorId === tool.id ? dropTarget : null;
+              return (
+                <Box
+                  key={tool.id}
+                  ref={(element: HTMLElement | null) => {
+                    if (element) cardElements.current.set(tool.id, element);
+                    else cardElements.current.delete(tool.id);
+                  }}
+                  className={`manage-tool-card${target ? ` drop-${target.side}` : ''}`}
+                  onDragOver={(event) => {
+                    if (!dragId || dragId === tool.id) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = 'move';
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const before = event.clientX < rect.left + rect.width / 2;
+                    setDropTarget({ anchorId: tool.id, slot: index + (before ? 0 : 1), side: before ? 'before' : 'after' });
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (dropTarget) dropAt(dropTarget.slot);
+                  }}
+                  sx={{
+                    border: 1,
+                    borderColor: tool.id === activeId ? 'primary.main' : 'divider',
+                    bgcolor: tool.id === activeId ? 'action.selected' : 'action.hover',
+                    opacity: dragId === tool.id ? 0.45 : 1,
+                  }}
+                >
+                  <Box className="manage-tool-icon">{TOOL_ICONS[tool.kind]}</Box>
+                  <Typography variant="body2" noWrap sx={{ minWidth: 0, flex: 1, fontWeight: 600 }}>
+                    {tool.name}
+                  </Typography>
+                  <Box
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = 'move';
+                      event.dataTransfer.setData('text/plain', tool.id);
+                      setDragId(tool.id);
+                    }}
+                    onDragEnd={finishDrag}
+                    sx={{ display: 'grid', placeItems: 'center', cursor: 'grab' }}
+                    aria-label={`${tool.name}を並べ替え`}
+                  >
+                    <DragIndicatorIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                  </Box>
+                  <IconButton size="small" disabled={tools.length <= 1} onClick={() => engine.removeToolInstance(tool.id)} aria-label={`${tool.name}を削除`}>
+                    <DeleteOutlinedIcon fontSize="small" />
+                  </IconButton>
+                </Box>
+              );
+            })}
+          </Box>
+          <Button fullWidth variant="outlined" sx={{ mt: 1.5, borderStyle: 'dashed' }} onClick={() => setAddOpen(true)}>
             ＋ ツールを追加…
           </Button>
         </DialogContent>
-        <DialogActions>
-          <Button variant="contained" onClick={onClose}>
-            完了
-          </Button>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button variant="contained" onClick={onClose}>完了</Button>
         </DialogActions>
       </Dialog>
       {addOpen && <AddToolDialog onClose={() => setAddOpen(false)} />}
@@ -180,51 +226,19 @@ function ManageToolsDialog({ onClose }: { onClose: () => void }) {
 export function ToolPicker() {
   const tools = useStore((s) => s.tools);
   const activeId = useStore((s) => s.activeToolId);
-  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
 
   return (
     <Box className="section">
       <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-        <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1 }}>
-          ツール
-        </Typography>
-        <Tooltip title="ツール設定">
-          <IconButton
-            size="small"
-            onClick={(e) => setMenuAnchor(e.currentTarget)}
-            aria-label="ツール設定"
-          >
-            <SettingsIcon sx={{ fontSize: 16 }} />
+        <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1 }}>ツール</Typography>
+        <Tooltip title="ツールを管理">
+          <IconButton size="small" onClick={() => setManageOpen(true)} aria-label="ツールを管理">
+            <SettingsIcon sx={{ fontSize: 17 }} />
           </IconButton>
         </Tooltip>
-        <Menu
-          anchorEl={menuAnchor}
-          open={!!menuAnchor}
-          onClose={() => setMenuAnchor(null)}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
-        >
-          <MenuItem
-            onClick={() => {
-              setMenuAnchor(null);
-              setManageOpen(true);
-            }}
-          >
-            <ListItemIcon>
-              <SettingsIcon fontSize="small" />
-            </ListItemIcon>
-            <ListItemText>ツールを管理…</ListItemText>
-          </MenuItem>
-        </Menu>
       </Stack>
-      <Box
-        sx={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(3, 1fr)',
-          gap: 0.75,
-        }}
-      >
+      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 0.75 }}>
         {tools.map((tool) => {
           const active = activeId === tool.id;
           return (
@@ -256,10 +270,9 @@ export function ToolPicker() {
                     height: 8,
                     borderRadius: '50%',
                     border: '1px solid rgba(255,255,255,0.35)',
-                    background:
-                      tool.color === 'transparent'
-                        ? 'repeating-conic-gradient(#c9c9c9 0% 25%, #fff 0% 50%) 0 0 / 6px 6px'
-                        : tool.color,
+                    background: tool.color === 'transparent'
+                      ? 'repeating-conic-gradient(#c9c9c9 0% 25%, #fff 0% 50%) 0 0 / 6px 6px'
+                      : tool.color,
                   }}
                 />
               )}
