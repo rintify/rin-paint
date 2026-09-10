@@ -4,6 +4,7 @@ import { LayerPanel } from './LayerPanel';
 import { MainMenu } from './MainMenu';
 import { PenSettings } from './PenSettings';
 import { ToolPicker } from './ToolPicker';
+import { StorageUsage } from './StorageUsage';
 import { useStore } from '../state/store';
 
 function ExportProgress() {
@@ -35,6 +36,7 @@ export function LeftPanel() {
       <PenSettings />
       <ColorControls />
       <LayerPanel />
+      <StorageUsage />
     </aside>
   );
 }

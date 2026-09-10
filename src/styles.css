@@ -159,6 +159,22 @@ input[type='range'] {
   padding: 7px 10px;
 }
 
+.menu-pop .menu-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.menu-toggle span:last-child {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.menu-toggle span:last-child.on {
+  color: var(--accent);
+}
+
 .header-progress {
   padding: 0 14px 8px;
   font-size: 11px;
@@ -223,6 +239,84 @@ input[type='range'] {
   margin: 0 0 2px 14px;
   padding-left: 8px;
   border-left: 1px solid var(--border);
+}
+
+/* storage usage */
+
+.storage-wrap {
+  position: relative;
+  flex: none;
+  padding: 5px 14px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.storage-summary {
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  text-align: left;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.storage-summary:hover:not(:disabled) {
+  color: var(--text);
+  border-color: transparent;
+}
+
+.storage-pop {
+  position: absolute;
+  z-index: 31;
+  left: 12px;
+  bottom: 32px;
+  width: 276px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+.storage-title {
+  margin-bottom: 7px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.storage-pop dl {
+  margin: 0;
+}
+
+.storage-pop dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+.storage-pop dt,
+.storage-pop dd {
+  margin: 0;
+  font-weight: normal;
+}
+
+.storage-pop dd {
+  font-variant-numeric: tabular-nums;
+}
+
+.storage-pop .storage-total {
+  margin-top: 4px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+}
+
+.storage-pop p {
+  margin: 8px 0 0;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 /* dialog */

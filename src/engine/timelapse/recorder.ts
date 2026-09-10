@@ -12,15 +12,26 @@ const CAPTURE_DELAY_MS = 400;
 export class TimelapseRecorder {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private capturing = false;
+  private generation = 0;
 
-  constructor(private engine: PaintEngine) {}
+  constructor(
+    private engine: PaintEngine,
+    private onStored: () => void,
+  ) {}
 
   schedule(): void {
+    if (!this.engine.isTimelapseEnabled()) return;
     this.cancelPending();
+    const generation = this.generation;
     this.timer = setTimeout(() => {
       this.timer = null;
-      void this.capture();
+      void this.capture(generation);
     }, CAPTURE_DELAY_MS);
+  }
+
+  setEnabled(enabled: boolean): void {
+    this.generation++;
+    if (!enabled) this.cancelPending();
   }
 
   /** 直前の確定操作に対する保留中の記録を破棄 */
@@ -31,7 +42,7 @@ export class TimelapseRecorder {
     }
   }
 
-  private async capture(): Promise<void> {
+  private async capture(generation: number): Promise<void> {
     if (this.capturing) return;
     this.capturing = true;
     try {
@@ -47,9 +58,14 @@ export class TimelapseRecorder {
       const blob = await new Promise<Blob | null>((resolve) =>
         c.toBlob(resolve, 'image/jpeg', 0.72),
       );
-      if (!blob) return;
+      if (
+        !blob ||
+        generation !== this.generation ||
+        !this.engine.isTimelapseEnabled()
+      ) return;
       await addFrame({ t: Date.now(), blob });
       await thinFramesIfNeeded(MAX_FRAMES);
+      this.onStored();
     } catch {
       // 記録失敗は描画動作に影響させない
     } finally {

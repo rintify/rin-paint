@@ -101,6 +101,8 @@ export function MainMenu() {
   const [toolsOpen, setToolsOpen] = useState(false);
   const [sizeOpen, setSizeOpen] = useState(false);
   const progress = useStore((s) => s.exportProgress);
+  const timelapseEnabled = useStore((s) => s.timelapseEnabled);
+  const historyPrunableCount = useStore((s) => s.historyPrunableCount);
   const fileRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
 
@@ -213,6 +215,32 @@ export function MainMenu() {
               }}
             >
               タイムラプスを書き出し
+            </button>
+            <button
+              className="menu-toggle"
+              aria-pressed={timelapseEnabled}
+              onClick={() => {
+                engine.setTimelapseEnabled(!timelapseEnabled);
+                close();
+              }}
+            >
+              <span>タイムラプスを記録</span>
+              <span className={timelapseEnabled ? 'on' : ''}>
+                {timelapseEnabled ? 'オン' : 'オフ'}
+              </span>
+            </button>
+            <button
+              disabled={historyPrunableCount === 0}
+              onClick={() => {
+                const ok = confirm(
+                  `${historyPrunableCount}件の履歴を削除します。\n` +
+                  '現在位置より先のやり直し履歴と、ほかの分岐も削除されます。よろしいですか？',
+                );
+                if (ok) engine.pruneHistory(10);
+                close();
+              }}
+            >
+              履歴を直近10件に整理…
             </button>
           </div>
         </>

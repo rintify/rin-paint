@@ -14,6 +14,14 @@ export interface RedoBranch {
   label: string;
 }
 
+export interface StorageUsage {
+  history: number;
+  project: number;
+  timelapse: number;
+  other: number;
+  total: number;
+}
+
 export function defaultTools(): ToolInstance[] {
   return [
     {
@@ -50,6 +58,11 @@ export interface PaintState {
   canRedo: boolean;
   /** 現在の履歴ノードの子 (2つ以上あるとき進む時に分岐選択UIを出す) */
   redoBranches: RedoBranch[];
+  historyCount: number;
+  historyPrunableCount: number;
+
+  timelapseEnabled: boolean;
+  storageUsage: StorageUsage;
 
   selectionActive: boolean;
   /** 浮動選択の自由変形モード */
@@ -94,6 +107,11 @@ export const useStore = create<PaintState>((set) => ({
   canUndo: false,
   canRedo: false,
   redoBranches: [],
+  historyCount: 0,
+  historyPrunableCount: 0,
+
+  timelapseEnabled: true,
+  storageUsage: { history: 0, project: 0, timelapse: 0, other: 0, total: 0 },
 
   selectionActive: false,
   freeTransform: false,

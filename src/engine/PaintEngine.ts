@@ -28,7 +28,14 @@ import {
   type Layer,
   type RasterLayer,
 } from './layers';
-import { loadProject, saveProject, type SavedLayer } from './persistence/db';
+import {
+  getPersistenceUsage,
+  loadProject,
+  loadTimelapseEnabled,
+  saveProject,
+  saveTimelapseEnabled,
+  type SavedLayer,
+} from './persistence/db';
 import {
   blobToDataURL,
   dataURLToBlob,
@@ -103,7 +110,7 @@ export class PaintEngine {
   private tmpCtx = this.tmp.getContext('2d')!;
 
   private history = new HistoryTree();
-  private recorder = new TimelapseRecorder(this);
+  private recorder = new TimelapseRecorder(this, () => this.scheduleStorageRefresh());
 
   readonly lasso = new LassoTool(this);
   private tools: Record<ToolKind, Tool> = {
@@ -133,6 +140,7 @@ export class PaintEngine {
 
   private initPromise: Promise<void> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private storageTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
     useStore.subscribe((s, prev) => {
@@ -257,6 +265,11 @@ export class PaintEngine {
 
   private async doInit(): Promise<void> {
     try {
+      useStore.getState().set({ timelapseEnabled: await loadTimelapseEnabled() });
+    } catch {
+      // 設定を読めない場合も、既定値のオンでプロジェクト復元を続ける。
+    }
+    try {
       const proj = await loadProject();
       if (proj && proj.layers.length > 0) {
         if (proj.width && proj.height) setArtSize(proj.width, proj.height);
@@ -305,6 +318,7 @@ export class PaintEngine {
       this.layerCounter = 1;
     }
     this.fixActive();
+    this.scheduleStorageRefresh();
   }
 
   // ---------------------------------------------------------------- render
@@ -739,6 +753,7 @@ export class PaintEngine {
     if (tiles.length === 0) return;
     const node = this.history.push({ kind: 'raster', layerId: layer.id, tiles }, label);
     node.ready = ready;
+    void ready.then(() => this.scheduleStorageRefresh());
     this.bumpLayer(layer.id);
     this.committed();
   }
@@ -841,6 +856,31 @@ export class PaintEngine {
     this.syncStore();
     this.recorder.schedule();
     this.scheduleSave();
+    this.scheduleStorageRefresh();
+  }
+
+  isTimelapseEnabled(): boolean {
+    return useStore.getState().timelapseEnabled;
+  }
+
+  setTimelapseEnabled(enabled: boolean): void {
+    const st = useStore.getState();
+    if (st.timelapseEnabled === enabled) return;
+    st.set({ timelapseEnabled: enabled });
+    this.recorder.setEnabled(enabled);
+    void saveTimelapseEnabled(enabled).catch(() => {
+      // 設定の保存失敗は描画を妨げない。
+    });
+  }
+
+  pruneHistory(limit = 10): number {
+    if (this.busy) return 0;
+    const removed = this.history.pruneToRecent(limit);
+    if (removed > 0) {
+      this.syncStore();
+      this.scheduleStorageRefresh();
+    }
+    return removed;
   }
 
   // ---------------------------------------------------------------- layers
@@ -888,6 +928,7 @@ export class PaintEngine {
         void toBlobP(copy).then((b) => {
           snap.blob = b;
           snap.canvas = undefined;
+          this.scheduleStorageRefresh();
         });
       }
     }
@@ -1383,6 +1424,8 @@ export class PaintEngine {
         index: i,
         label: c.label,
       })),
+      historyCount: this.history.nodeCount(),
+      historyPrunableCount: this.history.prunableCount(10),
       selectionActive: this.lasso.phase === 'float',
       freeTransform: this.lasso.phase === 'float' && this.lasso.free,
     });
@@ -1426,8 +1469,35 @@ export class PaintEngine {
         tools: st.tools,
         activeToolId: st.activeToolId,
       });
+      this.scheduleStorageRefresh();
     } catch {
       // 保存失敗は無視 (次のコミットで再試行される)
+    }
+  }
+
+  private scheduleStorageRefresh(): void {
+    if (this.storageTimer !== null) clearTimeout(this.storageTimer);
+    this.storageTimer = setTimeout(() => {
+      this.storageTimer = null;
+      void this.refreshStorageUsage();
+    }, 120);
+  }
+
+  private async refreshStorageUsage(): Promise<void> {
+    try {
+      const persisted = await getPersistenceUsage();
+      const history = this.history.retainedBytes();
+      useStore.getState().set({
+        storageUsage: {
+          history,
+          project: persisted.project,
+          timelapse: persisted.timelapse,
+          other: persisted.other,
+          total: history + persisted.project + persisted.timelapse + persisted.other,
+        },
+      });
+    } catch {
+      // 容量取得の失敗は描画・保存を妨げない。
     }
   }
 }

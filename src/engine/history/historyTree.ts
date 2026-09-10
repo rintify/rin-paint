@@ -129,4 +129,94 @@ export class HistoryTree {
     this.current = parent;
     return node;
   }
+
+  /** ルートを除く、現在保持している操作ノード数 */
+  nodeCount(): number {
+    let count = 0;
+    const visit = (node: HistoryNode) => {
+      for (const child of node.children) {
+        count++;
+        visit(child);
+      }
+    };
+    visit(this.root);
+    return count;
+  }
+
+  /** 履歴が保持している画像ペイロードの概算バイト数 */
+  retainedBytes(): number {
+    const snapshotBytes = (snapshot: LayerSnapshot): number =>
+      snapshot.blob?.size ??
+      (snapshot.canvas ? snapshot.canvas.width * snapshot.canvas.height * 4 : 0);
+    const opBytes = (op: Op | null): number => {
+      if (!op) return 0;
+      if (op.kind === 'raster') {
+        return op.tiles.reduce(
+          (sum, tile) =>
+            sum +
+            (tile.before?.size ?? tile.w * tile.h * 4) +
+            (tile.after?.size ?? tile.w * tile.h * 4),
+          0,
+        );
+      }
+      if (op.kind === 'layerAdd' || op.kind === 'layerRemove') {
+        return snapshotBytes(op.snapshot);
+      }
+      if (op.kind === 'layerMerge') {
+        return [...op.before, ...op.after].reduce(
+          (sum, entry) => sum + snapshotBytes(entry.snapshot),
+          0,
+        );
+      }
+      return 0;
+    };
+
+    let bytes = 0;
+    const visit = (node: HistoryNode) => {
+      bytes += opBytes(node.op);
+      for (const child of node.children) visit(child);
+    };
+    visit(this.root);
+    return bytes;
+  }
+
+  prunableCount(limit: number): number {
+    let depth = 0;
+    for (let node = this.current; node !== this.root; node = node.parent!) depth++;
+    return Math.max(0, this.nodeCount() - Math.min(depth, Math.max(0, Math.floor(limit))));
+  }
+
+  /**
+   * 現在位置から過去へ limit 操作だけを残す。
+   * 現在位置より先の redo と、現在の経路に含まれない分岐も破棄する。
+   */
+  pruneToRecent(limit: number): number {
+    const before = this.nodeCount();
+    const keep = Math.max(0, Math.floor(limit));
+    const path: HistoryNode[] = [];
+    for (let node: HistoryNode | null = this.current; node; node = node.parent) {
+      path.push(node);
+    }
+    path.reverse();
+
+    // 残す操作の直前の状態を、新しい番兵ルートとして利用する。
+    const baseIndex = Math.max(0, path.length - keep - 1);
+    const retained = path.slice(baseIndex);
+    const base = retained[0];
+    base.parent = null;
+    base.op = null;
+    base.ready = undefined;
+    base.label = '開始';
+    this.root = base;
+
+    for (let i = 0; i < retained.length; i++) {
+      const node = retained[i];
+      const next = retained[i + 1];
+      node.children = next ? [next] : [];
+      node.lastChild = 0;
+      if (next) next.parent = node;
+    }
+
+    return before - this.nodeCount();
+  }
 }
