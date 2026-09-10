@@ -1,5 +1,7 @@
 import { openDB, type IDBPDatabase } from 'idb';
 import type { AdjustParams, BlendMode, LayerType, ToolInstance } from '../../types';
+import type { PersistedHistory } from '../history/historyTree';
+import type { ViewState } from '../view';
 
 export interface SavedLayer {
   id: string;
@@ -24,11 +26,28 @@ export interface SavedProject {
   /** ツールインスタンス (古い保存データには無い) */
   tools?: ToolInstance[];
   activeToolId?: string;
+  /** 履歴の全分岐と現在位置 (古い保存データには無い) */
+  history?: PersistedHistory;
+  /** パン・拡大率・回転 (古い保存データには無い) */
+  view?: ViewState;
 }
 
 export interface TimelapseFrame {
   t: number;
   blob: Blob;
+}
+
+export interface SavedReferenceImage {
+  blob: Blob;
+  name: string;
+  naturalWidth: number;
+  naturalHeight: number;
+  x: number;
+  y: number;
+  width: number;
+  rotation: number;
+  opacity: number;
+  locked: boolean;
 }
 
 const DB_NAME = 'rin-paint';
@@ -37,6 +56,29 @@ let dbPromise: Promise<IDBPDatabase> | null = null;
 let projectBytes = 0;
 let frameBytes: number | null = null;
 let frameBytesPromise: Promise<number> | null = null;
+
+function savedProjectBytes(project: SavedProject | undefined): number {
+  if (!project) return 0;
+  let bytes = project.layers.reduce(
+    (sum, layer) => sum + (layer.blob?.size ?? 0),
+    0,
+  );
+  for (const node of project.history?.nodes ?? []) {
+    const op = node.op;
+    if (!op) continue;
+    if (op.kind === 'raster') {
+      for (const tile of op.tiles) bytes += tile.before.size + tile.after.size;
+    } else if (op.kind === 'layerAdd' || op.kind === 'layerRemove') {
+      bytes += op.snapshot.blob?.size ?? 0;
+    } else if (op.kind === 'layerMerge') {
+      for (const entry of [...op.before, ...op.after]) {
+        bytes += entry.snapshot.blob?.size ?? 0;
+      }
+    }
+  }
+  return bytes;
+}
+
 function db(): Promise<IDBPDatabase> {
   dbPromise ??= openDB(DB_NAME, 1, {
     upgrade(d) {
@@ -49,16 +91,27 @@ function db(): Promise<IDBPDatabase> {
 
 export async function saveProject(p: SavedProject): Promise<void> {
   await (await db()).put('kv', p, 'project');
-  projectBytes = p.layers.reduce((sum, layer) => sum + (layer.blob?.size ?? 0), 0);
+  projectBytes = savedProjectBytes(p);
 }
 
 export async function loadProject(): Promise<SavedProject | undefined> {
   const project = await (await db()).get('kv', 'project') as SavedProject | undefined;
-  projectBytes = project?.layers.reduce(
-    (sum, layer) => sum + (layer.blob?.size ?? 0),
-    0,
-  ) ?? 0;
+  projectBytes = savedProjectBytes(project);
   return project;
+}
+
+export async function saveReferenceImage(image: SavedReferenceImage): Promise<void> {
+  await (await db()).put('kv', image, 'reference-image');
+}
+
+export async function loadReferenceImage(): Promise<SavedReferenceImage | undefined> {
+  return (await (await db()).get('kv', 'reference-image')) as
+    | SavedReferenceImage
+    | undefined;
+}
+
+export async function clearReferenceImage(): Promise<void> {
+  await (await db()).delete('kv', 'reference-image');
 }
 
 export async function addFrame(f: TimelapseFrame): Promise<void> {

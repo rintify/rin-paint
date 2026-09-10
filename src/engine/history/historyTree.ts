@@ -53,6 +53,39 @@ export interface HistoryNode {
   ready?: Promise<void>;
 }
 
+export interface PersistedLayerSnapshot
+  extends Omit<LayerSnapshot, 'canvas'> {
+  blob?: Blob;
+}
+
+export type PersistedOp =
+  | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
+  | { kind: 'layerAdd'; index: number; snapshot: PersistedLayerSnapshot }
+  | { kind: 'layerRemove'; index: number; snapshot: PersistedLayerSnapshot }
+  | { kind: 'layerMove'; from: number; to: number }
+  | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
+  | {
+      kind: 'layerMerge';
+      before: { index: number; snapshot: PersistedLayerSnapshot }[];
+      after: { index: number; snapshot: PersistedLayerSnapshot }[];
+      beforeActiveId: string;
+      afterActiveId: string;
+    };
+
+export interface PersistedHistory {
+  version: 1;
+  rootId: number;
+  currentId: number;
+  nodes: {
+    id: number;
+    label: string;
+    op: PersistedOp | null;
+    parentId: number | null;
+    childIds: number[];
+    lastChild: number;
+  }[];
+}
+
 /**
  * 樹状履歴。undo で親へ戻り、戻った状態から新しい操作をすると
  * 新しい子ブランチが生えて古いブランチもそのまま残る。
@@ -72,6 +105,155 @@ export class HistoryTree {
       lastChild: 0,
     };
     this.current = this.root;
+  }
+
+  /** IndexedDB に保存できる循環参照なしの形式へ変換する。 */
+  async serialize(
+    canvasToBlob: (canvas: HTMLCanvasElement) => Promise<Blob>,
+  ): Promise<PersistedHistory> {
+    // 非同期変換中に新しい操作が追加されても、1つの時点の木構造を保存する。
+    const currentId = this.current.id;
+    const sourceNodes: HistoryNode[] = [];
+    const visit = (node: HistoryNode) => {
+      sourceNodes.push(node);
+      for (const child of node.children) visit(child);
+    };
+    visit(this.root);
+    const rootId = this.root.id;
+    const structure = sourceNodes.map((node) => ({
+      node,
+      id: node.id,
+      label: node.label,
+      parentId: node.parent?.id ?? null,
+      childIds: node.children.map((child) => child.id),
+      lastChild: node.lastChild,
+    }));
+
+    const snapshot = async (value: LayerSnapshot): Promise<PersistedLayerSnapshot> => {
+      const { canvas, ...rest } = value;
+      return {
+        ...rest,
+        blob: value.blob ?? (canvas ? await canvasToBlob(canvas) : undefined),
+      };
+    };
+    const indexed = async (entries: IndexedLayerSnapshot[]) =>
+      Promise.all(
+        entries.map(async (entry) => ({
+          index: entry.index,
+          snapshot: await snapshot(entry.snapshot),
+        })),
+      );
+    const persistOp = async (node: HistoryNode): Promise<PersistedOp | null> => {
+      await node.ready;
+      const op = node.op;
+      if (!op) return null;
+      switch (op.kind) {
+        case 'raster':
+          return { ...op, tiles: op.tiles.map((tile) => ({ ...tile })) };
+        case 'layerAdd':
+        case 'layerRemove':
+          return { ...op, snapshot: await snapshot(op.snapshot) };
+        case 'layerMove':
+          return { ...op };
+        case 'layerProps':
+          return {
+            ...op,
+            before: { ...op.before },
+            after: { ...op.after },
+          };
+        case 'layerMerge':
+          return {
+            ...op,
+            before: await indexed(op.before),
+            after: await indexed(op.after),
+          };
+      }
+    };
+
+    return {
+      version: 1,
+      rootId,
+      currentId,
+      nodes: await Promise.all(
+        structure.map(async (entry) => ({
+          id: entry.id,
+          label: entry.label,
+          op: await persistOp(entry.node),
+          parentId: entry.parentId,
+          childIds: entry.childIds,
+          lastChild: entry.lastChild,
+        })),
+      ),
+    };
+  }
+
+  /** 保存済みの履歴を復元する。不正・旧形式なら false を返して空履歴を維持する。 */
+  restore(value: unknown): boolean {
+    if (!value || typeof value !== 'object') return false;
+    const saved = value as Partial<PersistedHistory>;
+    if (saved.version !== 1 || !Array.isArray(saved.nodes) || saved.nodes.length === 0) {
+      return false;
+    }
+    try {
+      const nodes = new Map<number, HistoryNode>();
+      for (const raw of saved.nodes) {
+        if (
+          !raw ||
+          !Number.isInteger(raw.id) ||
+          typeof raw.label !== 'string' ||
+          !Array.isArray(raw.childIds)
+        ) {
+          return false;
+        }
+        if (nodes.has(raw.id)) return false;
+        nodes.set(raw.id, {
+          id: raw.id,
+          label: raw.label,
+          op: (raw.op ?? null) as Op | null,
+          parent: null,
+          children: [],
+          lastChild: Number.isInteger(raw.lastChild) ? raw.lastChild : 0,
+          ready: Promise.resolve(),
+        });
+      }
+      for (const raw of saved.nodes) {
+        const node = nodes.get(raw.id)!;
+        if (raw.parentId !== null) {
+          const parent = nodes.get(raw.parentId);
+          if (!parent) return false;
+          node.parent = parent;
+        }
+        node.children = raw.childIds.map((id) => {
+          const child = nodes.get(id);
+          if (!child) throw new Error('missing history child');
+          return child;
+        });
+        node.lastChild = Math.max(
+          0,
+          Math.min(node.lastChild, Math.max(0, node.children.length - 1)),
+        );
+      }
+      const root = nodes.get(saved.rootId!);
+      const current = nodes.get(saved.currentId!);
+      if (!root || !current || root.parent !== null) return false;
+      const reachable = new Set<HistoryNode>();
+      const verify = (node: HistoryNode) => {
+        if (reachable.has(node)) throw new Error('cyclic history');
+        reachable.add(node);
+        for (const child of node.children) {
+          if (child.parent !== node) throw new Error('invalid history parent');
+          verify(child);
+        }
+      };
+      verify(root);
+      if (reachable.size !== nodes.size || !reachable.has(current)) return false;
+      this.root = root;
+      this.current = current;
+      this.seq = Math.max(...nodes.keys()) + 1;
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   push(op: Op, label: string): HistoryNode {

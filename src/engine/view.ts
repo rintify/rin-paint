@@ -57,6 +57,20 @@ export class ViewController {
     return { x: this.x, y: this.y, scale: this.scale, rot: this.rot };
   }
 
+  restore(value: unknown): boolean {
+    if (!value || typeof value !== 'object') return false;
+    const state = value as Partial<ViewState>;
+    if (![state.x, state.y, state.scale, state.rot].every(Number.isFinite)) {
+      return false;
+    }
+    this.x = state.x!;
+    this.y = state.y!;
+    this.scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, state.scale!));
+    this.rot = state.rot!;
+    this.apply();
+    return true;
+  }
+
   reset(): void {
     this.x = 0;
     this.y = 0;

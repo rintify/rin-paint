@@ -140,7 +140,12 @@ export class PaintEngine {
 
   private initPromise: Promise<void> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private initialized = false;
+  private saveRevision = 0;
+  private persistedRevision = 0;
+  private saving: Promise<void> | null = null;
   private storageTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastViewState: ViewState = this.view.snapshot();
 
   constructor() {
     useStore.subscribe((s, prev) => {
@@ -155,11 +160,23 @@ export class PaintEngine {
       }
     });
     this.view.onChange = () => {
+      const view = this.view.snapshot();
       const st = useStore.getState();
       if (st.viewScale !== this.view.scale || st.viewRot !== this.view.rot) {
         st.set({ viewScale: this.view.scale, viewRot: this.view.rot });
       }
+      if (
+        view.x !== this.lastViewState.x ||
+        view.y !== this.lastViewState.y ||
+        view.scale !== this.lastViewState.scale ||
+        view.rot !== this.lastViewState.rot
+      ) {
+        this.lastViewState = view;
+        this.scheduleSave();
+      }
     };
+    window.addEventListener('pagehide', this.onPageHide);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
   }
 
   // ---------------------------------------------------------------- attach
@@ -264,6 +281,8 @@ export class PaintEngine {
   }
 
   private async doInit(): Promise<void> {
+    let restoredHistory: unknown;
+    let restoredView: unknown;
     try {
       useStore.getState().set({ timelapseEnabled: await loadTimelapseEnabled() });
     } catch {
@@ -306,6 +325,8 @@ export class PaintEngine {
           canvasH: ART_H,
         });
         this.restoreTools(proj.tools, proj.activeToolId);
+        restoredHistory = proj.history;
+        restoredView = proj.view;
       }
     } catch {
       // 復元に失敗したら新規プロジェクトで開始
@@ -318,6 +339,10 @@ export class PaintEngine {
       this.layerCounter = 1;
     }
     this.fixActive();
+    if (restoredHistory) this.history.restore(restoredHistory);
+    if (restoredView) this.view.restore(restoredView);
+    this.lastViewState = this.view.snapshot();
+    this.initialized = true;
     this.scheduleStorageRefresh();
   }
 
@@ -631,7 +656,7 @@ export class PaintEngine {
       if (e.target === document.body) e.preventDefault();
     } else if (e.key === 'Escape') {
       this.loupe = null;
-      this.lasso.cancelSelection();
+      this.lassoCancel();
     }
   };
 
@@ -764,6 +789,7 @@ export class PaintEngine {
     if (this.busy) return;
     if (this.lasso.phase !== 'idle') {
       this.lasso.cancelSelection();
+      this.scheduleSave();
       return;
     }
     const node = this.history.undo();
@@ -782,7 +808,10 @@ export class PaintEngine {
 
   async redo(childIndex?: number): Promise<void> {
     if (this.busy) return;
-    if (this.lasso.phase !== 'idle') this.lasso.cancelSelection();
+    if (this.lasso.phase !== 'idle') {
+      this.lasso.cancelSelection();
+      this.scheduleSave();
+    }
     const node = this.history.redo(childIndex);
     if (!node) return;
     this.busy = true;
@@ -878,6 +907,7 @@ export class PaintEngine {
     const removed = this.history.pruneToRecent(limit);
     if (removed > 0) {
       this.syncStore();
+      this.scheduleSave();
       this.scheduleStorageRefresh();
     }
     return removed;
@@ -1131,6 +1161,7 @@ export class PaintEngine {
     this.activeLayerId = id;
     this.requestRender();
     this.syncStore();
+    this.scheduleSave();
   }
 
   private assignProps(l: Layer, p: LayerProps): void {
@@ -1242,6 +1273,7 @@ export class PaintEngine {
 
   lassoCancel(): void {
     this.lasso.cancelSelection();
+    this.scheduleSave();
   }
 
   /**
@@ -1434,46 +1466,126 @@ export class PaintEngine {
   // ---------------------------------------------------------------- persistence
 
   scheduleSave(): void {
+    if (!this.initialized) return;
+    this.saveRevision++;
     if (this.saveTimer !== null) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
-      void this.save();
-    }, 800);
+      void this.flushSave();
+    }, 200);
   }
 
-  private async save(): Promise<void> {
-    try {
-      const st = useStore.getState();
-      const layers: SavedLayer[] = [];
-      for (const l of this.layers) {
-        const sl: SavedLayer = {
+  /** 保存要求を順番に処理し、古い非同期保存が新しい状態を上書きしないようにする。 */
+  private flushSave(): Promise<void> {
+    if (!this.initialized) return Promise.resolve();
+    if (this.saveTimer !== null) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+    }
+    // 選択範囲は元レイヤーから一時的に切り抜かれているため、その途中像は保存しない。
+    // 確定・キャンセル時の committed()、または pagehide の確定後に改めて保存される。
+    if (this.lasso.phase !== 'idle') return Promise.resolve();
+    if (this.saving) return this.saving;
+    let failed = false;
+    this.saving = (async () => {
+      while (this.persistedRevision < this.saveRevision) {
+        const targetRevision = this.saveRevision;
+        try {
+          await this.saveSnapshot();
+          this.persistedRevision = targetRevision;
+        } catch {
+          // 次の変更・pagehide で再試行する。失敗時に無限再試行はしない。
+          failed = true;
+          break;
+        }
+      }
+    })().finally(() => {
+      this.saving = null;
+      if (!failed && this.persistedRevision < this.saveRevision) {
+        queueMicrotask(() => void this.flushSave());
+      }
+    });
+    return this.saving;
+  }
+
+  private async saveSnapshot(): Promise<void> {
+    const st = useStore.getState();
+    // Canvas は後続の描画で変わるため、状態を採取する時点で同期コピーする。
+    const layerSources = this.layers.map((l) => {
+      if (l.type === 'adjust') {
+        return {
           id: l.id,
           type: l.type,
           name: l.name,
           opacity: l.opacity,
           blend: l.blend,
           visible: l.visible,
+          params: { ...l.params },
         };
-        if (l.type === 'adjust') sl.params = { ...l.params };
-        else sl.blob = await toBlobP(l.canvas);
-        layers.push(sl);
       }
-      await saveProject({
-        layers,
-        activeLayerId: this.activeLayerId,
-        penColor: st.penColor,
-        penSize: st.penSize,
-        colorHistory: st.colorHistory,
-        width: ART_W,
-        height: ART_H,
-        tools: st.tools,
-        activeToolId: st.activeToolId,
-      });
-      this.scheduleStorageRefresh();
-    } catch {
-      // 保存失敗は無視 (次のコミットで再試行される)
-    }
+      const canvas = makeCanvas();
+      canvas.getContext('2d')!.drawImage(l.canvas, 0, 0);
+      return {
+        id: l.id,
+        type: l.type,
+        name: l.name,
+        opacity: l.opacity,
+        blend: l.blend,
+        visible: l.visible,
+        canvas,
+      };
+    });
+    const activeLayerId = this.activeLayerId;
+    const view = this.view.snapshot();
+    const width = ART_W;
+    const height = ART_H;
+    const penColor = st.penColor;
+    const penSize = st.penSize;
+    const colorHistory = [...st.colorHistory];
+    const tools = st.tools.map((tool) => ({
+      ...tool,
+      penSettings: tool.penSettings ? { ...tool.penSettings } : undefined,
+    }));
+    const activeToolId = st.activeToolId;
+    const historyPromise = this.history.serialize(toBlobP);
+    const layers: SavedLayer[] = await Promise.all(
+      layerSources.map(async (l) => {
+        if (l.type === 'adjust') return l;
+        const { canvas, ...meta } = l;
+        return { ...meta, blob: await toBlobP(canvas) };
+      }),
+    );
+    await saveProject({
+      layers,
+      activeLayerId,
+      penColor,
+      penSize,
+      colorHistory,
+      width,
+      height,
+      tools,
+      activeToolId,
+      history: await historyPromise,
+      view,
+    });
+    this.scheduleStorageRefresh();
   }
+
+  private onVisibilityChange = (): void => {
+    if (document.visibilityState === 'hidden') void this.flushSave();
+  };
+
+  private onPageHide = (event: PageTransitionEvent): void => {
+    if (event.persisted) {
+      // bfcache では同じインスタンスへ戻るため編集中の選択を確定しない。
+      void this.flushSave();
+      return;
+    }
+    // 浮動選択そのものは一時 UI だが、更新で画像内容まで失わないよう確定する。
+    this.finishFloating();
+    this.scheduleSave();
+    void this.flushSave();
+  };
 
   private scheduleStorageRefresh(): void {
     if (this.storageTimer !== null) clearTimeout(this.storageTimer);

@@ -11,8 +11,14 @@ import {
   importReferenceImage,
   REFERENCE_IMAGE_IMPORT_EVENT,
 } from '../referenceImage';
+import {
+  clearReferenceImage,
+  loadReferenceImage,
+  saveReferenceImage,
+} from '../engine/persistence/db';
 
 interface ReferenceImageState {
+  blob: Blob;
   url: string;
   name: string;
   naturalWidth: number;
@@ -81,6 +87,7 @@ export function ReferenceImageWindow({
     currentUrl.current = null;
     interaction.current = null;
     setReference(null);
+    void clearReferenceImage();
   };
 
   useEffect(() => {
@@ -109,6 +116,7 @@ export function ReferenceImageWindow({
           maxH / image.naturalHeight,
         );
         setReference({
+          blob: file,
           url,
           name: file.name,
           naturalWidth: image.naturalWidth,
@@ -130,12 +138,37 @@ export function ReferenceImageWindow({
       image.src = url;
     };
     window.addEventListener(REFERENCE_IMAGE_IMPORT_EVENT, openFile);
+    const restoreSequence = ++loadSequence.current;
+    void loadReferenceImage()
+      .then((saved) => {
+        if (!saved || restoreSequence !== loadSequence.current) return;
+        const url = URL.createObjectURL(saved.blob);
+        currentUrl.current = url;
+        setReference({ ...saved, url });
+      })
+      .catch(() => {
+        // 参照画像だけが読めない場合もキャンバス操作は続けられる。
+      });
     return () => {
       loadSequence.current++;
       window.removeEventListener(REFERENCE_IMAGE_IMPORT_EVENT, openFile);
       if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
     };
   }, [areaRef]);
+
+  useEffect(() => {
+    if (!reference) return;
+    const { url: _url, ...saved } = reference;
+    const persist = () => {
+      void saveReferenceImage(saved);
+    };
+    const timer = setTimeout(persist, 120);
+    window.addEventListener('pagehide', persist);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pagehide', persist);
+    };
+  }, [reference]);
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
