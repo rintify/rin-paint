@@ -1,4 +1,15 @@
-import { useState } from 'react';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import {
+  Box,
+  ButtonBase,
+  Divider,
+  List,
+  ListItem,
+  ListItemText,
+  Menu,
+  Typography,
+} from '@mui/material';
+import { useState, type MouseEvent } from 'react';
 import { useStore } from '../state/store';
 
 function formatBytes(bytes: number): string {
@@ -15,51 +26,70 @@ function formatBytes(bytes: number): string {
 }
 
 export function StorageUsage() {
-  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const usage = useStore((s) => s.storageUsage);
   const historyCount = useStore((s) => s.historyCount);
 
+  const rows = [
+    { label: `履歴（${historyCount}件）`, value: usage.history },
+    { label: '自動保存プロジェクト', value: usage.project },
+    { label: 'タイムラプス', value: usage.timelapse },
+    { label: 'その他', value: usage.other },
+  ];
+
   return (
-    <div className="storage-wrap">
-      <button
-        className="storage-summary"
-        onClick={() => setOpen((value) => !value)}
+    <Box sx={{ flex: 'none', px: 1.75, py: 1, borderTop: 1, borderColor: 'divider' }}>
+      <ButtonBase
+        onClick={(e: MouseEvent<HTMLElement>) => setAnchor(e.currentTarget)}
+        sx={{
+          width: '100%',
+          justifyContent: 'flex-start',
+          gap: 0.5,
+          color: 'text.secondary',
+          fontSize: 10.5,
+          fontVariantNumeric: 'tabular-nums',
+          borderRadius: 1,
+          py: 0.25,
+          '&:hover': { color: 'text.primary' },
+        }}
         title="データ使用量の内訳を表示"
-        aria-expanded={open}
+        aria-expanded={!!anchor}
       >
+        <InfoOutlinedIcon sx={{ fontSize: 14 }} />
         使用量（概算） {formatBytes(usage.total)}
-      </button>
-      {open && (
-        <>
-          <div className="menu-backdrop" onClick={() => setOpen(false)} />
-          <div className="storage-pop">
-            <div className="storage-title">使用量の内訳</div>
-            <dl>
-              <div>
-                <dt>履歴（{historyCount}件）</dt>
-                <dd>{formatBytes(usage.history)}</dd>
-              </div>
-              <div>
-                <dt>自動保存プロジェクト</dt>
-                <dd>{formatBytes(usage.project)}</dd>
-              </div>
-              <div>
-                <dt>タイムラプス</dt>
-                <dd>{formatBytes(usage.timelapse)}</dd>
-              </div>
-              <div>
-                <dt>その他</dt>
-                <dd>{formatBytes(usage.other)}</dd>
-              </div>
-              <div className="storage-total">
-                <dt>合計</dt>
-                <dd>{formatBytes(usage.total)}</dd>
-              </div>
-            </dl>
-            <p>履歴はメモリ上の保持データ、ほかはブラウザ保存領域の概算です。</p>
-          </div>
-        </>
-      )}
-    </div>
+      </ButtonBase>
+      <Menu
+        anchorEl={anchor}
+        open={!!anchor}
+        onClose={() => setAnchor(null)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
+        transformOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+        slotProps={{ paper: { sx: { width: 276, p: 0.5 } } }}
+      >
+        <Typography variant="subtitle2" sx={{ px: 1.5, pt: 1, pb: 0.5 }}>
+          使用量の内訳
+        </Typography>
+        <List dense disablePadding>
+          {rows.map((row) => (
+            <ListItem key={row.label} dense sx={{ py: 0.25 }}>
+              <ListItemText primary={row.label} />
+              <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                {formatBytes(row.value)}
+              </Typography>
+            </ListItem>
+          ))}
+          <Divider sx={{ my: 0.5 }} />
+          <ListItem dense>
+            <ListItemText primary="合計" />
+            <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+              {formatBytes(usage.total)}
+            </Typography>
+          </ListItem>
+        </List>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 1.5, pb: 1, pt: 0.5 }}>
+          履歴はメモリ上の保持データ、ほかはブラウザ保存領域の概算です。
+        </Typography>
+      </Menu>
+    </Box>
   );
 }

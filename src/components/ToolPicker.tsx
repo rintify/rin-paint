@@ -1,71 +1,277 @@
+import BlurOnIcon from '@mui/icons-material/BlurOn';
+import CircleOutlinedIcon from '@mui/icons-material/CircleOutlined';
+import CropSquareIcon from '@mui/icons-material/CropSquare';
+import DeleteOutlinedIcon from '@mui/icons-material/DeleteOutlined';
+import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
+import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
+import GestureIcon from '@mui/icons-material/Gesture';
+import HorizontalRuleIcon from '@mui/icons-material/HorizontalRule';
+import SettingsIcon from '@mui/icons-material/Settings';
+import {
+  Box,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  IconButton,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
+  Stack,
+  Tooltip,
+  Typography,
+} from '@mui/material';
 import { useEffect, useState, type ReactNode } from 'react';
 import { engine } from '../engine/PaintEngine';
 import { useStore } from '../state/store';
 import { TOOL_KIND_LABELS, type ToolKind } from '../types';
 
-function Icon({ children }: { children: ReactNode }) {
-  return <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{children}</svg>;
-}
+const iconSx = { fontSize: 20 };
 
 export const TOOL_ICONS: Record<ToolKind, ReactNode> = {
-  pen: <Icon><path d="M4 20l1.2-4.2L15 6l3 3-9.8 9.8L4 20z" /><path d="M13.5 7.5l3 3" /></Icon>,
-  line: <Icon><path d="M4 20L20 4" /></Icon>,
-  rect: <Icon><rect x="4" y="6" width="16" height="12" rx="1" /></Icon>,
-  ellipse: <Icon><ellipse cx="12" cy="12" rx="8" ry="6" /></Icon>,
-  lasso: <Icon><ellipse cx="12" cy="9" rx="8" ry="5" strokeDasharray="3 2.4" /><path d="M7.5 13c-2 2-2.8 4.2-2 7" /></Icon>,
-  blur: <Icon><path d="M12 3.5c3.2 4 6 7.2 6 10.5a6 6 0 0 1-12 0c0-3.3 2.8-6.5 6-10.5z" /><path d="M9.5 14.5a2.8 2.8 0 0 0 2 2.6" /></Icon>,
+  pen: <EditOutlinedIcon sx={iconSx} />,
+  line: <HorizontalRuleIcon sx={{ ...iconSx, transform: 'rotate(-45deg)' }} />,
+  rect: <CropSquareIcon sx={iconSx} />,
+  ellipse: <CircleOutlinedIcon sx={iconSx} />,
+  lasso: <GestureIcon sx={iconSx} />,
+  blur: <BlurOnIcon sx={iconSx} />,
 };
 
 function AddToolDialog({ onClose }: { onClose: () => void }) {
   const [shapePage, setShapePage] = useState(false);
-  const add = (kind: ToolKind) => { engine.addToolInstance(kind); onClose(); };
-  return <><div className="dialog-backdrop dialog-backdrop-top" onClick={onClose} /><div className="dialog tool-add-dialog" role="dialog" aria-modal="true" aria-label="ツールを追加">
-    <div className="dialog-title">ツールを追加</div>
-    <div className={`tool-add-slider${shapePage ? ' shape-page' : ''}`}>
-      <div className="tool-add-page">
-        <button onClick={() => add('pen')}>{TOOL_ICONS.pen}<span>ペン</span></button>
-        <button onClick={() => setShapePage(true)}>{TOOL_ICONS.rect}<span>図形</span><b>›</b></button>
-        <button onClick={() => add('lasso')}>{TOOL_ICONS.lasso}<span>選択</span></button>
-        <button onClick={() => add('blur')}>{TOOL_ICONS.blur}<span>ぼかし</span></button>
-      </div>
-      <div className="tool-add-page">
-        <button className="tool-add-back" onClick={() => setShapePage(false)}>‹ 戻る</button>
-        {(['line', 'rect', 'ellipse'] as ToolKind[]).map((kind) => <button key={kind} onClick={() => add(kind)}>{TOOL_ICONS[kind]}<span>{TOOL_KIND_LABELS[kind]}</span></button>)}
-      </div>
-    </div>
-    <div className="dialog-actions"><button onClick={onClose}>キャンセル</button></div>
-  </div></>;
+  const add = (kind: ToolKind) => {
+    engine.addToolInstance(kind);
+    onClose();
+  };
+  return (
+    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>ツールを追加</DialogTitle>
+      <DialogContent sx={{ overflow: 'hidden', px: 2 }}>
+        <Box
+          sx={{
+            width: '200%',
+            display: 'flex',
+            transform: shapePage ? 'translateX(-50%)' : 'translateX(0)',
+            transition: 'transform .24s cubic-bezier(.2,.8,.2,1)',
+          }}
+        >
+          <Stack spacing={0.75} sx={{ width: '50%', pr: 0.25 }}>
+            <Button fullWidth onClick={() => add('pen')} startIcon={TOOL_ICONS.pen} sx={{ justifyContent: 'flex-start', minHeight: 42 }}>
+              ペン
+            </Button>
+            <Button fullWidth onClick={() => setShapePage(true)} startIcon={TOOL_ICONS.rect} endIcon={<Typography component="span">›</Typography>} sx={{ justifyContent: 'flex-start', minHeight: 42 }}>
+              図形
+            </Button>
+            <Button fullWidth onClick={() => add('lasso')} startIcon={TOOL_ICONS.lasso} sx={{ justifyContent: 'flex-start', minHeight: 42 }}>
+              選択
+            </Button>
+            <Button fullWidth onClick={() => add('blur')} startIcon={TOOL_ICONS.blur} sx={{ justifyContent: 'flex-start', minHeight: 42 }}>
+              ぼかし
+            </Button>
+          </Stack>
+          <Stack spacing={0.75} sx={{ width: '50%', pr: 0.25 }}>
+            <Button fullWidth onClick={() => setShapePage(false)} sx={{ justifyContent: 'flex-start' }}>
+              ‹ 戻る
+            </Button>
+            {(['line', 'rect', 'ellipse'] as ToolKind[]).map((kind) => (
+              <Button
+                key={kind}
+                fullWidth
+                onClick={() => add(kind)}
+                startIcon={TOOL_ICONS[kind]}
+                sx={{ justifyContent: 'flex-start', minHeight: 42 }}
+              >
+                {TOOL_KIND_LABELS[kind]}
+              </Button>
+            ))}
+          </Stack>
+        </Box>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>キャンセル</Button>
+      </DialogActions>
+    </Dialog>
+  );
 }
 
 function ManageToolsDialog({ onClose }: { onClose: () => void }) {
   const tools = useStore((s) => s.tools);
   const [addOpen, setAddOpen] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+
   useEffect(() => {
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') addOpen ? setAddOpen(false) : onClose(); };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') addOpen ? setAddOpen(false) : onClose();
+    };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
   }, [addOpen, onClose]);
-  return <><div className="dialog-backdrop" onClick={onClose} /><div className="dialog tool-manage-dialog" role="dialog" aria-modal="true" aria-label="ツールを管理">
-    <div className="dialog-title">ツールを管理</div>
-    <div className="tool-manage-list">{tools.map((tool, index) => <div className="tool-manage-row" key={tool.id} draggable onDragStart={() => setDragIndex(index)} onDragEnd={() => setDragIndex(null)} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); if (dragIndex !== null) engine.reorderToolInstance(dragIndex, index); setDragIndex(null); }}>
-      <span className="drag-grip">⠿</span>{TOOL_ICONS[tool.kind]}<span>{tool.name}</span><button className="tool-trash" disabled={tools.length <= 1} title={`${tool.name}を削除`} onClick={() => engine.removeToolInstance(tool.id)}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5" /></svg></button>
-    </div>)}</div>
-    <button onClick={() => setAddOpen(true)}>＋ ツールを追加…</button>
-    <div className="dialog-actions"><button className="primary" onClick={onClose}>完了</button></div>
-  </div>{addOpen && <AddToolDialog onClose={() => setAddOpen(false)} />}</>;
+
+  return (
+    <>
+      <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+        <DialogTitle>ツールを管理</DialogTitle>
+        <DialogContent>
+          <Stack spacing={0.75} sx={{ maxHeight: 'min(420px, 55vh)', overflowY: 'auto' }}>
+            {tools.map((tool, index) => (
+              <Box
+                key={tool.id}
+                draggable
+                onDragStart={() => setDragIndex(index)}
+                onDragEnd={() => setDragIndex(null)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (dragIndex !== null) engine.reorderToolInstance(dragIndex, index);
+                  setDragIndex(null);
+                }}
+                sx={{
+                  minHeight: 43,
+                  display: 'grid',
+                  gridTemplateColumns: '18px 25px 1fr 34px',
+                  alignItems: 'center',
+                  gap: 1,
+                  px: 0.75,
+                  py: 0.5,
+                  border: 1,
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  bgcolor: 'action.hover',
+                  cursor: 'grab',
+                }}
+              >
+                <DragIndicatorIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                {TOOL_ICONS[tool.kind]}
+                <Typography variant="body2" noWrap>
+                  {tool.name}
+                </Typography>
+                <Tooltip title={`${tool.name}を削除`}>
+                  <span>
+                    <IconButton
+                      size="small"
+                      disabled={tools.length <= 1}
+                      onClick={() => engine.removeToolInstance(tool.id)}
+                      aria-label={`${tool.name}を削除`}
+                    >
+                      <DeleteOutlinedIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              </Box>
+            ))}
+          </Stack>
+          <Button fullWidth sx={{ mt: 1.5 }} onClick={() => setAddOpen(true)}>
+            ＋ ツールを追加…
+          </Button>
+        </DialogContent>
+        <DialogActions>
+          <Button variant="contained" onClick={onClose}>
+            完了
+          </Button>
+        </DialogActions>
+      </Dialog>
+      {addOpen && <AddToolDialog onClose={() => setAddOpen(false)} />}
+    </>
+  );
 }
 
 export function ToolPicker() {
   const tools = useStore((s) => s.tools);
   const activeId = useStore((s) => s.activeToolId);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
-  return <div className="section">
-    <div className="section-title-row tool-title-row"><div className="section-title">ツール</div><div className="tool-settings-wrap"><button className="compact-icon-btn" title="ツール設定" onClick={() => setMenuOpen(!menuOpen)}><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="3" /><path d="M19 13.5v-3l-2-.6-.7-1.7 1-1.8-2.1-2.1-1.8 1-1.7-.7L10.5 2h-3l-.6 2-1.7.7-1.8-1-2.1 2.1 1 1.8-.7 1.7-2 .6v3l2 .6.7 1.7-1 1.8 2.1 2.1 1.8-1 1.7.7.6 2h3l.6-2 1.7-.7 1.8 1 2.1-2.1-1-1.8.7-1.7z" transform="translate(2.5 0) scale(.8 1)" /></svg></button>
-      {menuOpen && <><div className="menu-backdrop" onClick={() => setMenuOpen(false)} /><div className="tool-settings-pop"><button onClick={() => { setMenuOpen(false); setManageOpen(true); }}>ツールを管理…</button></div></>}
-    </div></div>
-    <div className="tool-grid">{tools.map((tool) => <div key={tool.id} className="tool-cell"><button className={`tool-btn${activeId === tool.id ? ' active' : ''}`} onClick={() => engine.selectToolInstance(tool.id)} title={tool.name}>{tool.kind === 'lasso' ? null : <span className="tool-color-dot" style={{ background: tool.color === 'transparent' ? 'repeating-conic-gradient(#c9c9c9 0% 25%, #fff 0% 50%) 0 0 / 6px 6px' : tool.color }} />}{TOOL_ICONS[tool.kind]}<span>{tool.name}</span></button></div>)}</div>
-    {manageOpen && <ManageToolsDialog onClose={() => setManageOpen(false)} />}
-  </div>;
+
+  return (
+    <Box className="section">
+      <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1 }}>
+          ツール
+        </Typography>
+        <Tooltip title="ツール設定">
+          <IconButton
+            size="small"
+            onClick={(e) => setMenuAnchor(e.currentTarget)}
+            aria-label="ツール設定"
+          >
+            <SettingsIcon sx={{ fontSize: 16 }} />
+          </IconButton>
+        </Tooltip>
+        <Menu
+          anchorEl={menuAnchor}
+          open={!!menuAnchor}
+          onClose={() => setMenuAnchor(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        >
+          <MenuItem
+            onClick={() => {
+              setMenuAnchor(null);
+              setManageOpen(true);
+            }}
+          >
+            <ListItemIcon>
+              <SettingsIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>ツールを管理…</ListItemText>
+          </MenuItem>
+        </Menu>
+      </Stack>
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(3, 1fr)',
+          gap: 0.75,
+        }}
+      >
+        {tools.map((tool) => {
+          const active = activeId === tool.id;
+          return (
+            <Button
+              key={tool.id}
+              onClick={() => engine.selectToolInstance(tool.id)}
+              title={tool.name}
+              variant={active ? 'contained' : 'outlined'}
+              color={active ? 'primary' : 'inherit'}
+              sx={{
+                position: 'relative',
+                flexDirection: 'column',
+                gap: 0.25,
+                py: 1,
+                px: 0.25,
+                minWidth: 0,
+                color: active ? 'primary.contrastText' : 'text.secondary',
+                bgcolor: active ? 'primary.dark' : 'transparent',
+                borderColor: active ? 'primary.main' : 'divider',
+              }}
+            >
+              {tool.kind !== 'lasso' && (
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    top: 5,
+                    left: 5,
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    border: '1px solid rgba(255,255,255,0.35)',
+                    background:
+                      tool.color === 'transparent'
+                        ? 'repeating-conic-gradient(#c9c9c9 0% 25%, #fff 0% 50%) 0 0 / 6px 6px'
+                        : tool.color,
+                  }}
+                />
+              )}
+              {TOOL_ICONS[tool.kind]}
+              <Typography variant="caption" noWrap sx={{ maxWidth: '100%', fontSize: 10.5, lineHeight: 1.2 }}>
+                {tool.name}
+              </Typography>
+            </Button>
+          );
+        })}
+      </Box>
+      {manageOpen && <ManageToolsDialog onClose={() => setManageOpen(false)} />}
+    </Box>
+  );
 }

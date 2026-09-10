@@ -1,4 +1,12 @@
 import {
+  Box,
+  Button,
+  Paper,
+  Slider,
+  Stack,
+  Typography,
+} from '@mui/material';
+import {
   useEffect,
   useRef,
   useState,
@@ -8,14 +16,15 @@ import {
 } from 'react';
 import { engine } from '../engine/PaintEngine';
 import {
-  importReferenceImage,
-  REFERENCE_IMAGE_IMPORT_EVENT,
-} from '../referenceImage';
-import {
   clearReferenceImage,
   loadReferenceImage,
   saveReferenceImage,
 } from '../engine/persistence/db';
+import {
+  importReferenceImage,
+  REFERENCE_IMAGE_IMPORT_EVENT,
+} from '../referenceImage';
+import { appAlert } from './AppDialogs';
 
 interface ReferenceImageState {
   blob: Blob;
@@ -132,7 +141,7 @@ export function ReferenceImageWindow({
       image.onerror = () => {
         URL.revokeObjectURL(url);
         if (sequence === loadSequence.current) {
-          alert('画像を読み込めませんでした');
+          void appAlert('画像を読み込めませんでした');
         }
       };
       image.src = url;
@@ -280,7 +289,7 @@ export function ReferenceImageWindow({
     event.preventDefault();
   };
 
-  const transfer = () => {
+  const transfer = async () => {
     const areaRect = areaRef.current?.getBoundingClientRect();
     const image = imageRef.current;
     if (!areaRect || !image) return;
@@ -301,7 +310,7 @@ export function ReferenceImageWindow({
       reference.opacity,
     );
     if (!ok) {
-      alert('転写するには、表示中のラスターレイヤーを選択してください');
+      await appAlert('転写するには、表示中のラスターレイヤーを選択してください');
       return;
     }
     close();
@@ -309,7 +318,7 @@ export function ReferenceImageWindow({
 
   return (
     <>
-      <div
+      <Box
         className={`reference-image-window${reference.locked ? ' locked' : ''}`}
         data-canvas-ui={reference.locked ? undefined : 'true'}
         style={{
@@ -342,47 +351,78 @@ export function ReferenceImageWindow({
             />
           </>
         )}
-      </div>
-      <div className="reference-toolbar" data-canvas-ui="true">
-        <span className="reference-name" title={reference.name}>
+      </Box>
+      <Paper
+        className="reference-toolbar"
+        data-canvas-ui="true"
+        elevation={6}
+        sx={{
+          position: 'absolute',
+          zIndex: 12,
+          left: '50%',
+          bottom: 18,
+          transform: 'translateX(-50%)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          maxWidth: 'calc(100% - 28px)',
+          p: 1,
+          borderRadius: 1.5,
+          border: 1,
+          borderColor: 'divider',
+          bgcolor: 'background.paper',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        <Typography
+          variant="body2"
+          title={reference.name}
+          noWrap
+          sx={{ maxWidth: 130 }}
+        >
           {reference.name}
-        </span>
-        <label>
-          <span>透明度</span>
-          <input
-            type="range"
-            min="5"
-            max="100"
+        </Typography>
+        <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
+          <Typography variant="caption" color="text.secondary">
+            透明度
+          </Typography>
+          <Slider
+            min={5}
+            max={100}
             value={Math.round(reference.opacity * 100)}
-            onChange={(event) =>
+            onChange={(_, v) =>
               setReference({
                 ...reference,
-                opacity: Number(event.target.value) / 100,
+                opacity: (v as number) / 100,
               })
             }
+            sx={{ width: 112 }}
           />
-          <span className="reference-percent">
+          <Typography
+            variant="caption"
+            sx={{ width: 34, fontVariantNumeric: 'tabular-nums' }}
+          >
             {Math.round(reference.opacity * 100)}%
-          </span>
-        </label>
-        <button
-          className={reference.locked ? 'toggled' : ''}
+          </Typography>
+        </Stack>
+        <Button
+          variant={reference.locked ? 'contained' : 'outlined'}
           onClick={() => setReference({ ...reference, locked: !reference.locked })}
           title="固定すると画像を貫通してキャンバスへ描けます"
         >
           {reference.locked ? '固定中' : '固定'}
-        </button>
-        <button
+        </Button>
+        <Button
           onClick={() => setReference({ ...reference, rotation: 0 })}
           title="画像の回転を0度へ戻す"
         >
           回転リセット
-        </button>
-        <button className="primary" onClick={transfer}>
+        </Button>
+        <Button variant="contained" onClick={() => void transfer()}>
           転写
-        </button>
-        <button onClick={close}>閉じる</button>
-      </div>
+        </Button>
+        <Button onClick={close}>閉じる</Button>
+      </Paper>
     </>
   );
 }

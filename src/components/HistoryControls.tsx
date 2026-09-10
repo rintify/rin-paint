@@ -1,4 +1,7 @@
-import { useState } from 'react';
+import RedoIcon from '@mui/icons-material/Redo';
+import UndoIcon from '@mui/icons-material/Undo';
+import { Badge, Box, IconButton, Menu, MenuItem, Tooltip, Typography } from '@mui/material';
+import { useState, type MouseEvent } from 'react';
 import { engine } from '../engine/PaintEngine';
 import { useStore } from '../state/store';
 
@@ -6,63 +9,77 @@ export function HistoryControls() {
   const canUndo = useStore((s) => s.canUndo);
   const canRedo = useStore((s) => s.canRedo);
   const branches = useStore((s) => s.redoBranches);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
 
-  const onRedo = () => {
-    // 分岐点では押した時にだけどちらへ進むか聞く
+  const onRedo = (e: MouseEvent<HTMLElement>) => {
     if (branches.length > 1) {
-      setPickerOpen((o) => !o);
+      setAnchor(e.currentTarget);
       return;
     }
     void engine.redo();
   };
 
   return (
-    <div className="history-controls">
-      <button
-        disabled={!canUndo}
-        onClick={() => {
-          setPickerOpen(false);
-          void engine.undo();
-        }}
-        title="戻る (Cmd+Z)"
+    <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+      <Tooltip title="戻る (Cmd+Z)">
+        <span>
+          <IconButton
+            size="small"
+            disabled={!canUndo}
+            onClick={() => {
+              setAnchor(null);
+              void engine.undo();
+            }}
+            aria-label="戻る"
+          >
+            <UndoIcon fontSize="small" />
+          </IconButton>
+        </span>
+      </Tooltip>
+      <Tooltip title={branches.length > 1 ? '進む (分岐あり)' : '進む (Cmd+Shift+Z)'}>
+        <span>
+          <IconButton
+            size="small"
+            disabled={!canRedo}
+            onClick={onRedo}
+            aria-label="進む"
+            color={branches.length > 1 ? 'primary' : 'default'}
+          >
+            <Badge
+              variant="dot"
+              color="primary"
+              invisible={branches.length <= 1}
+              overlap="circular"
+            >
+              <RedoIcon fontSize="small" />
+            </Badge>
+          </IconButton>
+        </span>
+      </Tooltip>
+      <Menu
+        anchorEl={anchor}
+        open={!!anchor && branches.length > 1}
+        onClose={() => setAnchor(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
       >
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M9 14L4 9l5-5" />
-          <path d="M4 9h10a6 6 0 0 1 0 12h-3" />
-        </svg>
-      </button>
-      <button
-        disabled={!canRedo}
-        onClick={onRedo}
-        className={branches.length > 1 ? 'has-branches' : ''}
-        title={branches.length > 1 ? '進む (分岐あり)' : '進む (Cmd+Shift+Z)'}
-      >
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M15 14l5-5-5-5" />
-          <path d="M20 9H10a6 6 0 0 0 0 12h3" />
-        </svg>
-        {branches.length > 1 && <span className="branch-dot" />}
-      </button>
-      {pickerOpen && branches.length > 1 && (
-        <>
-          <div className="menu-backdrop" onClick={() => setPickerOpen(false)} />
-          <div className="branch-picker" title="やり直しの分岐">
-            <div className="branch-picker-title">どちらへ進む？</div>
-            {branches.map((b) => (
-              <button
-                key={b.index}
-                onClick={() => {
-                  setPickerOpen(false);
-                  void engine.redo(b.index);
-                }}
-              >
-                {b.index + 1}. {b.label}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
+        <MenuItem disabled dense>
+          <Typography variant="caption" color="text.secondary">
+            どちらへ進む？
+          </Typography>
+        </MenuItem>
+        {branches.map((b) => (
+          <MenuItem
+            key={b.index}
+            onClick={() => {
+              setAnchor(null);
+              void engine.redo(b.index);
+            }}
+          >
+            {b.index + 1}. {b.label}
+          </MenuItem>
+        ))}
+      </Menu>
+    </Box>
   );
 }

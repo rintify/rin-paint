@@ -1,42 +1,67 @@
+import {
+  Box,
+  LinearProgress,
+  Stack,
+  Typography,
+} from '@mui/material';
+import { useStore } from '../state/store';
 import { ColorControls } from './ColorControls';
 import { HistoryControls } from './HistoryControls';
 import { LayerPanel } from './LayerPanel';
 import { MainMenu } from './MainMenu';
 import { PenSettings } from './PenSettings';
-import { ToolPicker } from './ToolPicker';
 import { StorageUsage } from './StorageUsage';
-import { useStore } from '../state/store';
+import { ToolPicker } from './ToolPicker';
 
 function ExportProgress() {
   const progress = useStore((s) => s.exportProgress);
   if (progress === null) return null;
   const pct = Math.round(progress * 100);
   return (
-    <div className="header-progress">
-      <div className="progress">
-        <div style={{ width: `${pct}%` }} />
-      </div>
-      <span>タイムラプス書き出し中… {pct}%</span>
-    </div>
+    <Box sx={{ px: 1.75, pb: 1 }}>
+      <LinearProgress variant="determinate" value={pct} sx={{ mb: 0.5, height: 5, borderRadius: 1 }} />
+      <Typography variant="caption" color="text.secondary">
+        タイムラプス書き出し中… {pct}%
+      </Typography>
+    </Box>
   );
 }
 
 export function LeftPanel() {
   return (
-    <aside className="left-panel">
-      <header className="panel-header">
-        <h1>rin-paint</h1>
-        <div className="header-actions">
+    <Box
+      component="aside"
+      className="left-panel"
+      sx={{
+        width: 300,
+        flex: 'none',
+        bgcolor: 'background.paper',
+        borderRight: 1,
+        borderColor: 'divider',
+        display: 'flex',
+        flexDirection: 'column',
+        overflowY: 'auto',
+      }}
+    >
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{ alignItems: 'center', justifyContent: 'space-between', px: 1.75, pt: 1.5, pb: 1 }}
+      >
+        <Typography variant="subtitle1" component="h1" sx={{ m: 0, letterSpacing: 0.5, fontWeight: 600 }}>
+          rin-paint
+        </Typography>
+        <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
           <HistoryControls />
           <MainMenu />
-        </div>
-      </header>
+        </Stack>
+      </Stack>
       <ExportProgress />
       <ToolPicker />
       <PenSettings />
       <ColorControls />
       <LayerPanel />
       <StorageUsage />
-    </aside>
+    </Box>
   );
 }

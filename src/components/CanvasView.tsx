@@ -1,6 +1,8 @@
+import { Box, Button, Chip, Paper } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import { engine } from '../engine/PaintEngine';
 import { useStore } from '../state/store';
+import { appAlert } from './AppDialogs';
 import {
   handleReferenceImageDrop,
   ReferenceImageWindow,
@@ -12,14 +14,22 @@ function ViewChip() {
   const deg = Math.round((rot * 180) / Math.PI);
   const isDefault = Math.abs(scale - 1) < 0.005 && deg === 0;
   return (
-    <button
-      className="view-chip"
+    <Chip
+      label={`${Math.round(scale * 100)}%${deg !== 0 ? ` / ${deg}°` : ''}`}
       onClick={() => engine.resetView()}
       disabled={isDefault}
+      size="small"
+      sx={{
+        position: 'absolute',
+        right: 14,
+        bottom: 14,
+        zIndex: 5,
+        fontVariantNumeric: 'tabular-nums',
+        bgcolor: 'background.paper',
+        opacity: isDefault ? 0.55 : 0.92,
+      }}
       title="クリックで表示をリセット。2本指でパン/回転/拡縮、ホイールでパン、⌘+ホイールでズーム、Shift+ホイールで回転、Space+ドラッグでパン"
-    >
-      {Math.round(scale * 100)}%{deg !== 0 && ` / ${deg}°`}
-    </button>
+    />
   );
 }
 
@@ -57,13 +67,12 @@ export function CanvasView() {
     return () => engine.detach();
   }, []);
 
-  // width/height 属性の変更でキャンバスが消えるので再合成を要求する
   useEffect(() => {
     engine.requestRender();
   }, [canvasW, canvasH]);
 
   return (
-    <div
+    <Box
       className={`canvas-area${dropActive ? ' image-drop-active' : ''}`}
       ref={areaRef}
       onDragEnter={(event) => {
@@ -86,37 +95,52 @@ export function CanvasView() {
         event.preventDefault();
         setDropActive(false);
         if (!handleReferenceImageDrop(event)) {
-          alert('画像ファイルをドロップしてください');
+          void appAlert('画像ファイルをドロップしてください');
         }
       }}
     >
-      <div
+      <Box
         className="artboard"
         ref={wrapRef}
         style={{ width: size.w, height: size.h }}
       >
         <canvas ref={mainRef} width={canvasW} height={canvasH} />
         <canvas ref={overlayRef} width={canvasW} height={canvasH} />
-      </div>
+      </Box>
       {selectionActive && (
-        <div className="selection-toolbar">
-          <button
-            className={freeTransform ? 'toggled' : ''}
+        <Paper
+          elevation={6}
+          sx={{
+            position: 'absolute',
+            bottom: 22,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            display: 'flex',
+            gap: 1,
+            p: 1,
+            borderRadius: 1.5,
+            border: 1,
+            borderColor: 'divider',
+            bgcolor: 'background.paper',
+          }}
+        >
+          <Button
+            variant={freeTransform ? 'contained' : 'outlined'}
             title="角を個別に動かして変形"
             onClick={() => engine.setSelectionFreeTransform(!freeTransform)}
           >
             自由変形
-          </button>
-          <button onClick={() => engine.lassoDuplicate()}>複製</button>
-          <button className="primary" onClick={() => engine.lassoCommit()}>
+          </Button>
+          <Button onClick={() => engine.lassoDuplicate()}>複製</Button>
+          <Button variant="contained" onClick={() => engine.lassoCommit()}>
             確定
-          </button>
-          <button onClick={() => engine.lassoCancel()}>キャンセル</button>
-        </div>
+          </Button>
+          <Button onClick={() => engine.lassoCancel()}>キャンセル</Button>
+        </Paper>
       )}
       <ReferenceImageWindow areaRef={areaRef} />
-      {dropActive && <div className="image-drop-hint">画像を参照として開く</div>}
+      {dropActive && <Box className="image-drop-hint">画像を参照として開く</Box>}
       <ViewChip />
-    </div>
+    </Box>
   );
 }
