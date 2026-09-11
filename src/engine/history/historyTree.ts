@@ -16,6 +16,7 @@ export interface LayerSnapshot {
   params?: AdjustParams;
   maskLayerIds?: string[];
   shape?: ShapeParams;
+  snapEnabled?: boolean;
   text?: TextParams;
   /** ラスター内容。作成直後は canvas、PNG エンコード完了後は blob に置き換わる */
   canvas?: HTMLCanvasElement;
@@ -30,6 +31,7 @@ export interface LayerProps {
   params?: AdjustParams;
   maskLayerIds?: string[];
   shape?: ShapeParams;
+  snapEnabled?: boolean;
   text?: TextParams;
 }
 

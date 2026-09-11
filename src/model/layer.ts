@@ -18,6 +18,7 @@ export interface LayerMeta {
   params?: AdjustParams;
   maskLayerIds?: string[];
   shape?: ShapeParams;
+  snapEnabled?: boolean;
   text?: TextParams;
   /** ラスター内容が変わるたびに増える (サムネイル再描画用) */
   version: number;

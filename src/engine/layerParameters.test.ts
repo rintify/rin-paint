@@ -15,4 +15,19 @@ describe('generic layer parameters', () => {
     expect(changed.style.color).toBe('#abcdef');
     expect(changed.ranges.every(range => range.color === '#abcdef')).toBe(true);
   });
+
+  it('exposes snapEnabled only when every selected layer is a shape', () => {
+    const on: LayerMeta = { ...base, id: 'a', type: 'shape', name: 'A', snapEnabled: true, shape: { kind: 'rect', x: 0, y: 0, width: 10, height: 10, color: '#111111', strokeWidth: 2, paintMode: 'stroke' } };
+    const off: LayerMeta = { ...base, id: 'b', type: 'shape', name: 'B', snapEnabled: false, shape: { kind: 'line', x1: 0, y1: 0, x2: 4, y2: 4, color: '#111111', strokeWidth: 2 } };
+    const mixed = commonLayerParameterDescriptors([on, off]);
+    const snap = mixed.find(value => value.key === 'snapEnabled')!;
+    expect(snap.control).toBe('switch');
+    expect(snap.trueLabel).toBe('ON');
+    expect(snap.falseLabel).toBe('OFF');
+    expect(snap.read(on)).toBe(true);
+    expect(snap.read(off)).toBe(false);
+    expect(snap.write(off, true)).toEqual({ snapEnabled: true });
+    const text: LayerMeta = { ...base, id: 't', type: 'text', name: '文字', text: { content: 'ab', x: 0, y: 0, width: null, height: null, rotation: 0, direction: 'horizontal', lineHeight: 1.5, style: { fontId: 'sans', color: '#222222', sizePt: 12 }, ranges: [], ruby: [] } };
+    expect(commonLayerParameterDescriptors([on, text]).some(value => value.key === 'snapEnabled')).toBe(false);
+  });
 });

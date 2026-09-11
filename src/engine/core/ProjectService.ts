@@ -279,6 +279,7 @@ export class ProjectService {
       useStore.getState().set({ fonts: [], textEditingId: null, projectGeneration: this.projectGeneration, selectionActive: false, freeTransform: false, selectedLayerIds: [layer.id], multiSelectMode: false, clipboardAvailable: false, pages: [{ id: pageId, thumbnailVersion: 0 }], activePageId: pageId });
       eng.events.emit('projectReset');
       eng.view.reset();
+      eng.shapeEdit.refreshVertexState();
       eng.requestRender(); eng.syncStore(); eng.scheduleStorageRefresh();
     } finally { eng.setBusy(false); }
   }

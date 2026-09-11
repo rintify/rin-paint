@@ -76,6 +76,7 @@ export class PageService {
     if (eng.isBusy() || id === this.activePageId || !this.pageOrder.includes(id)) return;
     eng.layerService.finishFloating();
     eng.cancelSessions();
+    eng.cancelShapeEdit();
     eng.layerService.exitMultiSelect();
     await eng.flushSavePublic();
     await eng.recorderPublic().reset();
@@ -89,6 +90,7 @@ export class PageService {
       await eng.restoreSavedPagePublic(page);
       await this.saveMeta();
       eng.events.emit('projectReset');
+      eng.shapeEdit.refreshVertexState();
       eng.requestRender();
       eng.syncStore();
     } finally {

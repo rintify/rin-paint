@@ -83,6 +83,7 @@ export interface PaintState {
   polygonDraftPointCount: number;
   polygonVertexSelected: boolean;
   polygonVertexCanDelete: boolean;
+  polygonVertexEdgeConstrained: boolean;
   fillProgress: number | null;
   toolNotice: string | null;
   exportProgress: number | null;
@@ -157,6 +158,7 @@ export const useStore = create<PaintState>((set) => ({
   polygonDraftPointCount: 0,
   polygonVertexSelected: false,
   polygonVertexCanDelete: false,
+  polygonVertexEdgeConstrained: false,
   fillProgress: null,
   toolNotice: null,
   exportProgress: null,

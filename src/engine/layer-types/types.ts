@@ -38,6 +38,7 @@ export interface StoredLayer {
   params?: AdjustParams;
   maskLayerIds?: string[];
   shape?: ShapeParams;
+  snapEnabled?: boolean;
   text?: TextParams;
   canvas?: HTMLCanvasElement;
   blob?: Blob;
@@ -133,6 +134,9 @@ export interface LayerParameterDescriptor {
   max?: number;
   options?: { value: string; label: string }[];
   allowTransparent?: boolean;
+  /** switch の ON/OFF 表示。未指定なら「表示／非表示」 */
+  trueLabel?: string;
+  falseLabel?: string;
   read(layer: LayerParameterLayer): LayerParameterValue | null;
   write(layer: LayerParameterLayer, value: LayerParameterValue): LayerProps;
 }

@@ -283,6 +283,8 @@ export class PaintEngine {
   finishShapeEdit(point: StrokePoint): boolean { return this.shapeEdit.finishShapeEdit(point); }
   cancelShapeEdit(): void { this.shapeEdit.cancelShapeEdit(); }
   drawActiveShapeHandles(ctx: CanvasRenderingContext2D): void { this.shapeEdit.drawActiveShapeHandles(ctx); }
+  setPolygonVertexEdgeConstrained(value: boolean): void { this.shapeEdit.setPolygonVertexEdgeConstrained(value); }
+  deleteSelectedPolygonVertex(): void { this.shapeEdit.deleteSelectedVertex(); }
 
   // ---------------------------------------------------------------- tools / misc
 
@@ -335,7 +337,6 @@ export class PaintEngine {
   polygonCancel(): void { this.polygon.cancel(); }
   polygonUndoPoint(): void { this.polygon.undoPoint(); }
   cancelFill(): void { this.fill.cancel(); }
-  deleteSelectedPolygonVertex(): void { this.shapeEdit.deleteSelectedVertex(); }
   notify(message: string): void { useStore.getState().set({ toolNotice: message }); }
 
   selectToolInstance(id: string): void {

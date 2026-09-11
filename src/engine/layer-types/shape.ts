@@ -41,6 +41,12 @@ function shapeDescriptors(shape: ShapeParams): LayerParameterDescriptor[] {
     });
   const descriptors: LayerParameterDescriptor[] = [
     {
+      key: 'snapEnabled', label: 'スナップ', control: 'switch',
+      trueLabel: 'ON', falseLabel: 'OFF',
+      read: layer => layer.type === 'shape' ? layer.snapEnabled !== false : null,
+      write: (_layer, value) => ({ snapEnabled: Boolean(value) }),
+    },
+    {
       key: 'strokeWidth', label: '線の太さ', control: 'number', min: 1, max: 4096,
       read: shapeRead(current => current.strokeWidth),
       write: shapeWrite((current, value) => ({ ...current, strokeWidth: Math.max(1, Number(value)) })),
@@ -85,21 +91,23 @@ export const shapeLayerType: LayerTypeHandler<ShapeLayer> = {
 
   snapshot(layer, snapshot) {
     snapshot.shape = cloneShape(layer.shape);
+    snapshot.snapEnabled = layer.snapEnabled;
   },
 
   async restore(source, env) {
     if (!source.shape) return null;
-    return createShapeLayer(env.name, normalizeShape(cloneShape(source.shape)), source.id);
+    return createShapeLayer(env.name, normalizeShape(cloneShape(source.shape)), source.id, source.snapEnabled !== false);
   },
 
   async toSaved(layer) {
-    return { shape: cloneShape(layer.shape) };
+    return { shape: cloneShape(layer.shape), snapEnabled: layer.snapEnabled };
   },
 
   applyProps(layer, props) {
     if (props.shape !== undefined) layer.shape = cloneShape(props.shape);
+    if (props.snapEnabled !== undefined) layer.snapEnabled = props.snapEnabled;
   },
-  captureProps: (layer) => ({ shape: cloneShape(layer.shape) }),
+  captureProps: (layer) => ({ shape: cloneShape(layer.shape), snapEnabled: layer.snapEnabled }),
 
   scale(layer, factor) {
     layer.shape = scaleShape(layer.shape, factor);

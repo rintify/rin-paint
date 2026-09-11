@@ -1,5 +1,6 @@
 import { Box, Typography } from '@mui/material';
 import { PaintModeSelect } from '../shape/PaintModeSelect';
+import { ConstrainAspectSwitch } from '../shape/ConstrainAspectSwitch';
 import { SizePanel } from '../shape/SizePanel';
 
 export function RectSettingsPanel() {
@@ -10,6 +11,7 @@ export function RectSettingsPanel() {
       </Typography>
       <SizePanel />
       <PaintModeSelect />
+      <ConstrainAspectSwitch label="正方形に固定" />
     </Box>
   );
 }

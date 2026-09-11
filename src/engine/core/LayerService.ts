@@ -504,6 +504,7 @@ export class LayerService {
         state.set({ selectedLayerIds });
       }
       this.engine.syncStore();
+      this.engine.shapeEdit.refreshVertexState();
       return;
     }
     if (id === this.activeLayerId) return;
@@ -511,6 +512,7 @@ export class LayerService {
     this.activeLayerId = id;
     this.engine.requestRender();
     this.engine.syncStore();
+    this.engine.shapeEdit.refreshVertexState();
     this.engine.scheduleSave();
   }
 
@@ -650,7 +652,7 @@ export class LayerService {
       return [{ kind: 'layerProps' as const, layerId, before, after }];
     });
     if (!ops.length) return;
-    this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, '共通パラメータを変更');
+    this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, key === 'snapEnabled' ? 'スナップを変更' : '共通パラメータを変更');
     this.engine.committed();
   }
 

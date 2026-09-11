@@ -12,7 +12,7 @@ import { migrateClipboard, migrateProjectMeta, migrateSavedPage } from './migrat
 export interface SavedLayer {
   id: string; type: LayerType; name: string; opacity: number; blend: BlendMode;
   visible: boolean; parentId: string | null; childIds: string[];
-  params?: AdjustParams; maskLayerIds?: string[]; shape?: ShapeParams; text?: TextParams; blob?: Blob;
+  params?: AdjustParams; maskLayerIds?: string[]; shape?: ShapeParams; snapEnabled?: boolean; text?: TextParams; blob?: Blob;
 }
 export interface SavedPage {
   id: string; canvasSpec: CanvasSpec; rootLayerIds: string[]; layers: SavedLayer[];

@@ -28,11 +28,15 @@ export function MultiParameterControls({ layers }: { layers: LayerMeta[] }) {
           <Stack key={descriptor.key} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
             <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>{descriptor.label}</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-              {value === null ? '—' : value ? '表示' : '非表示'}
+              {value === null ? '—' : value ? (descriptor.trueLabel ?? '表示') : (descriptor.falseLabel ?? '非表示')}
             </Typography>
-            <Switch checked={value === true} onChange={event => {
-              engine.updateSelectedParameter(descriptor.key, event.target.checked);
-            }} />
+            <Switch
+              checked={value === true}
+              onChange={event => {
+                engine.updateSelectedParameter(descriptor.key, event.target.checked);
+              }}
+              slotProps={{ input: { 'aria-label': descriptor.label } }}
+            />
           </Stack>
         );
         if (descriptor.control === 'number') return (

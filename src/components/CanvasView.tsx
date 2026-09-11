@@ -53,6 +53,7 @@ export function CanvasView() {
   const polygonDraftPointCount = useStore((s) => s.polygonDraftPointCount);
   const polygonVertexSelected = useStore((s) => s.polygonVertexSelected);
   const polygonVertexCanDelete = useStore((s) => s.polygonVertexCanDelete);
+  const polygonVertexEdgeConstrained = useStore((s) => s.polygonVertexEdgeConstrained);
   const fillProgress = useStore((s) => s.fillProgress);
   const toolNotice = useStore((s) => s.toolNotice);
 
@@ -160,6 +161,13 @@ export function CanvasView() {
       )}
       {!polygonDraftActive && polygonVertexSelected && (
         <Paper elevation={6} data-canvas-ui sx={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 1, p: 1, zIndex: 6 }}>
+          <Button
+            aria-pressed={polygonVertexEdgeConstrained}
+            variant={polygonVertexEdgeConstrained ? 'contained' : 'outlined'}
+            onClick={() => engine.setPolygonVertexEdgeConstrained(!polygonVertexEdgeConstrained)}
+          >
+            辺に沿う
+          </Button>
           <Button disabled={!polygonVertexCanDelete} onClick={() => engine.deleteSelectedPolygonVertex()}>頂点を削除</Button>
         </Paper>
       )}

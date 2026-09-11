@@ -55,4 +55,14 @@ describe('tool management', () => {
     useStore.getState().reorderStackTools(stack.id, 0, 1);
     expect(useStore.getState().toolStacks[0].toolIds).toEqual([tools[0].id, tools[1].id]);
   });
+
+  it('persists the aspect-lock switch on a shape tool instance', () => {
+    useStore.setState({ ...original, tools: defaultTools() });
+    useStore.getState().addTool('rect');
+    useStore.getState().updateActiveToolSettings({ constrainAspect: true });
+    expect(useStore.getState().tools.find(tool => tool.kind === 'rect')?.settings).toMatchObject({
+      paintMode: 'stroke',
+      constrainAspect: true,
+    });
+  });
 });

@@ -8,6 +8,7 @@ import {
   MenuItem,
   Select,
   Stack,
+  Switch,
   Typography,
 } from '@mui/material';
 import { useState } from 'react';
@@ -83,6 +84,22 @@ export function ShapeControls({ meta }: { meta: LayerMeta }) {
   };
   return (
     <Stack spacing={1} sx={{ pt: 0.5 }}>
+      <Stack spacing={0.25}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>スナップ</Typography>
+          <Switch
+            checked={meta.snapEnabled !== false}
+            onChange={event => engine.commitLayerProps(
+              meta.id,
+              { snapEnabled: meta.snapEnabled !== false },
+              { snapEnabled: event.target.checked },
+              'スナップを変更',
+            )}
+            slotProps={{ input: { 'aria-label': 'スナップ' } }}
+          />
+        </Stack>
+        <Typography variant="caption" color="text.secondary">移動の端・中央と90°回転</Typography>
+      </Stack>
       <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.75 }}>
         {fields.map(field => (
           <ShapeNumber key={field.label} label={field.label} value={field.value} make={field.make} meta={meta} min={field.min} />

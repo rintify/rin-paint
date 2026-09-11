@@ -35,6 +35,7 @@ export interface ShapeLayer extends LayerTreeFields {
   type: 'shape';
   name: string;
   shape: ShapeParams;
+  snapEnabled: boolean;
   opacity: number;
   blend: BlendMode;
   visible: boolean;
@@ -115,12 +116,13 @@ export function createAdjustLayer(name: string, id = newLayerId()): AdjustLayer 
   };
 }
 
-export function createShapeLayer(name: string, shape: ShapeParams, id = newLayerId()): ShapeLayer {
+export function createShapeLayer(name: string, shape: ShapeParams, id = newLayerId(), snapEnabled = true): ShapeLayer {
   return {
     id,
     type: 'shape',
     name,
     shape,
+    snapEnabled,
     opacity: 1,
     blend: 'source-over',
     visible: true,

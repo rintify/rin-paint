@@ -411,3 +411,153 @@ describe('canvas history and new project', () => {
     await verify('adjust', () => engine.addAdjustLayer());
   });
 });
+
+describe('shape snap, constraints, and persistence', () => {
+  const pt = (x: number, y: number) => ({ x, y, pressure: 1 });
+  function shapeEdit() {
+    return (engine as unknown as { shapeEdit: { snapGuides(): { x: number | null; y: number | null } } }).shapeEdit;
+  }
+  function layerSnap(id: string) {
+    return (engine as unknown as { layerService: { shapeById(id: string): { snapEnabled: boolean } | null } }).layerService.shapeById(id)?.snapEnabled;
+  }
+
+  it('creates shapes with snap on and keeps the setting through undo, save, and copy', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({ kind: 'rect', x: 40, y: 40, width: 20, height: 20, color: '#000', strokeWidth: 2, paintMode: 'stroke' });
+    const id = useStore.getState().activeLayerId;
+    expect(layerSnap(id)).toBe(true);
+    engine.commitLayerProps(id, { snapEnabled: true }, { snapEnabled: false }, 'スナップを変更');
+    expect(layerSnap(id)).toBe(false);
+    await engine.undo();
+    expect(layerSnap(id)).toBe(true);
+    await engine.redo();
+    expect(layerSnap(id)).toBe(false);
+    await engine.copyLayers(id);
+    await engine.pasteLayers();
+    const shapes = useStore.getState().layers.filter(layer => layer.type === 'shape');
+    expect(shapes.every(layer => layer.snapEnabled === false)).toBe(true);
+    await (engine as unknown as { flushSave(): Promise<void> }).flushSave();
+    const { page } = await loadActivePersisted();
+    expect(page?.layers.filter(layer => layer.type === 'shape').every(layer => layer.snapEnabled === false)).toBe(true);
+  });
+
+  it('snaps moves to canvas lines, skips hidden and self, and stays free when disabled', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({ kind: 'rect', x: 50, y: 10, width: 8, height: 8, color: '#000', strokeWidth: 1, paintMode: 'stroke' });
+    const hiddenId = useStore.getState().activeLayerId;
+    engine.commitLayerProps(hiddenId, { visible: true }, { visible: false }, '表示切替');
+    engine.addShapeLayer({ kind: 'rect', x: 44, y: 200, width: 40, height: 40, color: '#000', strokeWidth: 1, paintMode: 'stroke' });
+    const id = useStore.getState().activeLayerId;
+    const historyBefore = useStore.getState().historyCount;
+    expect(engine.beginShapeEdit(pt(64, 220))).toBe(true);
+    engine.updateShapeEdit(pt(64, 220));
+    expect(engine.getShape(id)).toMatchObject({ x: 44, y: 200 });
+    expect(shapeEdit().snapGuides()).toEqual({ x: null, y: null });
+    engine.updateShapeEdit(pt(67, 220));
+    expect(engine.getShape(id)).toMatchObject({ x: 47, y: 200 });
+    engine.finishShapeEdit(pt(67, 220));
+    expect(useStore.getState().historyCount).toBe(historyBefore + 1);
+
+    engine.beginShapeEdit(pt(67, 220));
+    engine.updateShapeEdit(pt(100, 220));
+    engine.cancelShapeEdit();
+    expect(engine.getShape(id)).toMatchObject({ x: 47, y: 200 });
+    expect(shapeEdit().snapGuides()).toEqual({ x: null, y: null });
+
+    await engine.newProject();
+    engine.addShapeLayer({ kind: 'rect', x: 5, y: 80, width: 40, height: 40, color: '#000', strokeWidth: 1, paintMode: 'stroke' });
+    const nearId = useStore.getState().activeLayerId;
+    engine.commitLayerProps(nearId, { snapEnabled: true }, { snapEnabled: false }, 'スナップを変更');
+    engine.beginShapeEdit(pt(25, 100));
+    engine.updateShapeEdit(pt(28, 100));
+    expect(engine.getShape(nearId)).toMatchObject({ x: 8 });
+    expect(shapeEdit().snapGuides()).toEqual({ x: null, y: null });
+    engine.cancelShapeEdit();
+    engine.commitLayerProps(nearId, { snapEnabled: false }, { snapEnabled: true }, 'スナップを変更');
+    engine.beginShapeEdit(pt(25, 100));
+    engine.updateShapeEdit(pt(25, 100));
+    expect(engine.getShape(nearId)).toMatchObject({ x: 0 });
+    expect(shapeEdit().snapGuides().x).toBe(0);
+    engine.cancelShapeEdit();
+  });
+
+  it('snaps rotate-handle angles near 90 degrees and records one history entry', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({ kind: 'rect', x: 0, y: 0, width: 100, height: 100, rotation: 0, color: '#000', strokeWidth: 1, paintMode: 'stroke' });
+    const id = useStore.getState().activeLayerId;
+    const historyBefore = useStore.getState().historyCount;
+    expect(engine.beginShapeEdit(pt(50, -28))).toBe(true);
+    engine.updateShapeEdit(pt(150, 50));
+    expect(engine.getShape(id)).toMatchObject({ rotation: Math.PI / 2 });
+    engine.finishShapeEdit(pt(150, 50));
+    expect(useStore.getState().historyCount).toBe(historyBefore + 1);
+
+    engine.commitLayerProps(id, { snapEnabled: true }, { snapEnabled: false }, 'スナップを変更');
+    const angle = -6 * Math.PI / 180;
+    engine.beginShapeEdit(pt(50, -28));
+    engine.updateShapeEdit(pt(50 + Math.cos(angle) * 100, 50 + Math.sin(angle) * 100));
+    const free = engine.getShape(id);
+    expect(free && 'rotation' in free ? free.rotation : 0).not.toBeCloseTo(Math.PI / 2, 5);
+    engine.cancelShapeEdit();
+  });
+
+  it('does not apply snap during lasso object transforms', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({ kind: 'rect', x: 5, y: 80, width: 20, height: 20, color: '#000', strokeWidth: 1, paintMode: 'stroke' });
+    const id = useStore.getState().activeLayerId;
+    const entries = engine.selectedObjectsInRect({ minX: 0, minY: 0, maxX: 40, maxY: 120 });
+    expect(entries.some(entry => entry.id === id)).toBe(true);
+    engine.previewObjectGroup(
+      entries,
+      [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }],
+      [{ x: 1, y: 0 }, { x: 11, y: 0 }, { x: 11, y: 10 }, { x: 1, y: 10 }],
+    );
+    expect(engine.getShape(id)).toMatchObject({ x: 6, y: 80 });
+  });
+
+  it('constrains polygon vertices along edges from Shift or the GUI toggle', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({
+      kind: 'polygon', cx: 0, cy: 0, rotation: 0, color: '#000', strokeWidth: 1, paintMode: 'stroke',
+      points: [{ x: 0, y: 0 }, { x: 40, y: 0 }, { x: 0, y: 40 }],
+    });
+    const id = useStore.getState().activeLayerId;
+    expect(engine.beginShapeEdit(pt(0, 0))).toBe(true);
+    engine.updateShapeEdit(pt(10, 2), { shiftKey: true } as PointerEvent);
+    expect(engine.getShape(id)).toEqual(expect.objectContaining({
+      kind: 'polygon',
+      points: [expect.objectContaining({ x: 10, y: 0 }), expect.anything(), expect.anything()],
+    }));
+    engine.cancelShapeEdit();
+    engine.beginShapeEdit(pt(0, 0));
+    engine.setPolygonVertexEdgeConstrained(true);
+    engine.updateShapeEdit(pt(2, 10));
+    expect(engine.getShape(id)).toEqual(expect.objectContaining({
+      kind: 'polygon',
+      points: [expect.objectContaining({ x: 0, y: 10 }), expect.anything(), expect.anything()],
+    }));
+    engine.cancelShapeEdit();
+    const raster = useStore.getState().layers.find(layer => layer.type === 'raster')!.id;
+    engine.setActiveLayer(raster);
+    expect(useStore.getState().polygonVertexSelected).toBe(false);
+    expect(useStore.getState().polygonVertexEdgeConstrained).toBe(false);
+  });
+
+  it('creates the same square from Shift and the GUI aspect lock', async () => {
+    await engine.newProject();
+    const { ShapeTool } = await import('../tools/shape/tool');
+    const tool = new ShapeTool(engine, 'rect');
+    tool.onDown(pt(10, 20), { shiftKey: true } as PointerEvent);
+    tool.onUp(pt(18, 25), { shiftKey: true } as PointerEvent);
+    const shifted = engine.getShape(useStore.getState().activeLayerId);
+    useStore.getState().addTool('rect');
+    engine.updateActiveToolSettings({ constrainAspect: true });
+    const locked = new ShapeTool(engine, 'rect');
+    locked.onDown(pt(10, 20), { shiftKey: false } as PointerEvent);
+    locked.onUp(pt(18, 25), { shiftKey: false } as PointerEvent);
+    const fromGui = engine.getShape(useStore.getState().activeLayerId);
+    expect(shifted).toMatchObject({ kind: 'rect', width: 8, height: 8 });
+    expect(fromGui).toMatchObject({ kind: 'rect', width: 8, height: 8 });
+  });
+});
+

@@ -20,6 +20,7 @@ export function layerParameterDescriptors(layer: LayerParameterLayer): LayerPara
   const result: LayerParameterDescriptor[] = [
     {
       key: 'visible', label: '表示', control: 'switch',
+      trueLabel: '表示', falseLabel: '非表示',
       read: value => value.visible,
       write: (_value, next) => ({ visible: Boolean(next) }),
     },

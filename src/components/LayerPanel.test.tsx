@@ -30,6 +30,8 @@ const mockEngine = vi.hoisted(() => ({
   removeLayer: actions.remove,
   mergeLayerDown: actions.merge,
   renameLayer: actions.rename,
+  commitLayerProps: vi.fn(),
+  updateSelectedParameter: vi.fn(),
 })) as unknown as PaintEngine;
 
 vi.mock('../engine/shapes', async (importOriginal) => {
@@ -198,6 +200,42 @@ describe('layer settings entry points', () => {
     expect(actions.setActiveLayer).not.toHaveBeenCalled();
     expect(useStore.getState().multiSelectMode).toBe(true);
     expect(useStore.getState().selectedLayerIds).toEqual(['shape', 'raster']);
+  });
+  it('shows a snap switch for a shape layer and keeps it out of mixed-type multi-select', async () => {
+    await renderPanel();
+    await click([...container.querySelectorAll('.layer-row')].find(el => el.textContent?.includes('直線'))!);
+    const snap = container.querySelector('[aria-label="スナップ"]');
+    expect(snap).not.toBeNull();
+    expect(container.textContent).toContain('移動の端・中央と90°回転');
+    await act(async () => {
+      snap!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const extra: LayerMeta = {
+      ...base,
+      id: 'shape-off',
+      name: '四角形',
+      type: 'shape',
+      snapEnabled: false,
+      canRemove: true,
+      shape: { kind: 'rect', x: 0, y: 0, width: 8, height: 8, color: '#000', strokeWidth: 1, paintMode: 'stroke' },
+    };
+    useStore.getState().set({
+      layers: [...layers, extra],
+      rootLayerIds: ['raster', 'shape', 'shape-off'],
+      selectedLayerIds: ['shape', 'shape-off'],
+      multiSelectMode: true,
+      activeLayerId: 'shape',
+    });
+    await renderPanel();
+    expect(container.querySelector('[aria-label="スナップ"]')).not.toBeNull();
+    expect(container.textContent).toContain('—');
+    useStore.getState().set({
+      selectedLayerIds: ['shape', 'raster'],
+      multiSelectMode: true,
+      activeLayerId: 'shape',
+    });
+    await renderPanel();
+    expect([...container.querySelectorAll('[aria-label="スナップ"]')].length).toBe(0);
   });
 });
 

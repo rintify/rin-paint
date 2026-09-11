@@ -1,5 +1,5 @@
 import { useStore } from '../../state/store';
-import type { ShapeParams, StrokePoint } from '../../model';
+import type { ShapeParams, ShapePoint, StrokePoint } from '../../model';
 import {
   cloneShape,
   rotateShape,
@@ -7,10 +7,24 @@ import {
   shapeCenter,
   shapeKindHandler,
   shapePoints,
+  shapeRotation,
   translateShape,
   type ShapeEditMode,
 } from '../shapes';
+import {
+  collectSnapLines,
+  constrainVertexToEdges,
+  snapAngleToRightAngles,
+  snapTranslation,
+  type SnapLines,
+} from '../shapes/snap';
 import type { PaintEngine } from '../PaintEngine';
+
+interface VertexWorld {
+  prev: ShapePoint;
+  selected: ShapePoint;
+  next: ShapePoint;
+}
 
 interface ShapeEdit {
   layerId: string;
@@ -20,11 +34,16 @@ interface ShapeEdit {
   vertexIndex?: number;
   invalid?: boolean;
   lastValid?: ShapeParams;
+  snapLines?: SnapLines;
+  xGuide: number | null;
+  yGuide: number | null;
+  vertexWorld?: VertexWorld;
 }
 
 /** 回転ハンドルは外接矩形の上辺からこれだけ離す (画面 px) */
 const ROTATE_HANDLE_GAP = 28;
 const HANDLE_RADIUS = 11;
+const SNAP_SCREEN_PX = 8;
 
 export class ShapeEditController {
   private shapeEdit: ShapeEdit | null = null;
@@ -33,6 +52,19 @@ export class ShapeEditController {
   constructor(private engine: PaintEngine) {}
 
   hasEdit(): boolean { return !!this.shapeEdit; }
+
+  snapGuides(): { x: number | null; y: number | null } {
+    return { x: this.shapeEdit?.xGuide ?? null, y: this.shapeEdit?.yGuide ?? null };
+  }
+
+  refreshVertexState(): void {
+    this.syncVertexState();
+  }
+
+  setPolygonVertexEdgeConstrained(value: boolean): void {
+    if (value && !this.selectedVertex) value = false;
+    useStore.getState().set({ polygonVertexEdgeConstrained: value });
+  }
 
   private syncVertexState(): void {
     const selected = this.selectedVertex;
@@ -45,12 +77,26 @@ export class ShapeEditController {
     useStore.getState().set({
       polygonVertexSelected: valid,
       polygonVertexCanDelete: valid && vertices > 3,
+      polygonVertexEdgeConstrained: valid ? useStore.getState().polygonVertexEdgeConstrained : false,
     });
   }
 
   /** 外接矩形の上に浮かぶ回転ハンドルの位置。種類によらず共通 */
   private rotateHandle(shape: ShapeParams): { x: number; y: number } {
     return { x: shapeCenter(shape).x, y: shapeBounds(shape).y - ROTATE_HANDLE_GAP * this.engine.uiScale() };
+  }
+
+  private collectMoveSnapLines(editingId: string): SnapLines {
+    const others = this.engine.layerService.layers.flatMap(layer => {
+      if (layer.id === editingId || layer.type !== 'shape' || !layer.visible) return [];
+      return [shapeBounds(layer.shape)];
+    });
+    return collectSnapLines(this.engine.artboard, others);
+  }
+
+  private clearGuides(edit: ShapeEdit): void {
+    edit.xGuide = null;
+    edit.yGuide = null;
   }
 
   beginShapeEdit(point: StrokePoint, _event?: PointerEvent): boolean {
@@ -75,6 +121,18 @@ export class ShapeEditController {
     if (mode === 'vertex') this.selectedVertex = { layerId: layer.id, index: hit!.vertexIndex! };
     else if (mode !== 'rotate') this.selectedVertex = null;
 
+    let vertexWorld: VertexWorld | undefined;
+    if (mode === 'vertex' && hit?.vertexIndex !== undefined) {
+      const world = shapePoints(layer.shape);
+      const count = world.length;
+      const index = hit.vertexIndex;
+      vertexWorld = {
+        prev: world[(index - 1 + count) % count],
+        selected: world[index],
+        next: world[(index + 1) % count],
+      };
+    }
+
     this.shapeEdit = {
       layerId: layer.id,
       mode,
@@ -82,31 +140,68 @@ export class ShapeEditController {
       before,
       vertexIndex: hit?.vertexIndex,
       lastValid: cloneShape(layer.shape),
+      snapLines: mode === 'move' ? this.collectMoveSnapLines(layer.id) : undefined,
+      xGuide: null,
+      yGuide: null,
+      vertexWorld,
     };
     this.syncVertexState();
     if (hit?.shape) { this.engine.requestRender(); this.engine.syncStore(); }
     return true;
   }
 
-  updateShapeEdit(point: StrokePoint, _event?: PointerEvent): boolean {
+  updateShapeEdit(point: StrokePoint, event?: PointerEvent): boolean {
     const edit = this.shapeEdit;
     if (!edit) return false;
     const layer = this.engine.layerService.shapeById(edit.layerId);
-    if (!layer) return false;
+    if (!layer) {
+      this.shapeEdit = null;
+      this.engine.requestRender();
+      this.engine.syncStore();
+      return false;
+    }
     let next: ShapeParams = cloneShape(edit.before);
+    this.clearGuides(edit);
     if (edit.mode === 'move') {
-      next = translateShape(edit.before, point.x - edit.start.x, point.y - edit.start.y);
+      const dx = point.x - edit.start.x;
+      const dy = point.y - edit.start.y;
+      if (!layer.snapEnabled) {
+        next = translateShape(edit.before, dx, dy);
+      } else {
+        const snapped = snapTranslation(
+          shapeBounds(edit.before),
+          dx,
+          dy,
+          edit.snapLines ?? collectSnapLines(this.engine.artboard, []),
+          SNAP_SCREEN_PX * this.engine.uiScale(),
+        );
+        next = translateShape(edit.before, snapped.dx, snapped.dy);
+        edit.xGuide = snapped.xGuide;
+        edit.yGuide = snapped.yGuide;
+      }
     } else if (edit.mode === 'rotate') {
       const center = shapeCenter(edit.before);
       const initial = Math.atan2(edit.start.y - center.y, edit.start.x - center.x);
-      next = rotateShape(edit.before, Math.atan2(point.y - center.y, point.x - center.x) - initial);
+      const rawDelta = Math.atan2(point.y - center.y, point.x - center.x) - initial;
+      if (!layer.snapEnabled) {
+        next = rotateShape(edit.before, rawDelta);
+      } else {
+        const startAbs = shapeRotation(edit.before);
+        const snapped = snapAngleToRightAngles(startAbs + rawDelta);
+        next = rotateShape(edit.before, snapped.angle - startAbs);
+      }
     } else {
+      let target = point;
+      if (edit.mode === 'vertex' && edit.vertexWorld && ((event?.shiftKey ?? false) || useStore.getState().polygonVertexEdgeConstrained)) {
+        const constrained = constrainVertexToEdges(point, edit.vertexWorld.prev, edit.vertexWorld.selected, edit.vertexWorld.next);
+        target = { ...point, x: constrained.x, y: constrained.y };
+      }
       const result = shapeKindHandler(edit.before).edit.dragHandle({
         mode: edit.mode,
         before: edit.before,
         current: layer.shape,
         vertexIndex: edit.vertexIndex,
-        point,
+        point: target,
       });
       if (result) {
         next = result.shape;
@@ -135,6 +230,8 @@ export class ShapeEditController {
     if (layer && JSON.stringify(layer.shape) !== JSON.stringify(edit.before)) {
       this.engine.history.push({ kind: 'layerProps', layerId: layer.id, before: { shape: cloneShape(edit.before) }, after: { shape: cloneShape(layer.shape) } }, edit.vertexIndex !== undefined ? '多角形の頂点を編集' : '図形を編集');
       this.engine.committed();
+    } else {
+      this.engine.requestRender();
     }
     this.syncVertexState();
     return true;
@@ -178,6 +275,26 @@ export class ShapeEditController {
     const insertions = shapeKindHandler(shape).edit.insertionPoints(shape);
     const rotateHandle = this.rotateHandle(shape);
     ctx.save();
+    const xGuide = this.shapeEdit?.xGuide;
+    const yGuide = this.shapeEdit?.yGuide;
+    if (xGuide !== null && xGuide !== undefined || yGuide !== null && yGuide !== undefined) {
+      ctx.strokeStyle = '#4f8cff';
+      ctx.lineWidth = scale;
+      ctx.setLineDash([6 * scale, 4 * scale]);
+      if (xGuide !== null && xGuide !== undefined) {
+        ctx.beginPath();
+        ctx.moveTo(xGuide, 0);
+        ctx.lineTo(xGuide, this.engine.artboard.h);
+        ctx.stroke();
+      }
+      if (yGuide !== null && yGuide !== undefined) {
+        ctx.beginPath();
+        ctx.moveTo(0, yGuide);
+        ctx.lineTo(this.engine.artboard.w, yGuide);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
     ctx.strokeStyle = invalid ? '#e53935' : '#4f8cff'; ctx.fillStyle = '#fff'; ctx.lineWidth = 1.5 * scale;
     if (invalid) {
       ctx.beginPath();
