@@ -111,10 +111,12 @@ export interface PaintState {
   addTool: (kind: ToolKind) => void;
   removeTool: (id: string) => void;
   reorderTools: (from: number, to: number) => void;
+  reorderToolLayout: (from: number, to: number) => void;
+  reorderStackTools: (stackId: string, from: number, to: number) => void;
   renameTool: (id: string, name: string) => void;
   renameToolStack: (id: string, name: string) => void;
   createToolStack: (sourceToolId: string, targetToolId: string) => void;
-  moveToolToStack: (toolId: string, stackId: string) => void;
+  moveToolToStack: (toolId: string, stackId: string, targetIndex?: number) => void;
   unstackTool: (toolId: string, targetIndex?: number) => void;
   dissolveToolStack: (stackId: string) => void;
 }
@@ -312,6 +314,24 @@ export const useStore = create<PaintState>((set) => ({
       return { tools, toolLayout: layout };
     }),
 
+  reorderToolLayout: (from, to) => set((s) => {
+    if (from < 0 || from >= s.toolLayout.length) return s;
+    const layout = [...s.toolLayout];
+    const [item] = layout.splice(from, 1);
+    const target = Math.max(0, Math.min(to, layout.length));
+    layout.splice(target, 0, item);
+    return { toolLayout: layout };
+  }),
+  reorderStackTools: (stackId, from, to) => set((s) => ({
+    toolStacks: s.toolStacks.map(stack => {
+      if (stack.id !== stackId || from < 0 || from >= stack.toolIds.length) return stack;
+      const toolIds = [...stack.toolIds];
+      const [id] = toolIds.splice(from, 1);
+      toolIds.splice(Math.max(0, Math.min(to, toolIds.length)), 0, id);
+      return { ...stack, toolIds };
+    }),
+  })),
+
   renameTool: (id, name) => set((s) => ({ tools: s.tools.map((tool) => tool.id === id ? { ...tool, name } : tool) })),
   renameToolStack: (id, name) => set((s) => ({ toolStacks: s.toolStacks.map((stack) => stack.id === id ? { ...stack, name } : stack) })),
   createToolStack: (sourceToolId, targetToolId) => set((s) => {
@@ -327,12 +347,12 @@ export const useStore = create<PaintState>((set) => ({
     toolLayout.splice(Math.min(sourceIndex, targetIndex), 0, { type: 'stack', stackId: stack.id });
     return { toolLayout, toolStacks: [...s.toolStacks, stack] };
   }),
-  moveToolToStack: (toolId, stackId) => set((s) => {
+  moveToolToStack: (toolId, stackId, targetIndex) => set((s) => {
     if (!s.tools.some((tool) => tool.id === toolId)) return s;
     const stacks = s.toolStacks.map((stack) => ({ ...stack, toolIds: stack.toolIds.filter((id) => id !== toolId) }));
     const target = stacks.find((stack) => stack.id === stackId);
     if (!target) return s;
-    target.toolIds.push(toolId);
+    target.toolIds.splice(Math.max(0, Math.min(targetIndex ?? target.toolIds.length, target.toolIds.length)), 0, toolId);
     const layout = s.toolLayout.filter((item) => item.type !== 'tool' || item.toolId !== toolId);
     return normalizeToolLayout(s.tools, layout, stacks);
   }),

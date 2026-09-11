@@ -1,5 +1,5 @@
 import { TextField, type TextFieldProps } from '@mui/material';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 
 type Props = Omit<TextFieldProps, 'type' | 'value' | 'onChange' | 'onBlur'> & {
   value: number | null;
@@ -13,18 +13,19 @@ export function NumericField({ value, min = -Infinity, max = Infinity, onCommit,
   const shown = value === null ? '—' : String(value);
   const [draft, setDraft] = useState(shown);
   const [error, setError] = useState('');
-  useEffect(() => { if (document.activeElement?.getAttribute('data-numeric-draft') !== 'true') setDraft(shown); }, [shown]);
+  const input = useRef<HTMLInputElement>(null);
+  const skipBlur = useRef(false);
+  useEffect(() => { if (document.activeElement !== input.current) setDraft(shown); }, [shown]);
   const commit = () => {
     const parsed = Number(draft.trim());
     if (!draft.trim() || !Number.isFinite(parsed) || parsed < min || parsed > max) {
       setError(Number.isFinite(min) && Number.isFinite(max) ? `${min}〜${max}で入力してください` : '有効な数値を入力してください');
       return;
     }
-    setError(''); onCommit(parsed); setDraft(String(parsed));
+    setError(''); if (parsed !== value) onCommit(parsed); setDraft(String(parsed));
   };
-  return <TextField {...props} type="text" value={draft} error={!!error} helperText={error || helperText}
+  return <TextField {...props} inputRef={input} type="text" value={draft} error={!!error} helperText={error || helperText}
     slotProps={{ ...props.slotProps, htmlInput: { inputMode: 'decimal', 'data-numeric-draft': 'true' } }}
-    onChange={event => { setDraft(event.target.value); setError(''); }} onBlur={commit}
-    onWheel={event => (event.currentTarget.querySelector('input') as HTMLInputElement | null)?.blur()}
-    onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commit(); } else if (event.key === 'Escape') { event.preventDefault(); setDraft(shown); setError(''); (event.currentTarget.querySelector('input') as HTMLInputElement | null)?.blur(); } }} />;
+    onChange={event => { setDraft(event.target.value); setError(''); }} onBlur={() => { if (skipBlur.current) { skipBlur.current = false; return; } if (draft !== shown) commit(); }}
+    onKeyDown={event => { if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return; if (event.key === 'Enter') { event.preventDefault(); commit(); } else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); skipBlur.current = true; setDraft(shown); setError(''); input.current?.blur(); } }} />;
 }

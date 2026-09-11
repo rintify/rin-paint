@@ -60,6 +60,25 @@ function pixel(layerId: string, x: number, y: number): number[] {
 }
 
 describe('canvas history and new project', () => {
+  it('updates multiple rectangles without replacing their unrelated parameters, in one undo step', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({ kind: 'rect', x: 10, y: 20, width: 50, height: 60, strokeWidth: 2, color: '#112233', rotation: .2 });
+    const first = useStore.getState().activeLayerId;
+    engine.addShapeLayer({ kind: 'rect', x: 100, y: 200, width: 70, height: 80, strokeWidth: 5, color: '#445566', rotation: .8 });
+    const second = useStore.getState().activeLayerId;
+    engine.beginMultiSelect(first);
+    engine.updateSelectedShapes(shape => shape.kind === 'rect' ? { ...shape, width: 120 } : shape);
+    expect(engine.getShape(first)).toMatchObject({ x: 10, width: 120, strokeWidth: 2, rotation: .2 });
+    expect(engine.getShape(second)).toMatchObject({ x: 100, width: 120, strokeWidth: 5, rotation: .8 });
+    await engine.undo();
+    expect(engine.getShape(first)).toMatchObject({ width: 50 });
+    expect(engine.getShape(second)).toMatchObject({ width: 70 });
+    await engine.redo();
+    expect(engine.getShape(first)).toMatchObject({ width: 120 });
+    expect(engine.getShape(second)).toMatchObject({ width: 120 });
+    engine.exitMultiSelect();
+    await engine.newProject();
+  });
   it('restores cropped pixels, dimensions, and earlier raster history across reload', async () => {
     const id = useStore.getState().activeLayerId;
     const canvas = engine.getLayerCanvas(id)!;
@@ -136,6 +155,24 @@ describe('canvas history and new project', () => {
     expect(useStore.getState().layers.some(layer => layer.id === id)).toBe(true);
     expect(engine.finishTextEditing()).toBe(true);
     expect(useStore.getState().layers.some(layer => layer.id === id)).toBe(false);
+  });
+
+  it('keeps explicit multi-select mode with one layer and batches opacity preview history', async () => {
+    await engine.newProject();
+    const first = useStore.getState().activeLayerId;
+    engine.addRasterLayer();
+    const second = useStore.getState().activeLayerId;
+    engine.beginMultiSelect(first);
+    const before = Object.fromEntries(useStore.getState().selectedLayerIds.map(id => [id, useStore.getState().layers.find(layer => layer.id === id)!.opacity]));
+    engine.previewSelectedLayerProps({ opacity: .35 });
+    engine.commitSelectedLayerOpacity(before, .35);
+    expect(useStore.getState().layers.filter(layer => [first, second].includes(layer.id)).map(layer => layer.opacity)).toEqual([.35, .35]);
+    await engine.undo();
+    expect(useStore.getState().layers.filter(layer => [first, second].includes(layer.id)).map(layer => layer.opacity)).toEqual([1, 1]);
+    engine.setActiveLayer(second);
+    expect(useStore.getState().multiSelectMode).toBe(true);
+    expect(useStore.getState().selectedLayerIds).toEqual([first]);
+    expect(useStore.getState().activeLayerId).toBe(first);
   });
 
   it('compacts raster merges into exact changed tiles across undo, redo and reload', async () => {

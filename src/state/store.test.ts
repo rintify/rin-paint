@@ -42,4 +42,16 @@ describe('tool management', () => {
     expect(useStore.getState().toolStacks).toEqual([]);
     expect(useStore.getState().toolLayout.filter(item => item.type === 'tool')).toHaveLength(2);
   });
+
+  it('reorders the unified layout and tools inside a stack', () => {
+    const tools = defaultTools();
+    const third = { ...tools[0], id: 'third', name: 'third' };
+    useStore.setState({ ...original, tools: [...tools, third], toolLayout: [...tools, third].map(tool => ({ type: 'tool' as const, toolId: tool.id })), toolStacks: [] });
+    useStore.getState().reorderToolLayout(2, 0);
+    expect(useStore.getState().toolLayout[0]).toEqual({ type: 'tool', toolId: 'third' });
+    useStore.getState().createToolStack(tools[0].id, tools[1].id);
+    const stack = useStore.getState().toolStacks[0];
+    useStore.getState().reorderStackTools(stack.id, 0, 1);
+    expect(useStore.getState().toolStacks[0].toolIds).toEqual([tools[0].id, tools[1].id]);
+  });
 });

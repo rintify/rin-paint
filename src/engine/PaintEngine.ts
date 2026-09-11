@@ -2136,19 +2136,62 @@ export class PaintEngine {
     this.scheduleSave();
   }
 
+  reorderToolLayout(from: number, to: number): void {
+    if (this.busy) return;
+    useStore.getState().reorderToolLayout(from, to);
+    this.scheduleSave();
+  }
+
+  createToolStack(sourceToolId: string, targetToolId: string): void {
+    useStore.getState().createToolStack(sourceToolId, targetToolId);
+    this.scheduleSave();
+  }
+
+  moveToolToStack(toolId: string, stackId: string, targetIndex?: number): void {
+    useStore.getState().moveToolToStack(toolId, stackId, targetIndex);
+    this.scheduleSave();
+  }
+
+  reorderStackTools(stackId: string, from: number, to: number): void {
+    useStore.getState().reorderStackTools(stackId, from, to);
+    this.scheduleSave();
+  }
+
+  unstackTool(toolId: string, targetIndex?: number): void {
+    useStore.getState().unstackTool(toolId, targetIndex);
+    this.scheduleSave();
+  }
+
+  dissolveToolStack(stackId: string): void {
+    useStore.getState().dissolveToolStack(stackId);
+    this.scheduleSave();
+  }
+
   renameToolInstance(id: string, name: string): boolean {
-    const clean = name.trim();
-    if (!clean) return false;
-    useStore.getState().renameTool(id, clean);
+    if (!name.trim()) return false;
+    const tool = useStore.getState().tools.find(item => item.id === id);
+    if (!tool) return false;
+    if (tool.name === name) return true;
+    useStore.getState().renameTool(id, name);
+    this.scheduleSave();
+    return true;
+  }
+
+  renameToolStack(id: string, name: string): boolean {
+    if (!name.trim()) return false;
+    const stack = useStore.getState().toolStacks.find(item => item.id === id);
+    if (!stack) return false;
+    if (stack.name === name) return true;
+    useStore.getState().renameToolStack(id, name);
     this.scheduleSave();
     return true;
   }
 
   renameLayer(id: string, name: string): boolean {
     const layer = this.byId(id);
-    const clean = name.trim();
-    if (!layer || !clean || layer.name === clean) return false;
-    this.commitLayerProps(id, { name: layer.name }, { name: clean }, 'レイヤー名を変更');
+    if (!layer || !name.trim()) return false;
+    if (layer.name === name) return true;
+    this.commitLayerProps(id, { name: layer.name }, { name }, 'レイヤー名を変更');
     return true;
   }
 
@@ -2187,6 +2230,44 @@ export class PaintEngine {
     });
     if (!ops.length) return;
     this.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, label);
+    this.committed();
+  }
+
+  previewSelectedLayerProps(props: LayerProps): void {
+    const state = useStore.getState();
+    for (const id of state.selectedLayerIds) {
+      const layer = this.byId(id);
+      if (layer) this.assignProps(layer, props);
+    }
+    this.requestRender();
+    this.syncStore();
+  }
+
+  updateSelectedShapes(update: (shape: ShapeParams) => ShapeParams): void {
+    const ops = useStore.getState().selectedLayerIds.flatMap(layerId => {
+      const layer = this.byId(layerId);
+      if (layer?.type !== 'shape') return [];
+      const before = { ...layer.shape };
+      const after = update({ ...before });
+      if (JSON.stringify(before) === JSON.stringify(after)) return [];
+      layer.shape = after;
+      this.bumpLayer(layerId);
+      return [{ kind: 'layerProps' as const, layerId, before: { shape: before }, after: { shape: after } }];
+    });
+    if (!ops.length) return;
+    this.history.push({ kind: 'batch', ops }, '図形の共通設定');
+    this.committed();
+  }
+
+  commitSelectedLayerOpacity(beforeById: Record<string, number>, opacity: number): void {
+    const ops = Object.entries(beforeById).flatMap(([layerId, before]) => {
+      const layer = this.byId(layerId);
+      if (!layer || before === opacity) return [];
+      layer.opacity = opacity;
+      return [{ kind: 'layerProps' as const, layerId, before: { opacity: before }, after: { opacity } }];
+    });
+    if (!ops.length) return;
+    this.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, '複数レイヤーの不透明度');
     this.committed();
   }
 
