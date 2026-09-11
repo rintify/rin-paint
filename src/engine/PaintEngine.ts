@@ -38,6 +38,7 @@ import { PolygonSplitService } from './core/PolygonSplitService';
 import { layerTypeProps } from './layer-types/registry';
 import type { RasterLayer } from './layers';
 import type { LayerParameterValue } from './layerParameters';
+import { mmToPx } from './units';
 
 export interface SelectedObjectTransform { id: string; before: LayerProps; width?: number; height?: number }
 
@@ -100,7 +101,7 @@ export class PaintEngine {
     useStore.subscribe((s, prev) => {
       if (
         s.penColor !== prev.penColor ||
-        s.penSize !== prev.penSize ||
+        s.penSizeMm !== prev.penSizeMm ||
         s.colorHistory !== prev.colorHistory ||
         s.tools !== prev.tools ||
         s.toolLayout !== prev.toolLayout ||
@@ -288,8 +289,8 @@ export class PaintEngine {
 
   // ---------------------------------------------------------------- tools / misc
 
-  setPenSize(n: number): void {
-    useStore.getState().setPenSize(n);
+  setPenSizeMm(n: number): void {
+    useStore.getState().setPenSizeMm(n);
     this.scheduleSave();
   }
 
@@ -302,10 +303,12 @@ export class PaintEngine {
     const st = useStore.getState();
     if (!st.tool || !st.activeToolId) return null;
     const inst = st.tools.find((t) => t.id === st.activeToolId);
+    const sizeMm = st.penSizeMm;
     return {
       kind: st.tool,
       color: st.penColor,
-      size: st.penSize,
+      sizeMm,
+      sizePx: mmToPx(sizeMm, st.canvasSpec.ppi),
       settings: inst?.settings,
     };
   }

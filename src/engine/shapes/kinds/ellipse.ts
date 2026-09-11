@@ -87,17 +87,17 @@ export const ellipseShapeKind: ShapeKindHandler<EllipseShapeParams> = {
   },
 
   parameterFields: () => [
-    fields.parameter('ellipse.cx', '中心 X', s => s.cx, (s, v) => ({ ...s, cx: v })),
-    fields.parameter('ellipse.cy', '中心 Y', s => s.cy, (s, v) => ({ ...s, cy: v })),
-    fields.parameter('ellipse.rx', '横半径', s => s.rx, (s, v) => ({ ...s, rx: Math.max(.1, v) }), .1),
-    fields.parameter('ellipse.ry', '縦半径', s => s.ry, (s, v) => ({ ...s, ry: Math.max(.1, v) }), .1),
+    fields.parameter('ellipse.cx', '中心 X', s => s.cx, (s, v) => ({ ...s, cx: v }), undefined, true),
+    fields.parameter('ellipse.cy', '中心 Y', s => s.cy, (s, v) => ({ ...s, cy: v }), undefined, true),
+    fields.parameter('ellipse.rx', '横半径', s => s.rx, (s, v) => ({ ...s, rx: Math.max(.1, v) }), .1, true),
+    fields.parameter('ellipse.ry', '縦半径', s => s.ry, (s, v) => ({ ...s, ry: Math.max(.1, v) }), .1, true),
   ],
 
   controlFields: shape => [
-    fields.control('中心 X', shape.cx, (s, v) => ({ ...s, cx: v })),
-    fields.control('中心 Y', shape.cy, (s, v) => ({ ...s, cy: v })),
-    fields.control('横半径', shape.rx, (s, v) => ({ ...s, rx: Math.max(.1, v) }), .1),
-    fields.control('縦半径', shape.ry, (s, v) => ({ ...s, ry: Math.max(.1, v) }), .1),
+    fields.control('中心 X', shape.cx, (s, v) => ({ ...s, cx: v }), undefined, true),
+    fields.control('中心 Y', shape.cy, (s, v) => ({ ...s, cy: v }), undefined, true),
+    fields.control('横半径', shape.rx, (s, v) => ({ ...s, rx: Math.max(.1, v) }), .1, true),
+    fields.control('縦半径', shape.ry, (s, v) => ({ ...s, ry: Math.max(.1, v) }), .1, true),
     rotationControlField(shape.rotation ?? 0),
   ],
 

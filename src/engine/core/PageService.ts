@@ -38,7 +38,7 @@ export class PageService {
       activePageId: this.activePageId,
       fonts: structuredClone(st.fonts),
       penColor: st.penColor,
-      penSize: st.penSize,
+      penSizeMm: st.penSizeMm,
       colorHistory: [...st.colorHistory],
       tools: structuredClone(st.tools),
       toolLayout: structuredClone(st.toolLayout),

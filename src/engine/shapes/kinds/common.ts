@@ -16,11 +16,18 @@ import type {
 export function shapeFields<S extends ShapeParams>(kind: S['kind']) {
   const narrow = (shape: ShapeParams): S | null => (shape.kind === kind ? (shape as S) : null);
   return {
-    control(label: string, value: number, make: (shape: S, value: number) => S, min?: number): ShapeControlField {
+    control(
+      label: string,
+      value: number,
+      make: (shape: S, value: number) => S,
+      min?: number,
+      canvasLength = false,
+    ): ShapeControlField {
       return {
         label,
         value,
         min,
+        canvasLength: canvasLength || undefined,
         make: (input, shape) => { const own = narrow(shape); return own ? make(own, input) : shape; },
       };
     },
@@ -30,11 +37,13 @@ export function shapeFields<S extends ShapeParams>(kind: S['kind']) {
       read: (shape: S) => number,
       write: (shape: S, value: number) => S,
       min?: number,
+      canvasLength = false,
     ): ShapeParameterField {
       return {
         key,
         label,
         min,
+        canvasLength: canvasLength || undefined,
         read: shape => { const own = narrow(shape); return own ? read(own) : 0; },
         write: (shape, value) => { const own = narrow(shape); return own ? write(own, value) : shape; },
       };

@@ -26,6 +26,8 @@ export interface ShapeControlField {
   label: string;
   value: number;
   min?: number;
+  /** true なら内部は px、UI は現在ページ ppi で mm 表示・入力する */
+  canvasLength?: boolean;
   make(value: number, shape: ShapeParams): ShapeParams;
 }
 
@@ -34,6 +36,8 @@ export interface ShapeParameterField {
   key: string;
   label: string;
   min?: number;
+  /** true なら内部は px、UI は現在ページ ppi で mm 表示・入力する */
+  canvasLength?: boolean;
   read(shape: ShapeParams): number;
   write(shape: ShapeParams, value: number): ShapeParams;
 }

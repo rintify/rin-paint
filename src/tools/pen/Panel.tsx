@@ -5,7 +5,6 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  Slider,
   Stack,
   Typography,
 } from '@mui/material';
@@ -13,17 +12,19 @@ import { useEffect, useState } from 'react';
 import { TRANSPARENT } from '../../model';
 import { useStore } from '../../state/store';
 import { useEngine } from '../../components/EngineContext';
+import { MmControl, previewDiscCssPx } from '../../components/MmControl';
 import { DetailSlider } from '../DetailSlider';
+import { SIZE_MM_MAX, SIZE_MM_MIN } from '../../engine/units';
 import { normalizePenDetailSettings, type PenDetailSettings } from './settings';
 
 export function PenSettingsPanel() {
   const engine = useEngine();
-  const penSize = useStore((s) => s.penSize);
+  const penSizeMm = useStore((s) => s.penSizeMm);
   const penColor = useStore((s) => s.penColor);
   const activeTool = useStore((s) => s.tools.find((tool) => tool.id === s.activeToolId));
   const [detailsOpen, setDetailsOpen] = useState(false);
   const penDetails = normalizePenDetailSettings(activeTool?.settings);
-  const d = Math.min(penSize, 32);
+  const d = previewDiscCssPx(penSizeMm);
   const transparent = penColor === TRANSPARENT;
 
   useEffect(() => {
@@ -75,20 +76,14 @@ export function PenSettingsPanel() {
               }}
             />
           </Box>
-          <Slider
-            min={1}
-            max={128}
-            value={penSize}
-            onChange={(_, v) => engine.setPenSize(Array.isArray(v) ? v[0] : v)}
-            sx={{ flex: 1 }}
-          />
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ width: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flex: 'none' }}
-          >
-            {penSize}
-          </Typography>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <MmControl
+              valueMm={penSizeMm}
+              min={SIZE_MM_MIN}
+              max={SIZE_MM_MAX}
+              onChange={mm => engine.setPenSizeMm(mm)}
+            />
+          </Box>
         </Stack>
       </Box>
       <Dialog open={detailsOpen} onClose={() => setDetailsOpen(false)} maxWidth="xs" fullWidth>

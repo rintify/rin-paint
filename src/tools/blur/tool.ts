@@ -2,6 +2,7 @@ import type { StrokePoint } from '../../model';
 import { emptyRect, expandRect, rectValid, type DirtyRect } from '../../engine/brush';
 import type { RasterLayer } from '../../engine/layers';
 import type { PaintEngine } from '../../engine/PaintEngine';
+import { DEFAULT_SIZE_MM, mmToPx } from '../../engine/units';
 import type { Tool } from '../types';
 
 /**
@@ -31,7 +32,7 @@ export class BlurTool implements Tool {
     if (!layer) return;
     this.layer = layer;
     this.eng.captureBefore(layer);
-    const size = this.eng.activeToolSettings()?.size ?? 14;
+    const size = this.eng.activeToolSettings()?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getCanvasSpec().ppi);
     this.radius = Math.max(3, size * 0.5);
     this.blurPx = Math.max(1, size * 0.14);
     this.rect = emptyRect();

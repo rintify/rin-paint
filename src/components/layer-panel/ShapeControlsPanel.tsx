@@ -13,7 +13,10 @@ import {
 } from '@mui/material';
 import { useState } from 'react';
 import { useEngine } from '../EngineContext';
+import { CanvasMmField } from '../CanvasMmField';
+import { MmInlineControl } from '../MmControl';
 import { NumericField } from '../NumericField';
+import { useStore } from '../../state/store';
 import {
   setShapePaintMode,
   shapeControlFields,
@@ -23,6 +26,7 @@ import {
   shapePanelNote,
   type ShapePanelAction,
 } from '../../engine/shapes';
+import { clampSizeMm, mmToPx, pxToMm, roundMm, SIZE_MM_MAX, SIZE_MM_MIN } from '../../engine/units';
 import {
   TRANSPARENT,
   type LayerMeta,
@@ -42,24 +46,39 @@ function ShapeNumber({
   make,
   meta,
   min,
+  canvasLength,
 }: {
   label: string;
   value: number;
   make: (value: number, shape: ShapeParams) => ShapeParams;
   meta: LayerMeta;
   min?: number;
+  canvasLength?: boolean;
 }) {
   const engine = useEngine();
+  const commit = (number: number) => {
+    const shape = engine.getShape(meta.id);
+    if (shape) engine.updateShapeParams(meta.id, shape, make(number, shape));
+  };
+  if (canvasLength) {
+    return (
+      <CanvasMmField
+        size="small"
+        label={label}
+        valuePx={value}
+        minPx={min}
+        onCommitPx={commit}
+        sx={{ minWidth: 0 }}
+      />
+    );
+  }
   return (
     <NumericField
       size="small"
       label={label}
       value={Math.round(value * 10) / 10}
       min={min}
-      onCommit={number => {
-        const shape = engine.getShape(meta.id);
-        if (shape) engine.updateShapeParams(meta.id, shape, make(number, shape));
-      }}
+      onCommit={commit}
       sx={{ minWidth: 0 }}
     />
   );
@@ -67,12 +86,14 @@ function ShapeNumber({
 
 export function ShapeControls({ meta }: { meta: LayerMeta }) {
   const engine = useEngine();
+  const ppi = useStore(s => s.canvasSpec.ppi);
   const shape = meta.shape!;
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const fields = shapeControlFields(shape);
   const note = shapePanelNote(shape);
   const actions = shapePanelActions(shape);
   const fillable = shapeFillable(shape);
+  const strokeMm = pxToMm(shape.strokeWidth, ppi);
 
   const update = (make: (current: ShapeParams) => ShapeParams) => {
     const current = engine.getShape(meta.id);
@@ -102,7 +123,15 @@ export function ShapeControls({ meta }: { meta: LayerMeta }) {
       </Stack>
       <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.75 }}>
         {fields.map(field => (
-          <ShapeNumber key={field.label} label={field.label} value={field.value} make={field.make} meta={meta} min={field.min} />
+          <ShapeNumber
+            key={field.label}
+            label={field.label}
+            value={field.value}
+            make={field.make}
+            meta={meta}
+            min={field.min}
+            canvasLength={field.canvasLength}
+          />
         ))}
       </Box>
       {note && <Typography variant="caption" color="text.secondary">{note}</Typography>}
@@ -123,7 +152,15 @@ export function ShapeControls({ meta }: { meta: LayerMeta }) {
         <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>
           {shapePaintMode(shape) === 'stroke' ? '線の太さ' : '線幅'}
         </Typography>
-        <ShapeNumber label="px" value={shape.strokeWidth} make={(value, current) => ({ ...current, strokeWidth: Math.max(1, value) })} meta={meta} min={1} />
+        <MmInlineControl
+          valueMm={strokeMm}
+          min={SIZE_MM_MIN}
+          max={SIZE_MM_MAX}
+          onChange={mm => {
+            const next = clampSizeMm(roundMm(mm));
+            update(current => ({ ...current, strokeWidth: mmToPx(next, ppi) }));
+          }}
+        />
       </Stack>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
         <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>色</Typography>

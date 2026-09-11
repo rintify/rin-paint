@@ -74,25 +74,25 @@ export const lineShapeKind: ShapeKindHandler<LineShapeParams> = {
   },
 
   parameterFields: () => [
-    fields.parameter('line.x1', '開始 X', s => s.x1, (s, v) => ({ ...s, x1: v })),
-    fields.parameter('line.y1', '開始 Y', s => s.y1, (s, v) => ({ ...s, y1: v })),
-    fields.parameter('line.x2', '終了 X', s => s.x2, (s, v) => ({ ...s, x2: v })),
-    fields.parameter('line.y2', '終了 Y', s => s.y2, (s, v) => ({ ...s, y2: v })),
+    fields.parameter('line.x1', '開始 X', s => s.x1, (s, v) => ({ ...s, x1: v }), undefined, true),
+    fields.parameter('line.y1', '開始 Y', s => s.y1, (s, v) => ({ ...s, y1: v }), undefined, true),
+    fields.parameter('line.x2', '終了 X', s => s.x2, (s, v) => ({ ...s, x2: v }), undefined, true),
+    fields.parameter('line.y2', '終了 Y', s => s.y2, (s, v) => ({ ...s, y2: v }), undefined, true),
   ],
 
   controlFields(shape) {
     const length = Math.hypot(shape.x2 - shape.x1, shape.y2 - shape.y1);
     const angle = Math.atan2(shape.y2 - shape.y1, shape.x2 - shape.x1);
     return [
-      fields.control('開始 X', shape.x1, (s, v) => ({ ...s, x1: v })),
-      fields.control('開始 Y', shape.y1, (s, v) => ({ ...s, y1: v })),
-      fields.control('終了 X', shape.x2, (s, v) => ({ ...s, x2: v })),
-      fields.control('終了 Y', shape.y2, (s, v) => ({ ...s, y2: v })),
+      fields.control('開始 X', shape.x1, (s, v) => ({ ...s, x1: v }), undefined, true),
+      fields.control('開始 Y', shape.y1, (s, v) => ({ ...s, y1: v }), undefined, true),
+      fields.control('終了 X', shape.x2, (s, v) => ({ ...s, x2: v }), undefined, true),
+      fields.control('終了 Y', shape.y2, (s, v) => ({ ...s, y2: v }), undefined, true),
       fields.control('長さ', length, (s, v) => ({
         ...s,
         x2: s.x1 + Math.max(0, v) * Math.cos(angle),
         y2: s.y1 + Math.max(0, v) * Math.sin(angle),
-      }), 0),
+      }), 0, true),
       fields.control('角度', angle * 180 / Math.PI, (s, v) => ({
         ...s,
         x2: s.x1 + length * Math.cos(v * Math.PI / 180),

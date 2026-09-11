@@ -75,7 +75,7 @@ export class AutosaveService {
     const fonts = structuredClone(st.fonts);
     const rootLayerIds = [...ls.rootLayerIds];
     const penColor = st.penColor;
-    const penSize = st.penSize;
+    const penSizeMm = st.penSizeMm;
     const colorHistory = [...st.colorHistory];
     const tools = st.tools.map((tool) => ({
       ...tool,
@@ -102,7 +102,7 @@ export class AutosaveService {
       activePageId: pages.activePageId,
       fonts,
       penColor,
-      penSize,
+      penSizeMm,
       colorHistory,
       tools,
       toolLayout,

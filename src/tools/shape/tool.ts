@@ -2,6 +2,7 @@ import { TRANSPARENT, type StrokePoint } from '../../model';
 import { drawShape, shapeFromDrag, type DragShapeKind } from '../../engine/shapes';
 import { constrainAxisAlignedAspect } from '../../engine/shapes/snap';
 import type { PaintEngine } from '../../engine/PaintEngine';
+import { DEFAULT_SIZE_MM, mmToPx } from '../../engine/units';
 import type { Tool } from '../types';
 import { normalizeShapeToolSettings } from './settings';
 
@@ -26,7 +27,7 @@ export class ShapeTool implements Tool {
     if (!start) return null;
     const active = this.eng.activeToolSettings();
     const color = active?.color ?? '#000';
-    const size = active?.size ?? 14;
+    const size = active?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getCanvasSpec().ppi);
     const paintMode = normalizeShapeToolSettings(active?.settings).paintMode;
     const to = this.aspectConstrained(event) ? constrainAxisAlignedAspect(start, end) : end;
     return shapeFromDrag(this.kind, start, to, color, size, paintMode);

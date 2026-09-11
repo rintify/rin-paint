@@ -2,12 +2,13 @@
  * ツールエリアに並ぶ「ツールインスタンス」。
  * 同じ形 (kind) のツールを複数持て、色・太さを個別に記憶する。
  * kind 固有設定は settings に載せる (各ツール記述子が normalize する)。
+ * sizeMm は作品上の物理太さ (mm)。描画時に現在ページの ppi で px へ変換する。
  */
 export interface ToolInstance {
   id: string;
   kind: string;
   name: string;
-  size: number;
+  sizeMm: number;
   color: string;
   settings?: unknown;
 }

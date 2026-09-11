@@ -4,6 +4,7 @@ import { normalizeFillToolSettings } from '../../tools/fill/settings';
 import { analyzeFill, type FillAnalysisResult } from '../fillAlgorithm';
 import { makeCanvas } from '../layers';
 import type { PaintEngine } from '../PaintEngine';
+import { gapCloseMmToPx } from '../units';
 
 function parseHex(color: string): [number, number, number] {
   const value = color.replace('#', '');
@@ -58,7 +59,7 @@ export class FillService {
         seedX: point.x,
         seedY: point.y,
         tolerance: settings.colorTolerance,
-        gapClosePx: settings.gapClosePx,
+        gapClosePx: gapCloseMmToPx(settings.gapCloseMm, useStore.getState().canvasSpec.ppi),
       }, token);
       if (!result || token !== this.token || !result.bounds) return;
       const bounds = result.bounds;

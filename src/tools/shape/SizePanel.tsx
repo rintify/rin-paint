@@ -1,13 +1,15 @@
-import { Box, Slider, Stack, Typography } from '@mui/material';
+import { Box, Stack } from '@mui/material';
 import { TRANSPARENT } from '../../model';
 import { useEngine } from '../../components/EngineContext';
+import { MmControl, previewDiscCssPx } from '../../components/MmControl';
 import { useStore } from '../../state/store';
+import { SIZE_MM_MAX, SIZE_MM_MIN } from '../../engine/units';
 
 export function SizePanel() {
   const engine = useEngine();
-  const penSize = useStore((s) => s.penSize);
+  const penSizeMm = useStore((s) => s.penSizeMm);
   const penColor = useStore((s) => s.penColor);
-  const d = Math.min(penSize, 32);
+  const d = previewDiscCssPx(penSizeMm);
   const transparent = penColor === TRANSPARENT;
 
   return (
@@ -37,20 +39,14 @@ export function SizePanel() {
           }}
         />
       </Box>
-      <Slider
-        min={1}
-        max={128}
-        value={penSize}
-        onChange={(_, v) => engine.setPenSize(Array.isArray(v) ? v[0] : v)}
-        sx={{ flex: 1 }}
-      />
-      <Typography
-        variant="body2"
-        color="text.secondary"
-        sx={{ width: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flex: 'none' }}
-      >
-        {penSize}
-      </Typography>
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <MmControl
+          valueMm={penSizeMm}
+          min={SIZE_MM_MIN}
+          max={SIZE_MM_MAX}
+          onChange={mm => engine.setPenSizeMm(mm)}
+        />
+      </Box>
     </Stack>
   );
 }

@@ -1,17 +1,19 @@
+import { clampSplitWidthMm, roundMm } from '../../engine/units';
+
 export interface PolygonSplitToolSettings {
-  width: number;
+  widthMm: number;
 }
 
 export const DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS: PolygonSplitToolSettings = {
-  width: 0,
+  widthMm: 0,
 };
 
 export function normalizePolygonSplitToolSettings(value: unknown): PolygonSplitToolSettings {
   const raw = value && typeof value === 'object' ? (value as Partial<PolygonSplitToolSettings>) : {};
   return {
-    width:
-      typeof raw.width === 'number' && Number.isFinite(raw.width)
-        ? Math.max(0, Math.min(128, raw.width))
-        : DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS.width,
+    widthMm:
+      typeof raw.widthMm === 'number' && Number.isFinite(raw.widthMm)
+        ? roundMm(clampSplitWidthMm(raw.widthMm))
+        : DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS.widthMm,
   };
 }

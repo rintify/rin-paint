@@ -11,7 +11,7 @@ export const blurTool: ToolDescriptor = {
   category: 'root',
   capabilities: { color: false, size: true, multiSelect: false },
   sizeLabel: 'ぼかしの太さ',
-  summary: (tool) => `${tool.size}px`,
+  summary: (tool) => `${tool.sizeMm.toFixed(2)}mm`,
   Panel: BlurSettingsPanel,
   create: (engine) => new BlurTool(engine),
 };

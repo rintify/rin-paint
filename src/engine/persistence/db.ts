@@ -21,7 +21,7 @@ export interface SavedPage {
 }
 export interface SavedProjectMeta {
   version: typeof PROJECT_VERSION; pageOrder: string[]; activePageId: string; fonts: ProjectFont[];
-  penColor: string; penSize: number; colorHistory: string[]; tools: ToolInstance[];
+  penColor: string; penSizeMm: number; colorHistory: string[]; tools: ToolInstance[];
   toolLayout: ToolLayoutItem[]; toolStacks: ToolStack[]; activeToolId: string | null;
 }
 export interface LayerClipboard { version: 1; sourcePageId: string; sourcePpi: number; rootIds: string[]; layers: SavedLayer[] }

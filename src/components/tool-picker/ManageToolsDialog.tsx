@@ -28,7 +28,7 @@ import { AddToolDialog } from './AddToolDialog';
 
 function toolSummary(tool: ToolInstance): string {
   return getToolDescriptor(tool.kind)?.summary?.(tool)
-    ?? `${tool.size}px・${tool.color === 'transparent' ? '透明' : tool.color}`;
+    ?? `${tool.sizeMm.toFixed(2)}mm・${tool.color === 'transparent' ? '透明' : tool.color}`;
 }
 
 export function ManageToolsDialog({ onClose }: { onClose: () => void }) {

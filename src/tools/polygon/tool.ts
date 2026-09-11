@@ -6,6 +6,7 @@ import {
   segmentsIntersect,
 } from '../../engine/shapes';
 import type { PaintEngine } from '../../engine/PaintEngine';
+import { DEFAULT_SIZE_MM, mmToPx } from '../../engine/units';
 import type { Tool, ToolSession } from '../types';
 import { normalizeShapeToolSettings } from '../shape/settings';
 
@@ -80,7 +81,7 @@ export class PolygonTool implements Tool {
     const shapeSettings = normalizeShapeToolSettings(active?.settings);
     const shape = polygonFromWorldPoints(this.points, {
       color: active?.color ?? '#000000',
-      strokeWidth: active?.size ?? 14,
+      strokeWidth: active?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getCanvasSpec().ppi),
       paintMode: shapeSettings.paintMode,
     });
     this.points = [];
@@ -130,7 +131,7 @@ export class PolygonTool implements Tool {
     if (candidate.length >= 3 && !invalid) {
       const preview = polygonFromWorldPoints(candidate, {
         color: active?.color === TRANSPARENT ? '#aaaaaa' : (active?.color ?? '#000'),
-        strokeWidth: active?.size ?? 14,
+        strokeWidth: active?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getCanvasSpec().ppi),
         paintMode: shapeSettings.paintMode,
       });
       ctx.globalAlpha = 0.22;

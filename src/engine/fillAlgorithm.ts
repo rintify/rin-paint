@@ -70,7 +70,7 @@ export function analyzeFill(input: FillAnalysisInput): FillAnalysisResult {
     boundary[i] = Number(distance > threshold + 1e-7);
   }
   input.progress?.(.35);
-  const closed = closeBoundary(boundary, width, height, Math.max(0, Math.min(64, Math.round(input.gapClosePx))));
+  const closed = closeBoundary(boundary, width, height, Math.max(0, Math.min(Math.max(width, height), Math.round(input.gapClosePx))));
   input.progress?.(.62);
   const seedPixel = sy * width + sx;
   if (boundary[seedPixel] || closed[seedPixel]) return { mask: new Uint8Array(count), bounds: null };

@@ -47,9 +47,9 @@ function shapeDescriptors(shape: ShapeParams): LayerParameterDescriptor[] {
       write: (_layer, value) => ({ snapEnabled: Boolean(value) }),
     },
     {
-      key: 'strokeWidth', label: '線の太さ', control: 'number', min: 1, max: 4096,
+      key: 'strokeWidth', label: '線の太さ', control: 'number', canvasLength: true,
       read: shapeRead(current => current.strokeWidth),
-      write: shapeWrite((current, value) => ({ ...current, strokeWidth: Math.max(1, Number(value)) })),
+      write: shapeWrite((current, value) => ({ ...current, strokeWidth: Math.max(0, Number(value)) })),
     },
     {
       key: 'rotation', label: '回転 (度)', control: 'number', min: -3600, max: 3600,
@@ -74,6 +74,7 @@ function shapeDescriptors(shape: ShapeParams): LayerParameterDescriptor[] {
   });
   descriptors.push(...shapeParameterFields(shape).map(field => ({
     key: field.key, label: field.label, control: 'number' as const, min: field.min,
+    canvasLength: field.canvasLength,
     read: shapeRead(current => field.read(current)),
     write: shapeWrite((current, value) => field.write(current, Number(value))),
   })));

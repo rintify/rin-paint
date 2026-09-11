@@ -1,9 +1,12 @@
 import { Box, Button, FormControl, MenuItem, Select, Stack, Switch, Typography } from '@mui/material';
 import { commonLayerParameterDescriptors } from '../../engine/layerParameters';
 import { STANDARD_FONTS } from '../../engine/text/render';
+import { clampSizeMm, mmToPx, pxToMm, roundMm, SIZE_MM_MAX, SIZE_MM_MIN } from '../../engine/units';
 import { TRANSPARENT, type LayerMeta } from '../../model';
 import { useStore } from '../../state/store';
 import { useEngine } from '../EngineContext';
+import { CanvasMmField } from '../CanvasMmField';
+import { MmInlineControl } from '../MmControl';
 import { NumericField } from '../NumericField';
 
 function sameValue(values: (number | string | boolean | null)[]) {
@@ -14,6 +17,7 @@ function sameValue(values: (number | string | boolean | null)[]) {
 export function MultiParameterControls({ layers }: { layers: LayerMeta[] }) {
   const engine = useEngine();
   const projectFonts = useStore(state => state.fonts);
+  const ppi = useStore(state => state.canvasSpec.ppi);
   const descriptors = commonLayerParameterDescriptors(layers);
   if (!descriptors.length) return null;
   return (
@@ -39,6 +43,49 @@ export function MultiParameterControls({ layers }: { layers: LayerMeta[] }) {
             />
           </Stack>
         );
+        if (descriptor.control === 'number' && descriptor.canvasLength && descriptor.key === 'strokeWidth') {
+          const strokeMm = typeof value === 'number' ? pxToMm(value, ppi) : null;
+          return (
+            <Stack key={descriptor.key} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+              <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>
+                {descriptor.label} (mm){strokeMm === null ? ' —' : ''}
+              </Typography>
+              {strokeMm === null ? (
+                <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>—</Typography>
+              ) : (
+                <MmInlineControl
+                  valueMm={strokeMm}
+                  min={SIZE_MM_MIN}
+                  max={SIZE_MM_MAX}
+                  onChange={mm => commit(mmToPx(clampSizeMm(roundMm(mm)), ppi))}
+                />
+              )}
+            </Stack>
+          );
+        }
+        if (descriptor.control === 'number' && descriptor.canvasLength) {
+          if (typeof value !== 'number') {
+            return (
+              <NumericField
+                key={descriptor.key}
+                size="small"
+                label={`${descriptor.label} (mm)`}
+                value={null}
+                onCommit={() => {}}
+              />
+            );
+          }
+          return (
+            <CanvasMmField
+              key={descriptor.key}
+              size="small"
+              label={descriptor.label}
+              valuePx={value}
+              minPx={descriptor.min}
+              onCommitPx={commit}
+            />
+          );
+        }
         if (descriptor.control === 'number') return (
           <NumericField
             key={descriptor.key}

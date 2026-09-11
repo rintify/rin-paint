@@ -79,17 +79,17 @@ export const rectShapeKind: ShapeKindHandler<RectShapeParams> = {
   },
 
   parameterFields: () => [
-    fields.parameter('rect.x', 'X', s => s.x, (s, v) => ({ ...s, x: v })),
-    fields.parameter('rect.y', 'Y', s => s.y, (s, v) => ({ ...s, y: v })),
-    fields.parameter('rect.width', '幅', s => s.width, (s, v) => ({ ...s, width: Math.max(.1, v) }), .1),
-    fields.parameter('rect.height', '高さ', s => s.height, (s, v) => ({ ...s, height: Math.max(.1, v) }), .1),
+    fields.parameter('rect.x', 'X', s => s.x, (s, v) => ({ ...s, x: v }), undefined, true),
+    fields.parameter('rect.y', 'Y', s => s.y, (s, v) => ({ ...s, y: v }), undefined, true),
+    fields.parameter('rect.width', '幅', s => s.width, (s, v) => ({ ...s, width: Math.max(.1, v) }), .1, true),
+    fields.parameter('rect.height', '高さ', s => s.height, (s, v) => ({ ...s, height: Math.max(.1, v) }), .1, true),
   ],
 
   controlFields: shape => [
-    fields.control('X', shape.x, (s, v) => ({ ...s, x: v })),
-    fields.control('Y', shape.y, (s, v) => ({ ...s, y: v })),
-    fields.control('幅', shape.width, (s, v) => ({ ...s, width: Math.max(.1, v) }), .1),
-    fields.control('高さ', shape.height, (s, v) => ({ ...s, height: Math.max(.1, v) }), .1),
+    fields.control('X', shape.x, (s, v) => ({ ...s, x: v }), undefined, true),
+    fields.control('Y', shape.y, (s, v) => ({ ...s, y: v }), undefined, true),
+    fields.control('幅', shape.width, (s, v) => ({ ...s, width: Math.max(.1, v) }), .1, true),
+    fields.control('高さ', shape.height, (s, v) => ({ ...s, height: Math.max(.1, v) }), .1, true),
     rotationControlField(shape.rotation ?? 0),
   ],
 

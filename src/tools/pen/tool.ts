@@ -2,6 +2,7 @@ import { TRANSPARENT, type StrokePoint } from '../../model';
 import { emptyRect, expandRect, stampSegment, type DirtyRect } from '../../engine/brush';
 import type { RasterLayer } from '../../engine/layers';
 import type { PaintEngine } from '../../engine/PaintEngine';
+import { DEFAULT_SIZE_MM, mmToPx } from '../../engine/units';
 import type { Tool } from '../types';
 import { normalizePenDetailSettings, type PenDetailSettings } from './settings';
 
@@ -63,7 +64,7 @@ export class PenTool implements Tool {
     this.layer = layer;
     this.eng.captureBefore(layer);
     const settings = this.eng.activeToolSettings();
-    this.size = settings?.size ?? 10;
+    this.size = settings?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getCanvasSpec().ppi);
     this.color = settings?.color ?? '#000';
     this.settings = normalizePenDetailSettings(settings?.settings);
     this.erase = this.color === TRANSPARENT;

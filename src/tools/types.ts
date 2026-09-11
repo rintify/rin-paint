@@ -51,6 +51,9 @@ export interface ToolDescriptor<S = unknown> {
 export interface ActiveToolSettings {
   kind: string;
   color: string;
-  size: number;
+  /** ツール設定に保持している太さ (mm) */
+  sizeMm: number;
+  /** 現在ページ ppi で換算した描画用直径 / 線幅 (px) */
+  sizePx: number;
   settings?: unknown;
 }

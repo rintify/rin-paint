@@ -115,7 +115,7 @@ export class ProjectService {
           useStore.getState().set({
             fonts: meta.fonts,
             penColor: meta.penColor,
-            penSize: meta.penSize,
+            penSizeMm: meta.penSizeMm,
             colorHistory: meta.colorHistory,
           });
           this.restoreTools(meta.tools, meta.activeToolId, meta.toolLayout, meta.toolStacks);
@@ -253,7 +253,7 @@ export class ProjectService {
         tools: structuredClone(st.tools),
         activeToolId: st.activeToolId,
         penColor: st.penColor,
-        penSize: st.penSize,
+        penSizeMm: st.penSizeMm,
         toolLayout: structuredClone(st.toolLayout),
         toolStacks: structuredClone(st.toolStacks),
         colorHistory: [...st.colorHistory],
@@ -381,7 +381,7 @@ export class ProjectService {
       for (const l of layers) ls.bumpLayer(l.id);
       useStore.getState().set({
         penColor: archive.meta.penColor,
-        penSize: archive.meta.penSize,
+        penSizeMm: archive.meta.penSizeMm,
         colorHistory: Array.isArray(archive.meta.colorHistory)
           ? archive.meta.colorHistory
           : useStore.getState().colorHistory,

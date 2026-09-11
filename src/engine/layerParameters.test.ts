@@ -30,4 +30,12 @@ describe('generic layer parameters', () => {
     const text: LayerMeta = { ...base, id: 't', type: 'text', name: '文字', text: { content: 'ab', x: 0, y: 0, width: null, height: null, rotation: 0, direction: 'horizontal', lineHeight: 1.5, style: { fontId: 'sans', color: '#222222', sizePt: 12 }, ranges: [], ruby: [] } };
     expect(commonLayerParameterDescriptors([on, text]).some(value => value.key === 'snapEnabled')).toBe(false);
   });
+
+  it('marks canvas lengths so UI can convert with page ppi', () => {
+    const rect: LayerMeta = { ...base, id: 'r', type: 'shape', name: 'R', shape: { kind: 'rect', x: 1, y: 2, width: 10, height: 10, color: '#111111', strokeWidth: 2, paintMode: 'stroke' } };
+    const descriptors = commonLayerParameterDescriptors([rect]);
+    expect(descriptors.find(value => value.key === 'strokeWidth')?.canvasLength).toBe(true);
+    expect(descriptors.find(value => value.key === 'rect.x')?.canvasLength).toBe(true);
+    expect(descriptors.find(value => value.key === 'rotation')?.canvasLength).toBeFalsy();
+  });
 });

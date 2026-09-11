@@ -1,7 +1,8 @@
 import { Box, Typography } from '@mui/material';
 import { useEngine } from '../../components/EngineContext';
+import { MmControl } from '../../components/MmControl';
 import { useStore } from '../../state/store';
-import { DetailSlider } from '../DetailSlider';
+import { roundMm, SPLIT_WIDTH_MM_MAX } from '../../engine/units';
 import { normalizePolygonSplitToolSettings } from './settings';
 
 export function PolygonSplitSettingsPanel() {
@@ -14,11 +15,12 @@ export function PolygonSplitSettingsPanel() {
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1, letterSpacing: 1 }}>
         分断幅
       </Typography>
-      <DetailSlider
-        label="帯全体 (px)"
-        value={settings.width}
-        max={128}
-        onChange={(value) => engine.updateActiveToolSettings({ width: value })}
+      <MmControl
+        label="帯全体 (mm)"
+        valueMm={settings.widthMm}
+        min={0}
+        max={SPLIT_WIDTH_MM_MAX}
+        onChange={(value) => engine.updateActiveToolSettings({ widthMm: roundMm(value) })}
       />
     </Box>
   );

@@ -9,6 +9,7 @@ import {
   type ToolLayoutItem,
   type ToolStack,
 } from '../model/tool';
+import { DEFAULT_SIZE_MM, clampSizeMm, roundMm } from '../engine/units';
 import { DEFAULT_PEN_DETAIL_SETTINGS } from '../tools/pen/settings';
 import { getToolDescriptor, isToolKind, type ToolKind } from '../tools/registry';
 import { normalizeToolLayout } from './toolLayout';
@@ -32,11 +33,11 @@ export function defaultTools(): ToolInstance[] {
       id: newToolInstanceId(),
       kind: 'pen',
       name: 'ペン',
-      size: 14,
+      sizeMm: DEFAULT_SIZE_MM,
       color: '#222222',
       settings: { ...DEFAULT_PEN_DETAIL_SETTINGS },
     },
-    { id: newToolInstanceId(), kind: 'lasso', name: '選択', size: 14, color: '#222222' },
+    { id: newToolInstanceId(), kind: 'lasso', name: '選択', sizeMm: DEFAULT_SIZE_MM, color: '#222222' },
   ];
 }
 
@@ -46,7 +47,7 @@ export interface PaintState {
   toolStacks: ToolStack[];
   activeToolId: string | null;
   tool: ToolKind | null;
-  penSize: number;
+  penSizeMm: number;
   penColor: string;
   colorHistory: string[];
 
@@ -93,7 +94,7 @@ export interface PaintState {
 
   set: (p: Partial<PaintState>) => void;
   pushColor: (c: string) => void;
-  setPenSize: (n: number) => void;
+  setPenSizeMm: (n: number) => void;
   setPenColor: (c: string) => void;
   /** アクティブツールの settings を部分更新 (descriptor.normalize でクランプ) */
   updateActiveToolSettings: (patch: Record<string, unknown>) => void;
@@ -121,7 +122,7 @@ export const useStore = create<PaintState>((set) => ({
   toolStacks: [],
   activeToolId: initialTools[0].id,
   tool: initialTools[0].kind as ToolKind,
-  penSize: initialTools[0].size,
+  penSizeMm: initialTools[0].sizeMm,
   penColor: initialTools[0].color,
   colorHistory: ['#222222', '#e74c3c', '#e67e22', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#ffffff'],
 
@@ -174,11 +175,14 @@ export const useStore = create<PaintState>((set) => ({
         : { colorHistory: [c, ...s.colorHistory.filter((x) => x !== c)].slice(0, 24) },
     ),
 
-  setPenSize: (n) =>
-    set((s) => ({
-      penSize: n,
-      tools: s.tools.map((t) => (t.id === s.activeToolId ? { ...t, size: n } : t)),
-    })),
+  setPenSizeMm: (n) =>
+    set((s) => {
+      const sizeMm = roundMm(clampSizeMm(n));
+      return {
+        penSizeMm: sizeMm,
+        tools: s.tools.map((t) => (t.id === s.activeToolId ? { ...t, sizeMm } : t)),
+      };
+    }),
 
   setPenColor: (c) =>
     set((s) => ({
@@ -206,7 +210,7 @@ export const useStore = create<PaintState>((set) => ({
       return {
         activeToolId: inst.id,
         tool: inst.kind,
-        penSize: inst.size,
+        penSizeMm: inst.sizeMm,
         penColor: inst.color,
       };
     }),
@@ -223,7 +227,7 @@ export const useStore = create<PaintState>((set) => ({
         id: newToolInstanceId(),
         kind,
         name: count === 0 ? base : `${base} ${count + 1}`,
-        size: s.penSize,
+        sizeMm: s.penSizeMm,
         color: s.penColor,
         ...(descriptor.settings ? { settings: descriptor.settings.default() } : {}),
       };
@@ -232,7 +236,7 @@ export const useStore = create<PaintState>((set) => ({
         toolLayout: [...s.toolLayout, { type: 'tool', toolId: inst.id }],
         activeToolId: inst.id,
         tool: kind,
-        penSize: inst.size,
+        penSizeMm: inst.sizeMm,
         penColor: inst.color,
       };
     }),

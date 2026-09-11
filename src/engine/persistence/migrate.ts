@@ -51,24 +51,23 @@ export function normalizePersistedShapes(value: unknown, seen = new Set<object>(
 export function migrateSavedPage(value: unknown): SavedPage {
   if (!isRecord(value)) throw new Error('保存ページの形式が不正です');
   normalizePersistedShapes(value);
-  if (isRecord(value.history) && (value.history.version === 5 || value.history.version === HISTORY_VERSION)) {
+  if (isRecord(value.history) && value.history.version === HISTORY_VERSION) {
     value.history.version = HISTORY_VERSION;
   }
-  if (!isSavedPage(value)) throw new Error('保存ページをv6へ移行できませんでした');
+  if (!isSavedPage(value)) throw new Error('保存ページの形式が不正です');
   return value;
 }
 
 export function migrateProjectMeta(value: unknown): SavedProjectMeta {
-  if (!isRecord(value) || (value.version !== 5 && value.version !== PROJECT_VERSION)) {
+  if (!isRecord(value) || value.version !== PROJECT_VERSION) {
     throw new Error('対応していないプロジェクト形式です');
   }
-  value.version = PROJECT_VERSION;
   if (Array.isArray(value.tools)) {
     value.tools = value.tools
       .map(tool => normalizeToolInstance(tool))
       .filter((tool): tool is NonNullable<typeof tool> => !!tool);
   }
-  if (!isSavedProjectMeta(value)) throw new Error('プロジェクト設定をv6へ移行できませんでした');
+  if (!isSavedProjectMeta(value)) throw new Error('プロジェクト設定の形式が不正です');
   return value;
 }
 

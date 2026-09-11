@@ -137,6 +137,8 @@ export interface LayerParameterDescriptor {
   /** switch の ON/OFF 表示。未指定なら「表示／非表示」 */
   trueLabel?: string;
   falseLabel?: string;
+  /** true なら内部は px、UI は現在ページ ppi で mm 表示・入力する */
+  canvasLength?: boolean;
   read(layer: LayerParameterLayer): LayerParameterValue | null;
   write(layer: LayerParameterLayer, value: LayerParameterValue): LayerProps;
 }

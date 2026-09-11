@@ -75,13 +75,13 @@ export const polygonShapeKind: ShapeKindHandler<PolygonShapeParams> = {
   },
 
   parameterFields: () => [
-    fields.parameter('polygon.cx', '中心 X', s => s.cx, (s, v) => ({ ...s, cx: v })),
-    fields.parameter('polygon.cy', '中心 Y', s => s.cy, (s, v) => ({ ...s, cy: v })),
+    fields.parameter('polygon.cx', '中心 X', s => s.cx, (s, v) => ({ ...s, cx: v }), undefined, true),
+    fields.parameter('polygon.cy', '中心 Y', s => s.cy, (s, v) => ({ ...s, cy: v }), undefined, true),
   ],
 
   controlFields: shape => [
-    fields.control('中心 X', shape.cx, (s, v) => ({ ...s, cx: v })),
-    fields.control('中心 Y', shape.cy, (s, v) => ({ ...s, cy: v })),
+    fields.control('中心 X', shape.cx, (s, v) => ({ ...s, cx: v }), undefined, true),
+    fields.control('中心 Y', shape.cy, (s, v) => ({ ...s, cy: v }), undefined, true),
     rotationControlField(shape.rotation ?? 0),
   ],
 

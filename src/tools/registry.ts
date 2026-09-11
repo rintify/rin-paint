@@ -1,5 +1,6 @@
 import type { PaintEngine } from '../engine/PaintEngine';
 import type { ToolInstance } from '../model/tool';
+import { clampSizeMm, roundMm } from '../engine/units';
 import { blurTool } from './blur';
 import { fillTool } from './fill';
 import { lassoTool } from './lasso';
@@ -64,7 +65,7 @@ export function normalizeToolInstance(raw: unknown): ToolInstance | null {
   if (typeof o.id !== 'string' || !o.id) return null;
   if (typeof o.kind !== 'string' || !isToolKind(o.kind)) return null;
   if (typeof o.name !== 'string') return null;
-  if (typeof o.size !== 'number' || !Number.isFinite(o.size)) return null;
+  if (typeof o.sizeMm !== 'number' || !Number.isFinite(o.sizeMm)) return null;
   if (typeof o.color !== 'string') return null;
 
   const descriptor = TOOL_REGISTRY[o.kind];
@@ -72,7 +73,7 @@ export function normalizeToolInstance(raw: unknown): ToolInstance | null {
     id: o.id,
     kind: o.kind,
     name: o.name,
-    size: Math.max(1, Math.min(128, o.size)),
+    sizeMm: roundMm(clampSizeMm(o.sizeMm)),
     color: o.color,
   };
 

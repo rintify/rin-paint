@@ -3,7 +3,7 @@ import { normalizeToolLayout } from './toolLayout';
 import type { ToolInstance, ToolLayoutItem, ToolStack } from '../model';
 
 function tool(id: string): ToolInstance {
-  return { id, kind: 'pen', name: id, size: 10, color: '#000' };
+  return { id, kind: 'pen', name: id, sizeMm: 1.19, color: '#000' };
 }
 
 describe('normalizeToolLayout', () => {

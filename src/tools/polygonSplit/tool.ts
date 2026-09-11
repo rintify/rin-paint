@@ -1,5 +1,6 @@
 import type { StrokePoint } from '../../model';
 import type { PaintEngine } from '../../engine/PaintEngine';
+import { mmToPx } from '../../engine/units';
 import type { Tool } from '../types';
 import { normalizePolygonSplitToolSettings } from './settings';
 
@@ -46,7 +47,8 @@ export class PolygonSplitTool implements Tool {
     const ux = dx / length;
     const uy = dy / length;
     const extent = Math.hypot(this.eng.artboard.w, this.eng.artboard.h) * 2;
-    const width = normalizePolygonSplitToolSettings(this.eng.activeToolSettings()?.settings).width;
+    const widthMm = normalizePolygonSplitToolSettings(this.eng.activeToolSettings()?.settings).widthMm;
+    const width = mmToPx(widthMm, this.eng.getCanvasSpec().ppi);
     ctx.save();
     ctx.strokeStyle = '#ef5350';
     ctx.lineWidth = Math.max(this.eng.uiScale(), width);

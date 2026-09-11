@@ -17,6 +17,7 @@ import {
   shapePoints,
 } from '../shapes';
 import type { PaintEngine } from '../PaintEngine';
+import { mmToPx } from '../units';
 
 type TargetShape = Extract<ShapeParams, { kind: 'rect' | 'polygon' }>;
 interface SplitResult { id: string; fragments: ShapePoint[][] }
@@ -102,7 +103,8 @@ export class PolygonSplitService {
     const dx = b.x - a.x, dy = b.y - a.y, length = Math.hypot(dx, dy);
     if (length < .01) return;
     const activeTool = state.tools.find(tool => tool.id === state.activeToolId);
-    const width = Math.max(0, Math.min(128, normalizePolygonSplitToolSettings(activeTool?.settings).width));
+    const widthMm = Math.max(0, normalizePolygonSplitToolSettings(activeTool?.settings).widthMm);
+    const width = mmToPx(widthMm, useStore.getState().canvasSpec.ppi);
     eng.setBusy(true);
     try {
       const clipping = await import('polygon-clipping');

@@ -1,6 +1,8 @@
 import { Box, Typography } from '@mui/material';
 import { useEngine } from '../../components/EngineContext';
+import { MmControl } from '../../components/MmControl';
 import { useStore } from '../../state/store';
+import { GAP_CLOSE_MM_MAX, roundMm } from '../../engine/units';
 import { DetailSlider } from '../DetailSlider';
 import { normalizeFillToolSettings } from './settings';
 
@@ -15,11 +17,12 @@ export function FillSettingsPanel() {
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1, letterSpacing: 1 }}>
         塗りつぶし設定
       </Typography>
-      <DetailSlider
-        label="隙間閉じ (px)"
-        value={settings.gapClosePx}
-        max={64}
-        onChange={(value) => engine.updateActiveToolSettings({ gapClosePx: value })}
+      <MmControl
+        label="隙間閉じ (mm)"
+        valueMm={settings.gapCloseMm}
+        min={0}
+        max={GAP_CLOSE_MM_MAX}
+        onChange={(value) => engine.updateActiveToolSettings({ gapCloseMm: roundMm(value) })}
       />
       <DetailSlider
         label="色の誤差許容"
