@@ -19,6 +19,7 @@ import {
   clearReferenceImage,
   loadReferenceImage,
   saveReferenceImage,
+  referenceEpoch,
 } from '../engine/persistence/db';
 import {
   importReferenceImage,
@@ -89,6 +90,7 @@ export function ReferenceImageWindow({
   const interaction = useRef<Interaction | null>(null);
   const currentUrl = useRef<string | null>(null);
   const loadSequence = useRef(0);
+  const generation = useRef(referenceEpoch());
 
   const close = () => {
     loadSequence.current++;
@@ -100,14 +102,24 @@ export function ReferenceImageWindow({
   };
 
   useEffect(() => {
+    const reset = () => {
+      generation.current = referenceEpoch();
+      loadSequence.current++;
+      if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
+      currentUrl.current = null;
+      interaction.current = null;
+      setReference(null);
+    };
+    window.addEventListener('rinpaint:project-reset', reset);
     const openFile = (event: Event) => {
       const file = (event as CustomEvent<File>).detail;
       if (!file?.type.startsWith('image/')) return;
       const sequence = ++loadSequence.current;
+      const epoch = referenceEpoch();
       const url = URL.createObjectURL(file);
       const image = new Image();
       image.onload = () => {
-        if (sequence !== loadSequence.current) {
+        if (sequence !== loadSequence.current || epoch !== referenceEpoch()) {
           URL.revokeObjectURL(url);
           return;
         }
@@ -159,6 +171,7 @@ export function ReferenceImageWindow({
         // 参照画像だけが読めない場合もキャンバス操作は続けられる。
       });
     return () => {
+      window.removeEventListener('rinpaint:project-reset', reset);
       loadSequence.current++;
       window.removeEventListener(REFERENCE_IMAGE_IMPORT_EVENT, openFile);
       if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
@@ -167,9 +180,10 @@ export function ReferenceImageWindow({
 
   useEffect(() => {
     if (!reference) return;
+    const epoch = generation.current;
     const { url: _url, ...saved } = reference;
     const persist = () => {
-      void saveReferenceImage(saved);
+      void saveReferenceImage(saved, epoch);
     };
     const timer = setTimeout(persist, 120);
     window.addEventListener('pagehide', persist);

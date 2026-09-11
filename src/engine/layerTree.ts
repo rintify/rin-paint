@@ -1,8 +1,27 @@
 export interface TreeLayerLike {
   id: string;
-  type: 'raster' | 'adjust' | 'shape';
+  type: 'raster' | 'adjust' | 'shape' | 'text';
   parentId: string | null;
   childIds: string[];
+}
+
+/** Only ancestors and the selected layer are open; siblings remain visible. */
+export function selectedLayerRows(roots: string[], layers: TreeLayerLike[], activeId: string): { id: string; depth: number }[] {
+  const byId = new Map(layers.map(layer => [layer.id, layer]));
+  const open = new Set<string>();
+  let cursor: string | null = activeId;
+  while (cursor && !open.has(cursor)) { open.add(cursor); cursor = byId.get(cursor)?.parentId ?? null; }
+  const rows: { id: string; depth: number }[] = [];
+  const visit = (ids: string[], depth: number) => {
+    for (const id of [...ids].reverse()) {
+      const layer = byId.get(id);
+      if (!layer) continue;
+      rows.push({ id, depth });
+      if (open.has(id)) visit(layer.childIds, depth + 1);
+    }
+  };
+  visit(roots, 0);
+  return rows;
 }
 
 export function canReparent(layers: TreeLayerLike[], id: string, parentId: string | null): boolean {

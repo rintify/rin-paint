@@ -1,12 +1,17 @@
 import { create } from 'zustand';
 import {
   DEFAULT_PEN_DETAIL_SETTINGS,
+  DEFAULT_TEXT_TOOL_SETTINGS,
+  DEFAULT_CANVAS,
   newToolInstanceId,
   TOOL_KIND_LABELS,
   type LayerMeta,
   type PenDetailSettings,
   type ToolInstance,
   type ToolKind,
+  type CanvasSpec,
+  type ProjectFont,
+  type TextToolSettings,
 } from '../types';
 
 export interface RedoBranch {
@@ -53,6 +58,10 @@ export interface PaintState {
   /** アートボードのピクセルサイズ (エンジンと同期) */
   canvasW: number;
   canvasH: number;
+  canvasSpec: CanvasSpec;
+  fonts: ProjectFont[];
+  textEditingId: string | null;
+  projectGeneration: number;
 
   canUndo: boolean;
   canRedo: boolean;
@@ -82,6 +91,8 @@ export interface PaintState {
   setPenColor: (c: string) => void;
   /** アクティブなペンインスタンスの詳細設定を変更 */
   setPenDetail: (key: keyof PenDetailSettings, value: number) => void;
+  /** 文字ツールで新しく作る文字の初期書式を変更 */
+  setTextToolSettings: (patch: Partial<TextToolSettings>) => void;
   /** インスタンスを切り替え、記憶された色・太さを反映する */
   activateTool: (id: string) => void;
   addTool: (kind: ToolKind) => void;
@@ -104,6 +115,10 @@ export const useStore = create<PaintState>((set) => ({
 
   canvasW: 1600,
   canvasH: 1200,
+  canvasSpec: { ...DEFAULT_CANVAS },
+  fonts: [],
+  textEditingId: null,
+  projectGeneration: 0,
 
   canUndo: false,
   canRedo: false,
@@ -158,6 +173,15 @@ export const useStore = create<PaintState>((set) => ({
       ),
     })),
 
+  setTextToolSettings: (patch) =>
+    set((s) => ({
+      tools: s.tools.map((tool) =>
+        tool.id === s.activeToolId && tool.kind === 'text'
+          ? { ...tool, textSettings: { ...DEFAULT_TEXT_TOOL_SETTINGS, ...tool.textSettings, ...patch } }
+          : tool,
+      ),
+    })),
+
   activateTool: (id) =>
     set((s) => {
       const inst = s.tools.find((t) => t.id === id);
@@ -182,7 +206,9 @@ export const useStore = create<PaintState>((set) => ({
         color: s.penColor,
         ...(kind === 'pen'
           ? { penSettings: { ...DEFAULT_PEN_DETAIL_SETTINGS } }
-          : {}),
+          : kind === 'text'
+            ? { textSettings: { ...DEFAULT_TEXT_TOOL_SETTINGS } }
+            : {}),
       };
       return {
         tools: [...s.tools, inst],

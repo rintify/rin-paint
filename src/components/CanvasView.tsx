@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { engine } from '../engine/PaintEngine';
 import { useStore } from '../state/store';
 import { appAlert } from './AppDialogs';
+import { TextEditor } from './TextEditor';
 import {
   handleReferenceImageDrop,
   ReferenceImageWindow,
@@ -106,6 +107,7 @@ export function CanvasView() {
       >
         <canvas ref={mainRef} width={canvasW} height={canvasH} />
         <canvas ref={overlayRef} width={canvasW} height={canvasH} />
+        <TextEditor fitScale={size.w / canvasW} />
       </Box>
       {selectionActive && (
         <Paper

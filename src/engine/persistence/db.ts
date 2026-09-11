@@ -1,5 +1,5 @@
 import { openDB, type IDBPDatabase } from 'idb';
-import type { AdjustParams, BlendMode, LayerType, ShapeParams, ToolInstance } from '../../types';
+import type { AdjustParams, BlendMode, LayerType, ShapeParams, ToolInstance, TextParams, CanvasSpec, ProjectFont } from '../../types';
 import type { PersistedHistory } from '../history/historyTree';
 import type { ViewState } from '../view';
 
@@ -14,11 +14,14 @@ export interface SavedLayer {
   childIds: string[];
   params?: AdjustParams;
   shape?: ShapeParams;
+  text?: TextParams;
   blob?: Blob;
 }
 
 export interface SavedProject {
-  version: 2;
+  version: 3;
+  canvasSpec: CanvasSpec;
+  fonts: ProjectFont[];
   rootLayerIds: string[];
   layers: SavedLayer[];
   activeLayerId: string;
@@ -61,6 +64,8 @@ let dbPromise: Promise<IDBPDatabase> | null = null;
 let projectBytes = 0;
 let frameBytes: number | null = null;
 let frameBytesPromise: Promise<number> | null = null;
+let referenceGeneration = 0;
+export function referenceEpoch(): number { return referenceGeneration; }
 
 function savedProjectBytes(project: SavedProject | undefined): number {
   if (!project) return 0;
@@ -77,13 +82,31 @@ function savedProjectBytes(project: SavedProject | undefined): number {
       bytes += op.snapshot.blob?.size ?? 0;
     } else if (op.kind === 'layerRemove') {
       for (const snapshot of op.snapshots) bytes += snapshot.blob?.size ?? 0;
+    } else if (op.kind === 'canvasChange') {
+      for (const snapshot of [...op.before.layers, ...op.after.layers]) bytes += snapshot.blob?.size ?? 0;
     } else if (op.kind === 'layerMerge') {
       for (const entry of [...op.before, ...op.after]) {
         bytes += entry.snapshot.blob?.size ?? 0;
       }
     }
   }
-  return bytes;
+  return bytes + (project.fonts ?? []).reduce((sum, font) => sum + font.dataUrl.length, 0);
+}
+
+/** Atomically replace project-owned data; UI/tool preferences live elsewhere. */
+export async function replaceProject(p: SavedProject): Promise<void> {
+  await ensureFrameBytes();
+  const d = await db();
+  const previousGeneration = referenceGeneration;
+  referenceGeneration++;
+  const tx = d.transaction(['kv', 'frames'], 'readwrite');
+  void tx.objectStore('kv').put(p, 'project');
+  void tx.objectStore('kv').delete('reference-image');
+  void tx.objectStore('frames').clear();
+  try { await tx.done; }
+  catch (error) { referenceGeneration = previousGeneration; throw error; }
+  projectBytes = savedProjectBytes(p);
+  frameBytes = 0;
 }
 
 function db(): Promise<IDBPDatabase> {
@@ -107,8 +130,10 @@ export async function loadProject(): Promise<SavedProject | undefined> {
   return project;
 }
 
-export async function saveReferenceImage(image: SavedReferenceImage): Promise<void> {
-  await (await db()).put('kv', image, 'reference-image');
+export async function saveReferenceImage(image: SavedReferenceImage, generation = referenceGeneration): Promise<void> {
+  const d = await db();
+  if (generation !== referenceGeneration) return;
+  await d.put('kv', image, 'reference-image');
 }
 
 export async function loadReferenceImage(): Promise<SavedReferenceImage | undefined> {

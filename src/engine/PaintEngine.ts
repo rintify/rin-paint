@@ -3,7 +3,9 @@ import {
   ART_H,
   ART_W,
   DEFAULT_ADJUST,
+  DEFAULT_CANVAS,
   normalizePenDetailSettings,
+  normalizeTextToolSettings,
   setArtSize,
   TRANSPARENT,
   type LayerMeta,
@@ -11,6 +13,9 @@ import {
   type StrokePoint,
   type ToolInstance,
   type ToolKind,
+  type TextParams,
+  type CanvasSpec,
+  type ProjectFont,
 } from '../types';
 import { checkerPattern, rectValid, type DirtyRect } from './brush';
 import {
@@ -20,6 +25,7 @@ import {
   type LayerProps,
   type LayerSnapshot,
   type Op,
+  type CanvasSnapshot,
 } from './history/historyTree';
 import { applyTiles, extractTiles } from './history/tilePatch';
 import {
@@ -27,6 +33,7 @@ import {
   createAdjustLayer,
   createRasterLayer,
   createShapeLayer,
+  createTextLayer,
   makeCanvas,
   type Layer,
   type RasterLayer,
@@ -40,6 +47,8 @@ import {
   loadTimelapseEnabled,
   saveProject,
   saveTimelapseEnabled,
+  replaceProject,
+  type SavedProject,
   type SavedLayer,
 } from './persistence/db';
 import {
@@ -55,6 +64,10 @@ import { BlurTool } from './tools/blur';
 import { LassoTool } from './tools/lasso';
 import { PenTool } from './tools/pen';
 import { ShapeTool } from './tools/shape';
+import { TextTool } from './tools/text';
+import { TextRenderer, loadFonts } from './text/render';
+import { isEmptyText } from './text/model';
+import { canvasPixels, validateCanvasSpec, scaleShape, pngWithPpi } from './canvasSpec';
 import type { Tool } from './tools/types';
 import { ViewController, type ViewState } from './view';
 
@@ -113,6 +126,9 @@ export class PaintEngine {
   private versions = new Map<string, number>();
   private layerCounter = 0;
   private adjustCounter = 0;
+  private canvasSpec: CanvasSpec = { ...DEFAULT_CANVAS };
+  private textRenderer = new TextRenderer();
+  private projectGeneration = 0;
 
   private main: HTMLCanvasElement | null = null;
   private mainCtx: CanvasRenderingContext2D | null = null;
@@ -138,6 +154,7 @@ export class PaintEngine {
     ellipse: new ShapeTool(this, 'ellipse'),
     lasso: this.lasso,
     blur: new BlurTool(this),
+    text: new TextTool(this),
   };
 
   private dirty = true;
@@ -275,7 +292,7 @@ export class PaintEngine {
   /** 保存データのツールインスタンスを検証して store に反映する */
   private restoreTools(tools: unknown, activeToolId: unknown): void {
     if (!Array.isArray(tools)) return;
-    const kinds: ToolKind[] = ['pen', 'line', 'rect', 'ellipse', 'lasso', 'blur'];
+    const kinds: ToolKind[] = ['pen', 'line', 'rect', 'ellipse', 'lasso', 'blur', 'text'];
     const valid = tools.filter(
       (t): t is ToolInstance =>
         !!t &&
@@ -284,11 +301,11 @@ export class PaintEngine {
         typeof t.name === 'string' &&
         typeof t.size === 'number' &&
         typeof t.color === 'string',
-    ).map((tool) =>
-      tool.kind === 'pen'
-        ? { ...tool, penSettings: normalizePenDetailSettings(tool.penSettings) }
-        : tool,
-    );
+    ).map((tool) => {
+      if (tool.kind === 'pen') return { ...tool, penSettings: normalizePenDetailSettings(tool.penSettings) };
+      if (tool.kind === 'text') return { ...tool, textSettings: normalizeTextToolSettings(tool.textSettings) };
+      return tool;
+    });
     if (valid.length === 0) return;
     const st = useStore.getState();
     st.set({ tools: valid });
@@ -308,8 +325,12 @@ export class PaintEngine {
     }
     try {
       const proj = await loadProject();
-      if (proj?.version === 2 && proj.layers.length > 0) {
-        if (proj.width && proj.height) setArtSize(proj.width, proj.height);
+      if (proj?.version === 3 && proj.layers.length > 0 && !validateCanvasSpec(proj.canvasSpec)) {
+        this.canvasSpec = { ...proj.canvasSpec };
+        const pixels = canvasPixels(this.canvasSpec);
+        setArtSize(pixels.width, pixels.height);
+        await loadFonts(proj.fonts);
+        useStore.getState().set({ fonts: proj.fonts, canvasSpec: { ...this.canvasSpec } });
         this.syncWorkCanvases();
         for (const sl of proj.layers) {
           if (sl.type === 'raster') {
@@ -336,6 +357,10 @@ export class PaintEngine {
             l.childIds = [...sl.childIds];
             this.layers.push(l);
             this.adjustCounter++;
+          } else if (sl.type === 'text' && sl.text) {
+            const l = createTextLayer(sl.name, sl.text, sl.id);
+            Object.assign(l, { opacity: sl.opacity, blend: sl.blend, visible: sl.visible, parentId: sl.parentId, childIds: [...sl.childIds] });
+            this.layers.push(l);
           } else if (sl.shape) {
             const l = createShapeLayer(sl.name, { ...sl.shape }, sl.id);
             l.opacity = sl.opacity;
@@ -376,6 +401,7 @@ export class PaintEngine {
     if (restoredView) this.view.restore(restoredView);
     this.lastViewState = this.view.snapshot();
     this.initialized = true;
+    this.syncTextRenders();
     this.scheduleStorageRefresh();
   }
 
@@ -387,6 +413,18 @@ export class PaintEngine {
 
   ensureComposited(): void {
     if (this.dirty) this.composite();
+  }
+
+  private syncTextRenders(): void {
+    this.textRenderer.retain(new Set(this.layers.filter(l => l.type === 'text').map(l => l.id)));
+    for (const layer of this.layers) if (layer.type === 'text') {
+      this.textRenderer.request(layer.id, layer.text, this.canvasSpec.ppi, () => { this.bumpLayer(layer.id); this.syncStore(); });
+    }
+  }
+  async readyToRender(): Promise<void> {
+    this.syncTextRenders();
+    await this.textRenderer.ready();
+    this.ensureComposited();
   }
 
   compositeCanvas(): HTMLCanvasElement | null {
@@ -441,6 +479,10 @@ export class PaintEngine {
         ctx.globalAlpha = l.opacity;
         ctx.globalCompositeOperation = l.blend;
         drawShape(ctx, l.shape);
+      } else if (l.visible && l.type === 'text') {
+        ctx.globalAlpha = l.opacity;
+        ctx.globalCompositeOperation = l.blend;
+        this.textRenderer.draw(ctx, l.id, l.text);
       } else if (l.visible && l.type === 'adjust') {
         this.tmpCtx.save();
         this.tmpCtx.clearRect(0, 0, ART_W, ART_H);
@@ -490,6 +532,7 @@ export class PaintEngine {
 
   private onPointerDown = (e: PointerEvent): void => {
     if (this.isUiTarget(e)) return;
+    if (useStore.getState().textEditingId) this.finishTextEditing();
     // パン (中ボタン / Space+左ドラッグ)
     if (
       e.pointerType === 'mouse' &&
@@ -711,6 +754,7 @@ export class PaintEngine {
   };
 
   private onKeyDown = (e: KeyboardEvent): void => {
+    if ((e.target as HTMLElement)?.closest('input, textarea, [contenteditable="true"], [data-text-controls]')) return;
     const meta = e.metaKey || e.ctrlKey;
     const key = e.key.toLowerCase();
     if (meta && key === 'z') {
@@ -862,6 +906,7 @@ export class PaintEngine {
 
   async undo(): Promise<void> {
     if (this.busy) return;
+    if (this.finishTextEditing()) return;
     if (this.lasso.phase !== 'idle') {
       this.lasso.cancelSelection();
       this.scheduleSave();
@@ -883,6 +928,7 @@ export class PaintEngine {
 
   async redo(childIndex?: number): Promise<void> {
     if (this.busy) return;
+    if (this.finishTextEditing()) return;
     if (this.lasso.phase !== 'idle') {
       this.lasso.cancelSelection();
       this.scheduleSave();
@@ -903,6 +949,7 @@ export class PaintEngine {
 
   private afterHistoryNav(): void {
     this.fixActive();
+    this.syncTextRenders();
     this.requestRender();
     this.syncStore();
     this.scheduleSave();
@@ -911,6 +958,10 @@ export class PaintEngine {
 
   private async applyOp(op: Op, dir: 'undo' | 'redo'): Promise<void> {
     switch (op.kind) {
+      case 'canvasChange': {
+        await this.restoreCanvasSnapshot(dir === 'undo' ? op.before : op.after);
+        break;
+      }
       case 'raster': {
         const layer = this.rasterById(op.layerId);
         if (layer) {
@@ -920,7 +971,7 @@ export class PaintEngine {
         break;
       }
       case 'layerAdd': {
-        if (dir === 'redo') await this.restoreLayer(op.snapshot, op.location);
+        if (dir === 'redo') { await this.restoreLayer(op.snapshot, op.location); this.activeLayerId = op.snapshot.id; }
         else this.removeLayerInternal(op.snapshot.id);
         break;
       }
@@ -958,6 +1009,7 @@ export class PaintEngine {
   }
 
   private committed(): void {
+    this.syncTextRenders();
     this.requestRender();
     this.syncStore();
     this.recorder.schedule();
@@ -1048,7 +1100,7 @@ export class PaintEngine {
 
   getLayerCanvas(id: string): HTMLCanvasElement | null {
     const l = this.byId(id);
-    return l && l.type === 'raster' ? l.canvas : null;
+    return l?.type === 'text' ? this.textRenderer.get(id) : l?.type === 'raster' ? l.canvas : null;
   }
 
   getShape(id: string): ShapeParams | null {
@@ -1080,6 +1132,8 @@ export class PaintEngine {
       snap.params = { ...l.params };
     } else if (l.type === 'shape') {
       snap.shape = { ...l.shape };
+    } else if (l.type === 'text') {
+      snap.text = structuredClone(l.text);
     } else if (withContent) {
       const copy = makeCanvas();
       copy.getContext('2d')!.drawImage(l.canvas, 0, 0);
@@ -1112,6 +1166,8 @@ export class PaintEngine {
       const l = createAdjustLayer(snap.name, snap.id);
       l.params = { ...(snap.params ?? DEFAULT_ADJUST) };
       layer = l;
+    } else if (snap.type === 'text') {
+      layer = createTextLayer(snap.name, snap.text!, snap.id);
     } else {
       layer = createShapeLayer(snap.name, { ...snap.shape! }, snap.id);
     }
@@ -1153,7 +1209,100 @@ export class PaintEngine {
   }
 
   private finishFloating(): void {
+    this.finishTextEditing();
     if (this.lasso.phase === 'float') this.lasso.commit();
+  }
+
+  /** Ends editing and removes a blank, childless text layer. Returns true when removed. */
+  finishTextEditing(): boolean {
+    window.dispatchEvent(new Event('rinpaint:text-commit'));
+    const id = useStore.getState().textEditingId;
+    if (!id) return false;
+    useStore.getState().set({ textEditingId: null });
+    const layer = this.byId(id);
+    // Never discard nested work as a side effect of closing an empty text editor.
+    if (layer?.type !== 'text' || layer.childIds.length > 0 || !isEmptyText(layer.text)) return false;
+    const location = this.locationOf(id);
+    if (!location) return false;
+    const snapshots = this.descendantIds(id).map(layerId => this.snapshotLayer(this.byId(layerId)!, true));
+    this.removeLayerInternal(id);
+    this.history.push({ kind: 'layerRemove', location, snapshots }, '空の文字を削除');
+    this.fixActive();
+    this.committed();
+    return true;
+  }
+  getText(id: string): TextParams | null {
+    const layer = this.byId(id);
+    return layer?.type === 'text' ? structuredClone(layer.text) : null;
+  }
+  updateText(id: string, before: TextParams, after: TextParams, preview = false): void {
+    const layer = this.byId(id);
+    if (this.busy || layer?.type !== 'text') return;
+    layer.text = structuredClone(after);
+    this.bumpLayer(id);
+    const contentBefore = { ...before, x: 0, y: 0, width: null, height: null };
+    const contentAfter = { ...after, x: 0, y: 0, width: null, height: null };
+    const frameOnlyPreview = preview && JSON.stringify(contentBefore) === JSON.stringify(contentAfter);
+    // During a frame drag, keep the last bitmap and render the final wrap once on
+    // pointerup. Text input and formatting still render immediately.
+    if (!frameOnlyPreview) this.syncTextRenders();
+    if (!preview && JSON.stringify(before) !== JSON.stringify(after)) {
+      this.history.push({ kind: 'layerProps', layerId: id, before: { text: structuredClone(before) }, after: { text: structuredClone(after) } }, '文字を編集');
+      this.committed();
+    } else this.syncStore();
+  }
+  addTextLayer(text: TextParams): void {
+    if (this.busy) return;
+    this.finishFloating();
+    const parentId = closestRasterOrRoot(this.layers, this.activeLayerId);
+    const location = { parentId, index: this.siblingIds(parentId).length };
+    const layer = createTextLayer('文字', text);
+    this.layers.push(layer);
+    this.insertAt(layer.id, location);
+    this.activeLayerId = layer.id;
+    this.history.push({ kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, false) }, '文字を追加');
+    useStore.getState().set({ textEditingId: layer.id });
+    this.committed();
+  }
+  textAt(x: number, y: number): string | null {
+    const walk = (ids: string[]): string | null => {
+      for (const id of [...ids].reverse()) {
+        const layer = this.byId(id)!;
+        const child = walk(layer.childIds);
+        if (child) return child;
+        if (layer.type !== 'text' || !layer.visible) continue;
+        const canvas = this.textRenderer.get(id);
+        const w = layer.text.width ?? Math.max(24, Number(canvas?.dataset.textWidth ?? 100));
+        const h = layer.text.height ?? Math.max(24, Number(canvas?.dataset.textHeight ?? 60));
+        if (x >= layer.text.x && y >= layer.text.y && x <= layer.text.x + w && y <= layer.text.y + h) return id;
+      }
+      return null;
+    };
+    return walk(this.rootLayerIds);
+  }
+  editTextLayer(id: string): void {
+    if (this.busy || this.byId(id)?.type !== 'text') return;
+    this.setActiveLayer(id);
+    useStore.getState().set({ textEditingId: id });
+  }
+  async addFont(file: File): Promise<ProjectFont | null> {
+    if (this.busy) return null;
+    const generation = this.projectGeneration;
+    if (!/\.(ttf|otf|woff2?)$/i.test(file.name)) throw new Error('TTF・OTF・WOFF・WOFF2を選択してください');
+    const dataUrl = await blobToDataURL(file);
+    const font = { id: crypto.randomUUID(), name: file.name.replace(/\.[^.]+$/, ''), dataUrl };
+    const probe = new FontFace(`rin-font-${font.id}`, `url("${dataUrl}")`);
+    await probe.load();
+    if (generation !== this.projectGeneration) return null;
+    const existing = useStore.getState().fonts.find(f => f.dataUrl === dataUrl);
+    if (existing) return existing;
+    const fonts = [...useStore.getState().fonts, font];
+    useStore.getState().set({ fonts });
+    await loadFonts(fonts);
+    if (generation !== this.projectGeneration) return null;
+    this.textRenderer.clear();
+    this.committed();
+    return font;
   }
 
   addRasterLayer(): void {
@@ -1248,6 +1397,12 @@ export class PaintEngine {
     this.committed();
   }
 
+  canRemoveLayer(id: string): boolean {
+    if (!this.byId(id)) return false;
+    const removed = new Set(this.descendantIds(id));
+    return this.layers.some(l => l.type === 'raster' && !removed.has(l.id));
+  }
+
   moveLayer(id: string, to: LayerLocation): boolean {
     if (this.busy) return false;
     const from = this.locationOf(id);
@@ -1303,41 +1458,47 @@ export class PaintEngine {
       target.ctx.globalAlpha = source.opacity;
       target.ctx.globalCompositeOperation = source.blend;
       if (source.type === 'raster') target.ctx.drawImage(source.canvas, 0, 0);
+      else if (source.type === 'text') this.textRenderer.draw(target.ctx, source.id, source.text);
       else drawShape(target.ctx, source.shape);
       target.ctx.restore();
     }
   }
 
   /** 選択中の葉レイヤーを、構造上の直下のラスターへ統合する。 */
-  mergeLayerDown(): void {
+  async mergeLayerDown(id = this.activeLayerId): Promise<void> {
     if (this.busy) return;
     this.finishFloating();
-    const upper = this.byId(this.activeLayerId);
+    const upper = this.byId(id);
     if (!upper) return;
     const lower = this.mergeTarget(upper);
     if (!lower) return;
 
-    const beforeActiveId = this.activeLayerId;
-    const before = this.stableLayerEntries([lower, upper]);
-    this.bakeLayerOnto(lower, upper);
-    this.removeLayerInternal(upper.id);
-    this.activeLayerId = lower.id;
-    this.bumpLayer(lower.id);
-    const after = this.stableLayerEntries([lower]);
-    this.history.push(
-      {
-        kind: 'layerMerge',
-        before,
-        after,
-        beforeActiveId,
-        afterActiveId: lower.id,
-      },
-      '下のレイヤーと統合',
-    );
+    this.busy = true;
+    try {
+      await this.readyToRender();
+      const beforeActiveId = this.activeLayerId;
+      const before = this.stableLayerEntries([lower, upper]);
+      this.bakeLayerOnto(lower, upper);
+      this.removeLayerInternal(upper.id);
+      this.activeLayerId = lower.id;
+      this.bumpLayer(lower.id);
+      const after = this.stableLayerEntries([lower]);
+      this.history.push(
+        {
+          kind: 'layerMerge',
+          before,
+          after,
+          beforeActiveId,
+          afterActiveId: lower.id,
+        },
+        '下のレイヤーと統合',
+      );
+    } finally { this.busy = false; }
     this.committed();
   }
 
   transferShapeLayer(): void {
+    if (this.busy) return;
     if (!this.canTransferShape()) return;
     const shape = this.shapeById(this.activeLayerId)!;
     const parent = this.rasterById(shape.parentId!)!;
@@ -1362,7 +1523,7 @@ export class PaintEngine {
   }
 
   setActiveLayer(id: string): void {
-    if (!this.byId(id) || id === this.activeLayerId) return;
+    if (this.busy || !this.byId(id) || id === this.activeLayerId) return;
     this.finishFloating();
     this.activeLayerId = id;
     this.requestRender();
@@ -1376,10 +1537,12 @@ export class PaintEngine {
     if (p.visible !== undefined) l.visible = p.visible;
     if (p.params !== undefined && l.type === 'adjust') l.params = { ...p.params };
     if (p.shape !== undefined && l.type === 'shape') l.shape = { ...p.shape };
+    if (p.text !== undefined && l.type === 'text') l.text = structuredClone(p.text);
   }
 
   /** スライダードラッグ中のライブ反映 (履歴は積まない) */
   previewLayerProps(id: string, props: LayerProps): void {
+    if (this.busy) return;
     const l = this.byId(id);
     if (!l) return;
     this.assignProps(l, props);
@@ -1389,6 +1552,8 @@ export class PaintEngine {
 
   /** 値の確定 (before → after を1つの履歴ノードとして積む) */
   commitLayerProps(id: string, before: LayerProps, after: LayerProps, label: string): void {
+    if (this.busy) return;
+    window.dispatchEvent(new Event('rinpaint:text-commit'));
     const l = this.byId(id);
     if (!l) return;
     this.assignProps(l, after);
@@ -1511,6 +1676,7 @@ export class PaintEngine {
 
   /** ツールインスタンスを切り替える (記憶された色・太さも反映される) */
   selectToolInstance(id: string): void {
+    if (this.busy) return;
     const st = useStore.getState();
     const inst = st.tools.find((t) => t.id === id);
     if (!inst || id === st.activeToolId) return;
@@ -1524,6 +1690,7 @@ export class PaintEngine {
   }
 
   addToolInstance(kind: ToolKind): void {
+    if (this.busy) return;
     const st = useStore.getState();
     if (kind !== st.tool) {
       this.finishFloating();
@@ -1535,6 +1702,7 @@ export class PaintEngine {
   }
 
   removeToolInstance(id: string): void {
+    if (this.busy) return;
     const st = useStore.getState();
     if (id === st.activeToolId) {
       this.finishFloating();
@@ -1546,6 +1714,7 @@ export class PaintEngine {
   }
 
   reorderToolInstance(from: number, to: number): void {
+    if (this.busy) return;
     useStore.getState().reorderTools(from, to);
     this.scheduleSave();
   }
@@ -1555,34 +1724,107 @@ export class PaintEngine {
     this.lasso.setFreeTransform(on);
   }
 
-  /** キャンバスサイズを変更する (内容は左上基準で保持、履歴はリセット) */
-  resizeCanvas(w: number, h: number): void {
-    if (this.busy) return;
-    w = Math.round(w);
-    h = Math.round(h);
-    if (w === ART_W && h === ART_H) return;
-    // 浮動選択はリサイズ前のスクラッチに依存するため先に確定する
+  private canvasSnapshot(): CanvasSnapshot {
+    return { spec: { ...this.canvasSpec }, layers: this.layers.map(l => this.snapshotLayer(l, true, true)), roots: [...this.rootLayerIds], activeId: this.activeLayerId };
+  }
+  private async restoreCanvasSnapshot(snapshot: CanvasSnapshot): Promise<void> {
+    this.canvasSpec = { ...snapshot.spec };
+    const pixels = canvasPixels(snapshot.spec);
+    setArtSize(pixels.width, pixels.height);
+    this.layers = [];
+    for (const layer of snapshot.layers) await this.restoreLayer(layer);
+    this.rootLayerIds = [...snapshot.roots];
+    this.activeLayerId = snapshot.activeId;
+    this.syncWorkCanvases();
+    this.textRenderer.clear();
+    this.syncTextRenders();
+    useStore.getState().set({ canvasW: ART_W, canvasH: ART_H, canvasSpec: { ...this.canvasSpec } });
+  }
+  async resizeCanvas(spec: CanvasSpec): Promise<void> {
+    if (this.busy) throw new Error('処理の完了後にサイズを変更してください');
+    const error = validateCanvasSpec(spec);
+    if (error) throw new Error(error);
+    if (JSON.stringify(spec) === JSON.stringify(this.canvasSpec)) return;
     this.finishFloating();
     this.lasso.cancelSelection();
-    setArtSize(w, h);
-    for (const l of this.layers) {
-      if (l.type !== 'raster') continue;
-      const old = l.canvas;
-      const canvas = makeCanvas(ART_W, ART_H);
-      const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-      ctx.drawImage(old, 0, 0);
-      l.canvas = canvas;
-      l.ctx = ctx;
-      this.bumpLayer(l.id);
-    }
-    this.syncWorkCanvases();
-    // 履歴のタイルパッチは旧サイズ前提なのでリセットする
-    this.history = new HistoryTree();
-    useStore.getState().set({ canvasW: ART_W, canvasH: ART_H });
-    this.view.reset();
-    this.requestRender();
-    this.syncStore();
-    this.scheduleSave();
+    this.busy = true;
+    const before = this.canvasSnapshot();
+    try {
+      const { width, height } = canvasPixels(spec);
+      const factor = spec.ppi / this.canvasSpec.ppi;
+      // Allocate every replacement before mutating any layer.
+      const rasters = new Map<string, HTMLCanvasElement>();
+      for (const layer of this.layers) if (layer.type === 'raster') {
+        const canvas = makeCanvas(width, height);
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) throw new Error('キャンバス用のメモリを確保できませんでした');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(layer.canvas, 0, 0, layer.canvas.width * factor, layer.canvas.height * factor);
+        rasters.set(layer.id, canvas);
+      }
+      for (const layer of this.layers) {
+        if (layer.type === 'raster') { layer.canvas = rasters.get(layer.id)!; layer.ctx = layer.canvas.getContext('2d', { willReadFrequently: true })!; }
+        else if (layer.type === 'shape') layer.shape = scaleShape(layer.shape, factor);
+        else if (layer.type === 'text') layer.text = { ...layer.text, x: layer.text.x * factor, y: layer.text.y * factor, width: layer.text.width === null ? null : layer.text.width * factor, height: layer.text.height === null ? null : layer.text.height * factor };
+        this.bumpLayer(layer.id);
+      }
+      this.canvasSpec = { ...spec };
+      setArtSize(width, height);
+      this.syncWorkCanvases();
+      const after = this.canvasSnapshot();
+      const node = this.history.push({ kind: 'canvasChange', before, after }, 'キャンバスサイズ・解像度');
+      node.ready = Promise.all([...before.layers, ...after.layers].map(async snapshot => {
+        if (snapshot.canvas) {
+          try { snapshot.blob = await toBlobP(snapshot.canvas); snapshot.canvas = undefined; }
+          catch { /* Keep the original canvas so undo remains lossless; persistence can retry. */ }
+        }
+      })).then(() => undefined);
+      useStore.getState().set({ canvasW: width, canvasH: height, canvasSpec: { ...spec } });
+      this.textRenderer.clear();
+    } catch (error) {
+      await this.restoreCanvasSnapshot(before);
+      throw error;
+    } finally { this.busy = false; }
+    this.committed();
+  }
+
+  async newProject(): Promise<void> {
+    if (this.busy) throw new Error('処理の完了後に新規作成してください');
+    this.finishTextEditing();
+    this.lasso.cancelSelection();
+    this.clearPendingPress();
+    this.activeTool().cancel?.();
+    this.cancelShapeEdit();
+    this.activePointer = null;
+    this.busy = true;
+    this.projectGeneration++;
+    try {
+      await this.recorder.reset();
+      if (this.saveTimer !== null) { clearTimeout(this.saveTimer); this.saveTimer = null; }
+      await this.saving;
+      const layer = createRasterLayer('レイヤー 1');
+      const st = useStore.getState();
+      const history = new HistoryTree();
+      const fresh: SavedProject = {
+        version: 3, canvasSpec: { ...this.canvasSpec }, fonts: [], width: ART_W, height: ART_H,
+        rootLayerIds: [layer.id], activeLayerId: layer.id,
+        layers: [{ ...this.snapshotLayer(layer, false), blob: await toBlobP(layer.canvas) }],
+        tools: structuredClone(st.tools), activeToolId: st.activeToolId, penColor: st.penColor, penSize: st.penSize,
+        colorHistory: [...st.colorHistory], history: await history.serialize(toBlobP),
+        view: { x: 0, y: 0, scale: 1, rot: 0 },
+      };
+      await replaceProject(fresh);
+      this.layers = [layer]; this.rootLayerIds = [layer.id]; this.activeLayerId = layer.id;
+      this.layerCounter = 1; this.adjustCounter = 0; this.history = history; this.versions.clear();
+      this.textRenderer.clear();
+      await loadFonts([]);
+      this.persistedRevision = this.saveRevision;
+      useStore.getState().set({ fonts: [], textEditingId: null, projectGeneration: this.projectGeneration, selectionActive: false, freeTransform: false });
+      window.dispatchEvent(new Event('rinpaint:project-reset'));
+      this.view.reset();
+      this.requestRender(); this.syncStore(); this.scheduleStorageRefresh();
+    } finally { this.busy = false; }
   }
 
   lassoCommit(): void {
@@ -1652,63 +1894,55 @@ export class PaintEngine {
     return true;
   }
 
-  exportPNG(): void {
+  async exportPNG(): Promise<void> {
     if (!this.main) return;
-    this.ensureComposited();
-    void toBlobP(this.main).then((b) => downloadBlob(b, 'rin-paint.png'));
+    this.finishTextEditing();
+    await this.readyToRender();
+    downloadBlob(await pngWithPpi(await toBlobP(this.main), this.canvasSpec.ppi), 'rin-paint.png');
   }
 
   // ---------------------------------------------------------------- project file
 
   async exportProject(): Promise<void> {
+    if (this.busy) throw new Error('処理の完了後に保存してください');
     this.finishFloating();
-    const st = useStore.getState();
-    const layers: ProjectFileLayer[] = [];
-    for (const l of this.layers) {
-      const base = {
-        id: l.id,
-        type: l.type,
-        name: l.name,
-        opacity: l.opacity,
-        blend: l.blend,
-        visible: l.visible,
-        parentId: l.parentId,
-        childIds: [...l.childIds],
-      };
-      if (l.type === 'adjust') {
-        layers.push({ ...base, params: { ...l.params } });
-      } else if (l.type === 'shape') {
-        layers.push({ ...base, shape: { ...l.shape } });
-      } else {
-        layers.push({ ...base, png: await blobToDataURL(await toBlobP(l.canvas)) });
-      }
-    }
+    const snapshot = this.canvasSnapshot();
+    const state = useStore.getState();
+    const settings = { tools: structuredClone(state.tools), activeToolId: state.activeToolId, penColor: state.penColor, penSize: state.penSize, colorHistory: [...state.colorHistory], fonts: structuredClone(state.fonts) };
+    const layers: ProjectFileLayer[] = await Promise.all(snapshot.layers.map(async layer => {
+      const { canvas, blob, ...meta } = layer;
+      return { ...meta, ...(layer.type === 'raster' ? { png: await blobToDataURL(blob ?? await toBlobP(canvas!)) } : {}) };
+    }));
+    const pixels = canvasPixels(snapshot.spec);
     const file: ProjectFile = {
-      app: 'rin-paint',
-      version: 2,
-      rootLayerIds: [...this.rootLayerIds],
-      activeLayerId: this.activeLayerId,
-      penColor: st.penColor,
-      penSize: st.penSize,
-      colorHistory: st.colorHistory,
-      layers,
-      width: ART_W,
-      height: ART_H,
-      tools: st.tools,
-      activeToolId: st.activeToolId,
+      app: 'rin-paint', version: 3, canvasSpec: snapshot.spec, rootLayerIds: snapshot.roots, activeLayerId: snapshot.activeId,
+      width: pixels.width, height: pixels.height, layers, ...settings,
     };
-    const blob = new Blob([JSON.stringify(file)], { type: 'application/json' });
-    downloadBlob(blob, `rin-paint-${new Date().toISOString().slice(0, 10)}.rinpaint`);
+    downloadBlob(new Blob([JSON.stringify(file)], { type: 'application/json' }), `rin-paint-${new Date().toISOString().slice(0, 10)}.rinpaint`);
   }
 
   /** プロジェクトファイルを読み込み、現在の内容と履歴を置き換える */
   async importProject(file: File): Promise<void> {
     if (this.busy) throw new Error('busy');
     const proj = parseProjectFile(await file.text());
+    if (this.busy) throw new Error('busy');
+    this.finishFloating();
+    this.lasso.cancelSelection();
+    const before = this.canvasSnapshot();
+    const previousFonts = useStore.getState().fonts;
+    const previousHistory = this.history;
     this.busy = true;
+    this.projectGeneration++;
     try {
-      this.lasso.cancelSelection();
-      setArtSize(proj.width ?? 1600, proj.height ?? 1200);
+      await this.recorder.reset();
+      if (this.saveTimer !== null) { clearTimeout(this.saveTimer); this.saveTimer = null; }
+      await this.saving;
+      this.canvasSpec = { ...proj.canvasSpec };
+      const pixels = canvasPixels(this.canvasSpec);
+      setArtSize(pixels.width, pixels.height);
+      await loadFonts(proj.fonts);
+      useStore.getState().set({ fonts: proj.fonts });
+      this.textRenderer.clear();
       this.syncWorkCanvases();
       const layers: Layer[] = [];
       let rasterCount = 0;
@@ -1735,6 +1969,10 @@ export class PaintEngine {
             l.ctx.drawImage(bmp, 0, 0);
             bmp.close();
           }
+          layers.push(l);
+        } else if (pl.type === 'text' && pl.text) {
+          const l = createTextLayer(pl.name, pl.text, pl.id);
+          Object.assign(l, { opacity: pl.opacity, blend: pl.blend, visible: pl.visible, parentId: pl.parentId, childIds: [...pl.childIds] });
           layers.push(l);
         } else if (pl.shape) {
           const l = createShapeLayer(pl.name, { ...pl.shape }, pl.id);
@@ -1767,9 +2005,18 @@ export class PaintEngine {
           : useStore.getState().colorHistory,
         canvasW: ART_W,
         canvasH: ART_H,
+        canvasSpec: { ...this.canvasSpec },
       });
       this.restoreTools(proj.tools, proj.activeToolId);
       this.fixActive();
+      this.syncTextRenders();
+    } catch (error) {
+      await loadFonts(previousFonts);
+      useStore.getState().set({ fonts: previousFonts });
+      await this.restoreCanvasSnapshot(before);
+      this.history = previousHistory;
+      this.syncStore();
+      throw error;
     } finally {
       this.busy = false;
     }
@@ -1792,6 +2039,7 @@ export class PaintEngine {
       childIds: [...l.childIds],
       params: l.type === 'adjust' ? { ...l.params } : undefined,
       shape: l.type === 'shape' ? { ...l.shape } : undefined,
+      text: l.type === 'text' ? structuredClone(l.text) : undefined,
       version: this.versions.get(l.id) ?? 0,
     }));
     useStore.getState().set({
@@ -1825,6 +2073,7 @@ export class PaintEngine {
   /** 保存要求を順番に処理し、古い非同期保存が新しい状態を上書きしないようにする。 */
   private flushSave(): Promise<void> {
     if (!this.initialized) return Promise.resolve();
+    if (this.busy) return this.saving ?? Promise.resolve();
     if (this.saveTimer !== null) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
@@ -1859,6 +2108,7 @@ export class PaintEngine {
     const st = useStore.getState();
     // Canvas は後続の描画で変わるため、状態を採取する時点で同期コピーする。
     const layerSources = this.layers.map((l) => {
+      if (l.type === 'text') return { ...this.snapshotLayer(l, false), type: 'text' as const };
       if (l.type === 'adjust') {
         return {
           id: l.id,
@@ -1903,6 +2153,9 @@ export class PaintEngine {
     const view = this.view.snapshot();
     const width = ART_W;
     const height = ART_H;
+    const canvasSpec = { ...this.canvasSpec };
+    const fonts = structuredClone(st.fonts);
+    const rootLayerIds = [...this.rootLayerIds];
     const penColor = st.penColor;
     const penSize = st.penSize;
     const colorHistory = [...st.colorHistory];
@@ -1920,8 +2173,10 @@ export class PaintEngine {
       }),
     );
     await saveProject({
-      version: 2,
-      rootLayerIds: [...this.rootLayerIds],
+      version: 3,
+      canvasSpec,
+      fonts,
+      rootLayerIds,
       layers,
       activeLayerId,
       penColor,
@@ -1938,10 +2193,14 @@ export class PaintEngine {
   }
 
   private onVisibilityChange = (): void => {
-    if (document.visibilityState === 'hidden') void this.flushSave();
+    if (document.visibilityState === 'hidden') {
+      window.dispatchEvent(new Event('rinpaint:text-commit'));
+      void this.flushSave();
+    }
   };
 
   private onPageHide = (event: PageTransitionEvent): void => {
+    window.dispatchEvent(new Event('rinpaint:text-commit'));
     if (event.persisted) {
       // bfcache では同じインスタンスへ戻るため編集中の選択を確定しない。
       void this.flushSave();

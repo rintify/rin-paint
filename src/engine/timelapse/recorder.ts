@@ -13,6 +13,7 @@ export class TimelapseRecorder {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private capturing = false;
   private generation = 0;
+  private task: Promise<void> = Promise.resolve();
 
   constructor(
     private engine: PaintEngine,
@@ -25,7 +26,7 @@ export class TimelapseRecorder {
     const generation = this.generation;
     this.timer = setTimeout(() => {
       this.timer = null;
-      void this.capture(generation);
+      this.task = this.capture(generation);
     }, CAPTURE_DELAY_MS);
   }
 
@@ -42,10 +43,18 @@ export class TimelapseRecorder {
     }
   }
 
+  async reset(): Promise<void> {
+    this.generation++;
+    this.cancelPending();
+    await this.task;
+  }
+
   private async capture(generation: number): Promise<void> {
     if (this.capturing) return;
     this.capturing = true;
     try {
+      await this.engine.readyToRender();
+      if (generation !== this.generation) return;
       const src = this.engine.compositeCanvas();
       if (!src) return;
       this.engine.ensureComposited();

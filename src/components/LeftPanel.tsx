@@ -12,6 +12,7 @@ import { MainMenu } from './MainMenu';
 import { PenSettings } from './PenSettings';
 import { StorageUsage } from './StorageUsage';
 import { ToolPicker } from './ToolPicker';
+import { TextToolSettings } from './TextToolSettings';
 
 function ExportProgress() {
   const progress = useStore((s) => s.exportProgress);
@@ -33,14 +34,14 @@ export function LeftPanel() {
       component="aside"
       className="left-panel"
       sx={{
-        width: 300,
+        width: 400,
         flex: 'none',
         bgcolor: 'background.paper',
         borderRight: 1,
         borderColor: 'divider',
         display: 'flex',
         flexDirection: 'column',
-        overflowY: 'auto',
+        overflow: 'hidden',
       }}
     >
       <Stack
@@ -57,10 +58,26 @@ export function LeftPanel() {
         </Stack>
       </Stack>
       <ExportProgress />
-      <ToolPicker />
-      <PenSettings />
-      <ColorControls />
-      <LayerPanel />
+      <Box className="left-panel-workspace">
+        <ToolPicker />
+        <Box className="left-panel-inspector">
+          <Box className="tool-settings-pane">
+            <Box className="pane-heading">
+              <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1 }}>
+                ツールの設定
+              </Typography>
+            </Box>
+            <Box className="pane-scroll">
+              <TextToolSettings />
+              <PenSettings />
+              <ColorControls />
+            </Box>
+          </Box>
+          <Box className="layers-pane">
+            <LayerPanel />
+          </Box>
+        </Box>
+      </Box>
       <StorageUsage />
     </Box>
   );

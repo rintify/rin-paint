@@ -1,4 +1,4 @@
-export type ToolKind = 'pen' | 'line' | 'rect' | 'ellipse' | 'lasso' | 'blur';
+export type ToolKind = 'pen' | 'line' | 'rect' | 'ellipse' | 'lasso' | 'blur' | 'text';
 
 export const TOOL_KIND_LABELS: Record<ToolKind, string> = {
   pen: 'ペン',
@@ -7,6 +7,7 @@ export const TOOL_KIND_LABELS: Record<ToolKind, string> = {
   ellipse: '楕円',
   lasso: '選択',
   blur: 'ぼかし',
+  text: '文字',
 };
 
 /**
@@ -21,6 +22,36 @@ export interface ToolInstance {
   color: string;
   /** ペン固有の詳細設定。古い保存データとの互換性のため省略可能。 */
   penSettings?: PenDetailSettings;
+  /** 文字ツールで新しく作る文字の初期書式。 */
+  textSettings?: TextToolSettings;
+}
+
+export interface TextToolSettings {
+  fontId: string;
+  sizePt: number;
+  direction: 'horizontal' | 'vertical';
+  lineHeight: number;
+}
+
+export const DEFAULT_TEXT_TOOL_SETTINGS: TextToolSettings = {
+  fontId: 'sans',
+  sizePt: 12,
+  direction: 'horizontal',
+  lineHeight: 1.5,
+};
+
+export function normalizeTextToolSettings(value: unknown): TextToolSettings {
+  const raw = value && typeof value === 'object' ? value as Partial<TextToolSettings> : {};
+  return {
+    fontId: typeof raw.fontId === 'string' && raw.fontId ? raw.fontId : DEFAULT_TEXT_TOOL_SETTINGS.fontId,
+    sizePt: typeof raw.sizePt === 'number' && Number.isFinite(raw.sizePt)
+      ? Math.max(1, Math.min(512, raw.sizePt))
+      : DEFAULT_TEXT_TOOL_SETTINGS.sizePt,
+    direction: raw.direction === 'vertical' ? 'vertical' : 'horizontal',
+    lineHeight: typeof raw.lineHeight === 'number' && Number.isFinite(raw.lineHeight)
+      ? Math.max(1, Math.min(5, raw.lineHeight))
+      : DEFAULT_TEXT_TOOL_SETTINGS.lineHeight,
+  };
 }
 
 export interface PenDetailSettings {
@@ -135,7 +166,26 @@ export interface EllipseShapeParams {
 
 export type ShapeParams = LineShapeParams | RectShapeParams | EllipseShapeParams;
 
-export type LayerType = 'raster' | 'adjust' | 'shape';
+export type LayerType = 'raster' | 'adjust' | 'shape' | 'text';
+
+export interface TextStyle { fontId: string; color: string; sizePt: number }
+export interface TextRange extends TextStyle { start: number; end: number }
+export interface RubyRange { start: number; end: number; text: string }
+export interface TextParams {
+  content: string;
+  style: TextStyle;
+  ranges: TextRange[];
+  ruby: RubyRange[];
+  direction: 'horizontal' | 'vertical';
+  lineHeight: number;
+  x: number;
+  y: number;
+  width: number | null;
+  height: number | null;
+}
+export interface ProjectFont { id: string; name: string; dataUrl: string }
+export interface CanvasSpec { widthMm: number; heightMm: number; ppi: number }
+export const DEFAULT_CANVAS: CanvasSpec = { widthMm: 1600 * 25.4 / 300, heightMm: 1200 * 25.4 / 300, ppi: 300 };
 
 /** React 側に渡すレイヤーの読み取り専用メタデータ */
 export interface LayerMeta {
@@ -149,6 +199,7 @@ export interface LayerMeta {
   childIds: string[];
   params?: AdjustParams;
   shape?: ShapeParams;
+  text?: TextParams;
   /** ラスター内容が変わるたびに増える (サムネイル再描画用) */
   version: number;
 }

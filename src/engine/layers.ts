@@ -5,6 +5,7 @@ import {
   type AdjustParams,
   type BlendMode,
   type ShapeParams,
+  type TextParams,
 } from '../types';
 
 interface LayerTreeFields {
@@ -43,7 +44,20 @@ export interface ShapeLayer extends LayerTreeFields {
   visible: boolean;
 }
 
-export type Layer = RasterLayer | AdjustLayer | ShapeLayer;
+export interface TextLayer extends LayerTreeFields {
+  id: string;
+  type: 'text';
+  name: string;
+  text: TextParams;
+  opacity: number;
+  blend: BlendMode;
+  visible: boolean;
+}
+export type Layer = RasterLayer | AdjustLayer | ShapeLayer | TextLayer;
+
+export function createTextLayer(name: string, text: TextParams, id = newLayerId()): TextLayer {
+  return { id, type: 'text', name, text: structuredClone(text), opacity: 1, blend: 'source-over', visible: true, parentId: null, childIds: [] };
+}
 
 let idCounter = 0;
 export function newLayerId(): string {

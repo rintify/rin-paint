@@ -20,7 +20,7 @@ import { engine } from '../engine/PaintEngine';
 import { exportTimelapse } from '../engine/timelapse/exporter';
 import { importReferenceImage } from '../referenceImage';
 import { useStore } from '../state/store';
-import { MAX_ART_SIZE, MIN_ART_SIZE } from '../types';
+import { canvasPixels, validateCanvasSpec } from '../engine/canvasSpec';
 import { appAlert, appConfirm } from './AppDialogs';
 
 async function startTimelapse(): Promise<void> {
@@ -38,65 +38,57 @@ async function startTimelapse(): Promise<void> {
 }
 
 function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
-  const canvasW = useStore((s) => s.canvasW);
-  const canvasH = useStore((s) => s.canvasH);
-  const [w, setW] = useState(String(canvasW));
-  const [h, setH] = useState(String(canvasH));
+  const spec = useStore((s) => s.canvasSpec);
+  const initialW = String(Number(spec.widthMm.toFixed(3)));
+  const initialH = String(Number(spec.heightMm.toFixed(3)));
+  const [w, setW] = useState(initialW);
+  const [h, setH] = useState(initialH);
+  const [ppi, setPpi] = useState(String(spec.ppi));
+  const [applying, setApplying] = useState(false);
+  const next = { widthMm: w === initialW ? spec.widthMm : Number(w), heightMm: h === initialH ? spec.heightMm : Number(h), ppi: Number(ppi) };
+  const error = validateCanvasSpec(next);
+  const pixels = canvasPixels(next);
 
   const apply = async () => {
-    const nw = Number(w);
-    const nh = Number(h);
-    if (
-      !Number.isFinite(nw) ||
-      !Number.isFinite(nh) ||
-      nw < MIN_ART_SIZE ||
-      nh < MIN_ART_SIZE ||
-      nw > MAX_ART_SIZE ||
-      nh > MAX_ART_SIZE
-    ) {
-      await appAlert(`${MIN_ART_SIZE}〜${MAX_ART_SIZE} の範囲で指定してください`);
-      return;
-    }
-    if (Math.round(nw) === canvasW && Math.round(nh) === canvasH) {
-      onClose();
-      return;
-    }
-    engine.resizeCanvas(nw, nh);
-    onClose();
+    if (error || applying) return;
+    setApplying(true);
+    try { await engine.resizeCanvas(next); onClose(); }
+    catch (err) { await appAlert(err instanceof Error ? err.message : 'サイズを変更できませんでした'); }
+    finally { setApplying(false); }
   };
 
   return (
-    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog open onClose={applying ? undefined : onClose} maxWidth="xs" fullWidth>
       <DialogTitle>キャンバスサイズ</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, pt: 1 }}>
         <TextField
-          label="幅"
+          label="幅 (mm)"
           type="number"
           value={w}
           onChange={(e) => setW(e.target.value)}
           slotProps={{
-            htmlInput: { min: MIN_ART_SIZE, max: MAX_ART_SIZE },
-            input: { endAdornment: <Typography variant="caption">px</Typography> },
+            htmlInput: { min: 0.01, step: 0.1 },
           }}
         />
         <TextField
-          label="高さ"
+          label="高さ (mm)"
           type="number"
           value={h}
           onChange={(e) => setH(e.target.value)}
           slotProps={{
-            htmlInput: { min: MIN_ART_SIZE, max: MAX_ART_SIZE },
-            input: { endAdornment: <Typography variant="caption">px</Typography> },
+            htmlInput: { min: 0.01, step: 0.1 },
           }}
         />
+        <TextField label="解像度 (ppi)" type="number" value={ppi} onChange={e => setPpi(e.target.value)} slotProps={{ htmlInput: { min: 1, step: 1 } }} />
+        <Typography variant="body2" color={error ? 'error' : 'text.secondary'}>{error ?? `${pixels.width} × ${pixels.height} px`}</Typography>
         <Typography variant="caption" color="text.secondary">
-          内容は左上基準で保持されます。取り消し履歴はリセットされます。
+          幅・高さは左上基準で変更します。解像度の変更は、実寸を保って画像を補間します。変更は取り消せます。
         </Typography>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>キャンセル</Button>
-        <Button variant="contained" onClick={() => void apply()}>
-          変更
+        <Button onClick={onClose} disabled={applying}>キャンセル</Button>
+        <Button variant="contained" disabled={!!error || applying} onClick={() => void apply()}>
+          {applying ? '変更中…' : '変更'}
         </Button>
       </DialogActions>
     </Dialog>
@@ -107,6 +99,8 @@ function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
 export function MainMenu() {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [sizeOpen, setSizeOpen] = useState(false);
+  const [newOpen, setNewOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
   const progress = useStore((s) => s.exportProgress);
   const timelapseEnabled = useStore((s) => s.timelapseEnabled);
   const historyPrunableCount = useStore((s) => s.historyPrunableCount);
@@ -160,6 +154,7 @@ export function MainMenu() {
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
       >
+        <MenuItem onClick={() => { setNewOpen(true); close(); }}>新規プロジェクト…</MenuItem>
         <MenuItem
           onClick={() => {
             setSizeOpen(true);
@@ -178,7 +173,7 @@ export function MainMenu() {
         </MenuItem>
         <MenuItem
           onClick={() => {
-            engine.exportPNG();
+            void engine.exportPNG().catch(error => appAlert(error instanceof Error ? error.message : 'PNGの保存に失敗しました'));
             close();
           }}
         >
@@ -186,7 +181,7 @@ export function MainMenu() {
         </MenuItem>
         <MenuItem
           onClick={() => {
-            void engine.exportProject();
+            void engine.exportProject().catch(error => appAlert(error instanceof Error ? error.message : '保存に失敗しました'));
             close();
           }}
         >
@@ -244,6 +239,20 @@ export function MainMenu() {
         </MenuItem>
       </Menu>
       {sizeOpen && <CanvasSizeDialog onClose={() => setSizeOpen(false)} />}
+      <Dialog open={newOpen} onClose={creating ? undefined : () => setNewOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>新規プロジェクトを作成しますか？</DialogTitle>
+        <DialogContent>
+          <Typography>現在の描画内容、すべての履歴、参照画像、タイムラプス、追加フォントを消去します。この操作は取り消せません。</Typography>
+          <Typography color="text.secondary" sx={{ mt: 1.5 }}>キャンバスのサイズ・解像度と登録ツールは引き継ぎます。</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button autoFocus disabled={creating} onClick={() => setNewOpen(false)}>キャンセル</Button>
+          <Button variant="contained" color="error" disabled={creating} onClick={() => {
+            setCreating(true);
+            void engine.newProject().then(() => setNewOpen(false)).catch(error => appAlert(error instanceof Error ? error.message : '新規作成に失敗しました')).finally(() => setCreating(false));
+          }}>{creating ? '作成中…' : '新規作成'}</Button>
+        </DialogActions>
+      </Dialog>
       <input
         ref={imageRef}
         type="file"

@@ -1,4 +1,4 @@
-import type { AdjustParams, BlendMode, LayerType, ShapeParams } from '../../types';
+import type { AdjustParams, BlendMode, LayerType, ShapeParams, TextParams, CanvasSpec } from '../../types';
 import type { TilePatch } from './tilePatch';
 
 /** レイヤー構造操作の undo/redo 用スナップショット */
@@ -13,6 +13,7 @@ export interface LayerSnapshot {
   childIds: string[];
   params?: AdjustParams;
   shape?: ShapeParams;
+  text?: TextParams;
   /** ラスター内容。作成直後は canvas、PNG エンコード完了後は blob に置き換わる */
   canvas?: HTMLCanvasElement;
   blob?: Blob;
@@ -24,6 +25,7 @@ export interface LayerProps {
   visible?: boolean;
   params?: AdjustParams;
   shape?: ShapeParams;
+  text?: TextParams;
 }
 
 export interface LayerLocation {
@@ -37,6 +39,7 @@ export interface LocatedLayerSnapshot {
 }
 
 export type Op =
+  | { kind: 'canvasChange'; before: CanvasSnapshot; after: CanvasSnapshot }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
   | { kind: 'layerAdd'; location: LayerLocation; snapshot: LayerSnapshot }
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: LayerSnapshot[] }
@@ -67,7 +70,18 @@ export interface PersistedLayerSnapshot
   blob?: Blob;
 }
 
+export interface CanvasSnapshot {
+  spec: CanvasSpec;
+  layers: LayerSnapshot[];
+  roots: string[];
+  activeId: string;
+}
+export interface PersistedCanvasSnapshot extends Omit<CanvasSnapshot, 'layers'> {
+  layers: PersistedLayerSnapshot[];
+}
+
 export type PersistedOp =
+  | { kind: 'canvasChange'; before: PersistedCanvasSnapshot; after: PersistedCanvasSnapshot }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
   | { kind: 'layerAdd'; location: LayerLocation; snapshot: PersistedLayerSnapshot }
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: PersistedLayerSnapshot[] }
@@ -82,7 +96,7 @@ export type PersistedOp =
     };
 
 export interface PersistedHistory {
-  version: 2;
+  version: 3;
   rootId: number;
   currentId: number;
   nodes: {
@@ -157,6 +171,8 @@ export class HistoryTree {
       const op = node.op;
       if (!op) return null;
       switch (op.kind) {
+        case 'canvasChange':
+          return { ...op, before: { ...op.before, layers: await Promise.all(op.before.layers.map(snapshot)) }, after: { ...op.after, layers: await Promise.all(op.after.layers.map(snapshot)) } };
         case 'raster':
           return { ...op, tiles: op.tiles.map((tile) => ({ ...tile })) };
         case 'layerAdd':
@@ -181,7 +197,7 @@ export class HistoryTree {
     };
 
     return {
-      version: 2,
+      version: 3,
       rootId,
       currentId,
       nodes: await Promise.all(
@@ -201,7 +217,7 @@ export class HistoryTree {
   restore(value: unknown): boolean {
     if (!value || typeof value !== 'object') return false;
     const saved = value as Partial<PersistedHistory>;
-    if (saved.version !== 2 || !Array.isArray(saved.nodes) || saved.nodes.length === 0) {
+    if (saved.version !== 3 || !Array.isArray(saved.nodes) || saved.nodes.length === 0) {
       return false;
     }
     try {
@@ -342,6 +358,7 @@ export class HistoryTree {
       (snapshot.canvas ? snapshot.canvas.width * snapshot.canvas.height * 4 : 0);
     const opBytes = (op: Op | null): number => {
       if (!op) return 0;
+      if (op.kind === 'canvasChange') return [...op.before.layers, ...op.after.layers].reduce((sum, snapshot) => sum + snapshotBytes(snapshot), 0);
       if (op.kind === 'raster') {
         return op.tiles.reduce(
           (sum, tile) =>

@@ -35,7 +35,7 @@ export function PenSettings() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [detailsOpen]);
 
-  if (kind === 'lasso') return null;
+  if (kind === 'lasso' || kind === 'text') return null;
   const d = Math.min(penSize, 32);
   const transparent = penColor === TRANSPARENT;
   const penDetails = normalizePenDetailSettings(activeTool?.penSettings);

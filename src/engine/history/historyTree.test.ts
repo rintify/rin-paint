@@ -18,7 +18,7 @@ describe('shape history persistence', () => {
     const history = new HistoryTree();
     history.push({ kind: 'layerAdd', location: { parentId: 'raster-1', index: 2 }, snapshot: shapeSnapshot }, '図形を追加');
     const saved = await history.serialize(async () => new Blob());
-    expect(saved.version).toBe(2);
+    expect(saved.version).toBe(3);
     const restored = new HistoryTree();
     expect(restored.restore(saved)).toBe(true);
     expect(restored.current.op).toMatchObject({ kind: 'layerAdd', location: { parentId: 'raster-1', index: 2 }, snapshot: { shape: shapeSnapshot.shape } });

@@ -21,4 +21,14 @@ describe('tool management', () => {
     useStore.getState().removeTool(tool.id);
     expect(useStore.getState().tools).toHaveLength(1);
   });
+
+  it('stores text creation settings on each text tool instance', () => {
+    useStore.setState({ ...original, tools: defaultTools() });
+    useStore.getState().addTool('text');
+    const id = useStore.getState().activeToolId;
+    useStore.getState().setTextToolSettings({ fontId: 'serif', sizePt: 32, direction: 'vertical', lineHeight: 2 });
+    expect(useStore.getState().tools.find(tool => tool.id === id)?.textSettings).toEqual({
+      fontId: 'serif', sizePt: 32, direction: 'vertical', lineHeight: 2,
+    });
+  });
 });

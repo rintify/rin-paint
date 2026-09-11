@@ -1,4 +1,5 @@
-import type { AdjustParams, BlendMode, LayerType, ShapeParams, ToolInstance } from '../../types';
+import type { AdjustParams, BlendMode, LayerType, ShapeParams, ToolInstance, TextParams, CanvasSpec, ProjectFont } from '../../types';
+import { validateCanvasSpec } from '../canvasSpec';
 
 export interface ProjectFileLayer {
   id: string;
@@ -11,13 +12,16 @@ export interface ProjectFileLayer {
   childIds: string[];
   params?: AdjustParams;
   shape?: ShapeParams;
+  text?: TextParams;
   /** ラスター内容の PNG data URL */
   png?: string;
 }
 
 export interface ProjectFile {
   app: 'rin-paint';
-  version: 2;
+  version: 3;
+  canvasSpec: CanvasSpec;
+  fonts: ProjectFont[];
   rootLayerIds: string[];
   activeLayerId: string;
   penColor: string;
@@ -46,7 +50,7 @@ export async function dataURLToBlob(url: string): Promise<Blob> {
 
 export function parseProjectFile(text: string): ProjectFile {
   const data = JSON.parse(text) as ProjectFile;
-  if (data?.app !== 'rin-paint' || data.version !== 2 || !Array.isArray(data.layers) || !Array.isArray(data.rootLayerIds)) {
+  if (data?.app !== 'rin-paint' || data.version !== 3 || !Array.isArray(data.layers) || !Array.isArray(data.rootLayerIds) || !data.canvasSpec || validateCanvasSpec(data.canvasSpec) || !Array.isArray(data.fonts)) {
     throw new Error('rin-paint のプロジェクトファイルではありません');
   }
   return data;
