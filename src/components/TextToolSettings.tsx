@@ -11,22 +11,36 @@ import {
   ToggleButtonGroup,
   Typography,
 } from '@mui/material';
-import { useRef } from 'react';
-import { engine } from '../engine/PaintEngine';
 import { STANDARD_FONTS } from '../engine/text/render';
 import { useStore } from '../state/store';
 import { normalizeTextToolSettings } from '../types';
 import { appAlert } from './AppDialogs';
+import { useEngine } from './EngineContext';
+import { pickFile } from './hooks/pickFile';
 import { NumericField } from './NumericField';
 
 export function TextToolSettings() {
+  const engine = useEngine();
   const kind = useStore(state => state.tool);
   const active = useStore(state => state.tools.find(tool => tool.id === state.activeToolId));
   const fonts = useStore(state => state.fonts);
-  const file = useRef<HTMLInputElement>(null);
   if (kind !== 'text') return null;
   const settings = normalizeTextToolSettings(active?.textSettings);
   const update = useStore.getState().setTextToolSettings;
+
+  const addFont = () => {
+    void pickFile('.ttf,.otf,.woff,.woff2').then(chosen => {
+      if (!chosen) return;
+      void engine.addFont(chosen)
+        .then(font => {
+          if (font && useStore.getState().tool === 'text') {
+            useStore.getState().setTextToolSettings({ fontId: font.id });
+          }
+        })
+        .catch(error =>
+          appAlert(error instanceof Error ? error.message : 'フォントを読み込めませんでした'));
+    });
+  };
 
   return (
     <Box className="section text-tool-settings">
@@ -45,7 +59,7 @@ export function TextToolSettings() {
           label="フォント"
           value={settings.fontId}
           onChange={event => {
-            if (event.target.value === '__add') file.current?.click();
+            if (event.target.value === '__add') addFont();
             else update({ fontId: event.target.value });
           }}
         >
@@ -53,35 +67,24 @@ export function TextToolSettings() {
             <MenuItem key={font.id} value={font.id}>{font.name}</MenuItem>
           ))}
           <MenuItem value="__add">
-            <UploadFileOutlinedIcon sx={{ mr: 1, fontSize: 18 }} />フォントを追加…
+            <UploadFileOutlinedIcon sx={{ mr: 1, fontSize: 18 }} />
+            フォントを追加…
           </MenuItem>
         </TextField>
-        <input
-          ref={file}
-          type="file"
-          accept=".ttf,.otf,.woff,.woff2"
-          hidden
-          onChange={event => {
-            const chosen = event.target.files?.[0];
-            event.target.value = '';
-            if (!chosen) return;
-            void engine.addFont(chosen)
-              .then(font => { if (font && useStore.getState().tool === 'text') useStore.getState().setTextToolSettings({ fontId: font.id }); })
-              .catch(error => appAlert(error instanceof Error ? error.message : 'フォントを読み込めませんでした'));
-          }}
-        />
         <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
           <NumericField
             label="フォントサイズ"
             value={settings.sizePt}
-            min={1} max={512}
+            min={1}
+            max={512}
             onCommit={value => update({ sizePt: value })}
             helperText="pt"
           />
           <NumericField
             label="行間"
             value={settings.lineHeight}
-            min={1} max={5}
+            min={1}
+            max={5}
             onCommit={value => update({ lineHeight: value })}
             helperText="倍"
           />
@@ -95,17 +98,21 @@ export function TextToolSettings() {
             fullWidth
             size="small"
             value={settings.direction}
-            onChange={(_, value) => { if (value) update({ direction: value }); }}
+            onChange={(_, value) => {
+              if (value) update({ direction: value });
+            }}
           >
             <ToggleButton value="horizontal">
-              <FormatTextdirectionLToRIcon sx={{ mr: 0.75, fontSize: 18 }} />横書き
+              <FormatTextdirectionLToRIcon sx={{ mr: 0.75, fontSize: 18 }} />
+              横書き
             </ToggleButton>
             <ToggleButton value="vertical">
-              <FormatTextdirectionRToLIcon sx={{ mr: 0.75, fontSize: 18, transform: 'rotate(90deg)' }} />縦書き
+              <FormatTextdirectionRToLIcon sx={{ mr: 0.75, fontSize: 18, transform: 'rotate(90deg)' }} />
+              縦書き
             </ToggleButton>
           </ToggleButtonGroup>
         </Box>
-        <Button variant="outlined" startIcon={<UploadFileOutlinedIcon />} onClick={() => file.current?.click()}>
+        <Button variant="outlined" startIcon={<UploadFileOutlinedIcon />} onClick={addFont}>
           フォントファイルを追加
         </Button>
       </Stack>

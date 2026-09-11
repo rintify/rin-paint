@@ -16,6 +16,7 @@ import {
   type ProjectFont,
   type TextToolSettings,
 } from '../types';
+import { normalizeToolLayout } from './toolLayout';
 
 export interface RedoBranch {
   index: number;
@@ -58,6 +59,7 @@ export interface PaintState {
   colorHistory: string[];
 
   layers: LayerMeta[];
+  rootLayerIds: string[];
   activeLayerId: string;
   selectedLayerIds: string[];
   multiSelectMode: boolean;
@@ -124,31 +126,6 @@ export interface PaintState {
 const initialTools = defaultTools();
 const initialLayout: ToolLayoutItem[] = initialTools.map((tool) => ({ type: 'tool', toolId: tool.id }));
 
-function normalizeToolLayout(tools: ToolInstance[], layout: ToolLayoutItem[], stacks: ToolStack[]) {
-  const validTools = new Set(tools.map((tool) => tool.id));
-  const cleanedStacks = stacks.map((stack) => ({ ...stack, toolIds: stack.toolIds.filter((id) => validTools.has(id)) }));
-  const singleton = new Map(cleanedStacks.filter(stack => stack.toolIds.length === 1).map(stack => [stack.id, stack.toolIds[0]]));
-  layout = layout.flatMap(item => item.type === 'stack' && singleton.has(item.stackId) ? [{ type: 'tool' as const, toolId: singleton.get(item.stackId)! }] : [item]);
-  const nextStacks = cleanedStacks.filter((stack) => stack.toolIds.length >= 2);
-  const stacked = new Set(nextStacks.flatMap((stack) => stack.toolIds));
-  const validStacks = new Set(nextStacks.map((stack) => stack.id));
-  const seenTools = new Set<string>();
-  const seenStacks = new Set<string>();
-  const nextLayout: ToolLayoutItem[] = [];
-  for (const item of layout) {
-    if (item.type === 'tool') {
-      if (validTools.has(item.toolId) && !stacked.has(item.toolId) && !seenTools.has(item.toolId)) {
-        seenTools.add(item.toolId); nextLayout.push(item);
-      }
-    } else if (validStacks.has(item.stackId) && !seenStacks.has(item.stackId)) {
-      seenStacks.add(item.stackId); nextLayout.push(item);
-    }
-  }
-  for (const stack of nextStacks) if (!seenStacks.has(stack.id)) nextLayout.push({ type: 'stack', stackId: stack.id });
-  for (const tool of tools) if (!stacked.has(tool.id) && !seenTools.has(tool.id)) nextLayout.push({ type: 'tool', toolId: tool.id });
-  return { toolLayout: nextLayout, toolStacks: nextStacks };
-}
-
 export const useStore = create<PaintState>((set) => ({
   tools: initialTools,
   toolLayout: initialLayout,
@@ -160,6 +137,7 @@ export const useStore = create<PaintState>((set) => ({
   colorHistory: ['#222222', '#e74c3c', '#e67e22', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#ffffff'],
 
   layers: [],
+  rootLayerIds: [],
   activeLayerId: '',
   selectedLayerIds: [],
   multiSelectMode: false,

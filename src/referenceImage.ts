@@ -1,9 +1,7 @@
-export const REFERENCE_IMAGE_IMPORT_EVENT = 'rinpaint:reference-image-import';
+import { engine } from './engine/instance';
 
 export function importReferenceImage(file: File): boolean {
   if (!file.type.startsWith('image/')) return false;
-  window.dispatchEvent(
-    new CustomEvent<File>(REFERENCE_IMAGE_IMPORT_EVENT, { detail: file }),
-  );
+  engine.events.emit('referenceImageImport', file);
   return true;
 }

@@ -1,4 +1,6 @@
-import type { AdjustParams, BlendMode, LayerType, ShapeParams, TextParams, CanvasSpec } from '../../types';
+import type { AdjustParams, BlendMode, LayerType, ShapeParams, TextParams, CanvasSpec } from '../../model';
+import { HISTORY_VERSION } from '../persistence/version';
+import { opBytes } from './bytes';
 import type { TilePatch } from './tilePatch';
 
 /** レイヤー構造操作の undo/redo 用スナップショット */
@@ -41,17 +43,6 @@ export interface LocatedLayerSnapshot {
   snapshot: LayerSnapshot;
 }
 
-export interface LegacyLayerMergeOp {
-  kind: 'layerMerge';
-  /** 保存済み version 3 には format が無いため省略可能。 */
-  format?: 'snapshots-v1';
-  before: LocatedLayerSnapshot[];
-  after: LocatedLayerSnapshot[];
-  beforeActiveId: string;
-  afterActiveId: string;
-  maskChanges?: { layerId: string; before: string[]; after: string[] }[];
-}
-
 export interface TileLayerMergeOp {
   kind: 'layerMerge';
   format: 'tiles-v1';
@@ -63,7 +54,7 @@ export interface TileLayerMergeOp {
   maskChanges?: { layerId: string; before: string[]; after: string[] }[];
 }
 
-export type LayerMergeOp = LegacyLayerMergeOp | TileLayerMergeOp;
+export type LayerMergeOp = TileLayerMergeOp;
 
 export type AtomicOp =
   | { kind: 'canvasChange'; before: CanvasSnapshot; after: CanvasSnapshot }
@@ -88,8 +79,7 @@ export interface HistoryNode {
   ready?: Promise<void>;
 }
 
-export interface PersistedLayerSnapshot
-  extends Omit<LayerSnapshot, 'canvas'> {
+export interface PersistedLayerSnapshot extends Omit<LayerSnapshot, 'canvas'> {
   blob?: Blob;
 }
 
@@ -103,15 +93,6 @@ export interface PersistedCanvasSnapshot extends Omit<CanvasSnapshot, 'layers'> 
   layers: PersistedLayerSnapshot[];
 }
 
-export interface PersistedLegacyLayerMergeOp {
-  kind: 'layerMerge';
-  format?: 'snapshots-v1';
-  before: { location: LayerLocation; snapshot: PersistedLayerSnapshot }[];
-  after: { location: LayerLocation; snapshot: PersistedLayerSnapshot }[];
-  beforeActiveId: string;
-  afterActiveId: string;
-}
-
 export interface PersistedTileLayerMergeOp {
   kind: 'layerMerge';
   format: 'tiles-v1';
@@ -120,6 +101,7 @@ export interface PersistedTileLayerMergeOp {
   tiles: TilePatch[];
   beforeActiveId: string;
   afterActiveId: string;
+  maskChanges?: { layerId: string; before: string[]; after: string[] }[];
 }
 
 export type PersistedAtomicOp =
@@ -129,13 +111,12 @@ export type PersistedAtomicOp =
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: PersistedLayerSnapshot[] }
   | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
-  | PersistedLegacyLayerMergeOp
   | PersistedTileLayerMergeOp;
 
 export type PersistedOp = PersistedAtomicOp | { kind: 'batch'; ops: PersistedAtomicOp[] };
 
 export interface PersistedHistory {
-  version: 4;
+  version: typeof HISTORY_VERSION;
   rootId: number;
   currentId: number;
   nodes: {
@@ -173,7 +154,6 @@ export class HistoryTree {
   async serialize(
     canvasToBlob: (canvas: HTMLCanvasElement) => Promise<Blob>,
   ): Promise<PersistedHistory> {
-    // 非同期変換中に新しい操作が追加されても、1つの時点の木構造を保存する。
     const currentId = this.current.id;
     const sourceNodes: HistoryNode[] = [];
     const visit = (node: HistoryNode) => {
@@ -198,17 +178,14 @@ export class HistoryTree {
         blob: value.blob ?? (canvas ? await canvasToBlob(canvas) : undefined),
       };
     };
-    const located = async (entries: LocatedLayerSnapshot[]) =>
-      Promise.all(
-        entries.map(async (entry) => ({
-          location: { ...entry.location },
-          snapshot: await snapshot(entry.snapshot),
-        })),
-      );
     const persistAtomic = async (op: AtomicOp): Promise<PersistedAtomicOp> => {
       switch (op.kind) {
         case 'canvasChange':
-          return { ...op, before: { ...op.before, layers: await Promise.all(op.before.layers.map(snapshot)) }, after: { ...op.after, layers: await Promise.all(op.after.layers.map(snapshot)) } };
+          return {
+            ...op,
+            before: { ...op.before, layers: await Promise.all(op.before.layers.map(snapshot)) },
+            after: { ...op.after, layers: await Promise.all(op.after.layers.map(snapshot)) },
+          };
         case 'raster':
           return { ...op, tiles: op.tiles.map((tile) => ({ ...tile })) };
         case 'layerAdd':
@@ -218,26 +195,20 @@ export class HistoryTree {
         case 'layerMove':
           return { ...op };
         case 'layerProps':
-          return {
-            ...op,
-            before: { ...op.before },
-            after: { ...op.after },
-          };
+          return { ...op, before: { ...op.before }, after: { ...op.after } };
         case 'layerMerge':
-          if (op.format === 'tiles-v1') {
-            return {
-              ...op,
-              removed: {
-                location: { ...op.removed.location },
-                snapshot: await snapshot(op.removed.snapshot),
-              },
-              tiles: op.tiles.map((tile) => ({ ...tile })),
-            };
-          }
           return {
             ...op,
-            before: await located(op.before),
-            after: await located(op.after),
+            removed: {
+              location: { ...op.removed.location },
+              snapshot: await snapshot(op.removed.snapshot),
+            },
+            tiles: op.tiles.map((tile) => ({ ...tile })),
+            maskChanges: op.maskChanges?.map((change) => ({
+              ...change,
+              before: [...change.before],
+              after: [...change.after],
+            })),
           };
       }
     };
@@ -251,7 +222,7 @@ export class HistoryTree {
     };
 
     return {
-      version: 4,
+      version: HISTORY_VERSION,
       rootId,
       currentId,
       nodes: await Promise.all(
@@ -269,9 +240,10 @@ export class HistoryTree {
 
   /** 保存済みの履歴を復元する。不正・旧形式なら false を返して空履歴を維持する。 */
   restore(value: unknown): boolean {
+    // schema 検証は呼び出し側 (PaintEngine / schema.ts) でも行うが、ここでも version と木構造を見る。
     if (!value || typeof value !== 'object') return false;
     const saved = value as Partial<PersistedHistory>;
-    if (saved.version !== 4 || !Array.isArray(saved.nodes) || saved.nodes.length === 0) {
+    if (saved.version !== HISTORY_VERSION || !Array.isArray(saved.nodes) || saved.nodes.length === 0) {
       return false;
     }
     try {
@@ -359,7 +331,6 @@ export class HistoryTree {
     return this.current.children.length > 0;
   }
 
-  /** 戻る対象のノード(=現在ノード)を返し、ポインタを親へ移す */
   undo(): HistoryNode | null {
     if (!this.canUndo()) return null;
     const node = this.current;
@@ -367,20 +338,15 @@ export class HistoryTree {
     return node;
   }
 
-  /** 指定した(または最後に通った)子へ進み、そのノードを返す */
   redo(childIndex?: number): HistoryNode | null {
     const parent = this.current;
     if (parent.children.length === 0) return null;
-    const i = Math.min(
-      childIndex ?? parent.lastChild,
-      parent.children.length - 1,
-    );
+    const i = Math.min(childIndex ?? parent.lastChild, parent.children.length - 1);
     parent.lastChild = i;
     this.current = parent.children[i];
     return this.current;
   }
 
-  /** 現在ノードが葉であれば木から取り除く(タップ取り消し用) */
   removeCurrentLeaf(): HistoryNode | null {
     const node = this.current;
     if (node === this.root || node.children.length > 0) return null;
@@ -392,7 +358,6 @@ export class HistoryTree {
     return node;
   }
 
-  /** ルートを除く、現在保持している操作ノード数 */
   nodeCount(): number {
     let count = 0;
     const visit = (node: HistoryNode) => {
@@ -405,43 +370,7 @@ export class HistoryTree {
     return count;
   }
 
-  /** 履歴が保持している画像ペイロードの概算バイト数 */
   retainedBytes(): number {
-    const snapshotBytes = (snapshot: LayerSnapshot): number =>
-      snapshot.blob?.size ??
-      (snapshot.canvas ? snapshot.canvas.width * snapshot.canvas.height * 4 : 0);
-    const opBytes = (op: Op | null): number => {
-      if (!op) return 0;
-      if (op.kind === 'batch') return op.ops.reduce((sum, item) => sum + opBytes(item), 0);
-      if (op.kind === 'canvasChange') return [...op.before.layers, ...op.after.layers].reduce((sum, snapshot) => sum + snapshotBytes(snapshot), 0);
-      if (op.kind === 'raster') {
-        return op.tiles.reduce(
-          (sum, tile) =>
-            sum +
-            (tile.before?.size ?? tile.w * tile.h * 4) +
-            (tile.after?.size ?? tile.w * tile.h * 4),
-          0,
-        );
-      }
-      if (op.kind === 'layerAdd') {
-        return snapshotBytes(op.snapshot);
-      }
-      if (op.kind === 'layerRemove') return op.snapshots.reduce((sum, snapshot) => sum + snapshotBytes(snapshot), 0);
-      if (op.kind === 'layerMerge') {
-        if (op.format === 'tiles-v1') {
-          return snapshotBytes(op.removed.snapshot) + op.tiles.reduce(
-            (sum, tile) => sum + tile.before.size + tile.after.size,
-            0,
-          );
-        }
-        return [...op.before, ...op.after].reduce(
-          (sum, entry) => sum + snapshotBytes(entry.snapshot),
-          0,
-        );
-      }
-      return 0;
-    };
-
     let bytes = 0;
     const visit = (node: HistoryNode) => {
       bytes += opBytes(node.op);
@@ -457,10 +386,6 @@ export class HistoryTree {
     return Math.max(0, this.nodeCount() - Math.min(depth, Math.max(0, Math.floor(limit))));
   }
 
-  /**
-   * 現在位置から過去へ limit 操作だけを残す。
-   * 現在位置より先の redo と、現在の経路に含まれない分岐も破棄する。
-   */
   pruneToRecent(limit: number): number {
     const before = this.nodeCount();
     const keep = Math.max(0, Math.floor(limit));
@@ -470,7 +395,6 @@ export class HistoryTree {
     }
     path.reverse();
 
-    // 残す操作の直前の状態を、新しい番兵ルートとして利用する。
     const baseIndex = Math.max(0, path.length - keep - 1);
     const retained = path.slice(baseIndex);
     const base = retained[0];

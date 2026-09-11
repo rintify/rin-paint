@@ -1,6 +1,6 @@
 import { Box, Button, Chip, Paper } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
-import { engine } from '../engine/PaintEngine';
+import { useEngine } from './EngineContext';
 import { useStore } from '../state/store';
 import { appAlert } from './AppDialogs';
 import { TextEditor } from './TextEditor';
@@ -10,6 +10,7 @@ import {
 } from './ReferenceImageWindow';
 
 function ViewChip() {
+  const engine = useEngine();
   const scale = useStore((s) => s.viewScale);
   const rot = useStore((s) => s.viewRot);
   const deg = Math.round((rot * 180) / Math.PI);
@@ -35,6 +36,7 @@ function ViewChip() {
 }
 
 export function CanvasView() {
+  const engine = useEngine();
   const areaRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLCanvasElement>(null);

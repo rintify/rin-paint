@@ -1,0 +1,476 @@
+import { useStore } from '../../state/store';
+import {
+  DEFAULT_ADJUST,
+  DEFAULT_CANVAS,
+  normalizePenDetailSettings,
+  normalizeTextToolSettings,
+  type ToolInstance,
+  type CanvasSpec,
+  type ProjectFont,
+} from '../../model';
+import { HistoryTree, type CanvasSnapshot } from '../history/historyTree';
+import { isPersistedHistory } from '../persistence/schema';
+import { PROJECT_VERSION } from '../persistence/version';
+import {
+  createAdjustLayer,
+  createRasterLayer,
+  createShapeLayer,
+  createTextLayer,
+  makeCanvas,
+  type Layer,
+} from '../layers';
+import { validateLayerTree } from '../layerTree';
+import {
+  hasClipboard,
+  loadPage,
+  loadProjectMeta,
+  loadTimelapseEnabled,
+  replaceProject,
+  setPersistencePageId,
+  type SavedPage,
+  type SavedProjectMeta,
+} from '../persistence/db';
+import {
+  blobToDataURL,
+  packProjectFile,
+  unpackProjectFile,
+} from '../persistence/projectFile';
+import { downloadBlob } from '../timelapse/exporter';
+import { loadFonts } from '../text/render';
+import { canvasPixels, validateCanvasSpec, scaleShape, pngWithPpi } from '../canvasSpec';
+import { TOOL_KINDS } from '../tools/registry';
+import type { PaintEngine } from '../PaintEngine';
+
+function toBlobP(c: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) =>
+    c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png'),
+  );
+}
+
+/** Project lifecycle: init, import/export, resize, fonts. */
+export class ProjectService {
+  canvasSpec: CanvasSpec = { ...DEFAULT_CANVAS };
+  projectGeneration = 0;
+
+  constructor(private engine: PaintEngine) {}
+
+  restoreTools(tools: unknown, activeToolId: unknown, toolLayout?: unknown, toolStacks?: unknown): void {
+    if (!Array.isArray(tools)) return;
+    const kinds = TOOL_KINDS;
+    const valid = tools.filter(
+      (t): t is ToolInstance =>
+        !!t &&
+        typeof t.id === 'string' &&
+        kinds.includes(t.kind) &&
+        typeof t.name === 'string' &&
+        typeof t.size === 'number' &&
+        typeof t.color === 'string',
+    ).map((tool) => {
+      if (tool.kind === 'pen') return { ...tool, penSettings: normalizePenDetailSettings(tool.penSettings) };
+      if (tool.kind === 'text') return { ...tool, textSettings: normalizeTextToolSettings(tool.textSettings) };
+      return tool;
+    });
+    const st = useStore.getState();
+    const validIds = new Set(valid.map(tool => tool.id));
+    const stacks = Array.isArray(toolStacks) ? toolStacks.filter(stack => stack && typeof stack.id === 'string' && typeof stack.name === 'string' && Array.isArray(stack.toolIds)).map(stack => ({ ...stack, toolIds: stack.toolIds.filter((id: unknown): id is string => typeof id === 'string' && validIds.has(id)) })).filter(stack => stack.toolIds.length >= 2) : [];
+    const stackIds = new Set(stacks.map(stack => stack.id));
+    const layout = Array.isArray(toolLayout) ? toolLayout.filter(item => item && ((item.type === 'tool' && validIds.has(item.toolId)) || (item.type === 'stack' && stackIds.has(item.stackId)))) : valid.map(tool => ({ type: 'tool' as const, toolId: tool.id }));
+    st.set({ tools: valid, toolLayout: layout, toolStacks: stacks });
+    const active = valid.some((t) => t.id === activeToolId)
+      ? (activeToolId as string)
+      : null;
+    if (active) st.activateTool(active); else st.deactivateTool();
+  }
+
+  async restoreSavedPage(page: SavedPage): Promise<void> {
+    const eng = this.engine;
+    const ls = eng.layerService;
+    ls.layers = [];
+    ls.rootLayerIds = [...page.rootLayerIds];
+    this.canvasSpec = { ...page.canvasSpec };
+    const pixels = canvasPixels(this.canvasSpec);
+    eng.artboard.resize(pixels.width, pixels.height);
+    eng.compositor.syncWorkCanvases();
+    for (const sl of page.layers) {
+      let layer: Layer;
+      if (sl.type === 'raster') {
+        const raster = createRasterLayer(sl.name, eng.artboard.w, eng.artboard.h, sl.id);
+        if (sl.blob) { const bmp = await createImageBitmap(sl.blob); raster.ctx.drawImage(bmp, 0, 0); bmp.close(); }
+        layer = raster;
+      } else if (sl.type === 'adjust') {
+        const adjust = createAdjustLayer(sl.name, sl.id);
+        adjust.params = { ...(sl.params ?? DEFAULT_ADJUST) };
+        adjust.maskLayerIds = [...(sl.maskLayerIds ?? [])];
+        layer = adjust;
+      } else if (sl.type === 'text' && sl.text) {
+        layer = createTextLayer(sl.name, { ...structuredClone(sl.text), rotation: sl.text.rotation ?? 0 }, sl.id);
+      } else if (sl.shape) {
+        layer = createShapeLayer(sl.name, { ...sl.shape, ...(sl.shape.kind === 'line' ? {} : { rotation: sl.shape.rotation ?? 0 }) }, sl.id);
+      } else continue;
+      Object.assign(layer, { opacity: sl.opacity, blend: sl.blend, visible: sl.visible, parentId: sl.parentId, childIds: [...sl.childIds] });
+      ls.layers.push(layer);
+    }
+    if (!validateLayerTree(ls.rootLayerIds, ls.layers)) throw new Error('invalid layer tree');
+    ls.activeLayerId = page.activeLayerId;
+    eng.history = new HistoryTree();
+    if (isPersistedHistory(page.history)) eng.history.restore(page.history);
+    eng.view.restore(page.view);
+    eng.pages.thumbnailVersion = page.thumbnailVersion;
+    ls.resetCountersFromLayers();
+    ls.clearVersions();
+    eng.compositor.textRenderer.clear();
+    ls.fixActive();
+    eng.compositor.syncTextRenders();
+  }
+
+  async doInit(): Promise<void> {
+    const eng = this.engine;
+    const ls = eng.layerService;
+    const pages = eng.pages;
+    try {
+      useStore.getState().set({ timelapseEnabled: await loadTimelapseEnabled() });
+    } catch {
+      // 設定を読めない場合も、既定値のオンでプロジェクト復元を続ける。
+    }
+    try {
+      const meta = await loadProjectMeta();
+      if (meta?.version === PROJECT_VERSION && meta.pageOrder.length) {
+        const page = await loadPage(meta.activePageId);
+        if (page && page.layers.length > 0 && !validateCanvasSpec(page.canvasSpec)) {
+          pages.pageOrder = [...meta.pageOrder];
+          pages.activePageId = meta.activePageId;
+          setPersistencePageId(pages.activePageId);
+          await loadFonts(meta.fonts);
+          useStore.getState().set({
+            fonts: meta.fonts,
+            penColor: meta.penColor,
+            penSize: meta.penSize,
+            colorHistory: meta.colorHistory,
+          });
+          this.restoreTools(meta.tools, meta.activeToolId, meta.toolLayout, meta.toolStacks);
+          await this.restoreSavedPage(page);
+          useStore.getState().set({ canvasW: eng.artboard.w, canvasH: eng.artboard.h, canvasSpec: { ...this.canvasSpec } });
+        }
+      }
+    } catch {
+      ls.layers = [];
+    }
+    if (ls.layers.length === 0) {
+      const l = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
+      ls.layers.push(l);
+      ls.rootLayerIds = [l.id];
+      ls.activeLayerId = l.id;
+      ls.layerCounter = 1;
+      pages.activePageId = pages.newPageId();
+      pages.pageOrder = [pages.activePageId];
+      setPersistencePageId(pages.activePageId);
+    }
+    ls.fixActive();
+    eng.setLastViewState(eng.view.snapshot());
+    eng.autosave.initialized = true;
+    useStore.getState().set({
+      pages: pages.pageOrder.map(id => ({ id, thumbnailVersion: id === pages.activePageId ? pages.thumbnailVersion : 0 })),
+      activePageId: pages.activePageId,
+      clipboardAvailable: await hasClipboard().catch(() => false),
+    });
+    eng.compositor.syncTextRenders();
+    eng.scheduleStorageRefresh();
+    eng.scheduleSave();
+  }
+
+  canvasSnapshot(): CanvasSnapshot {
+    const eng = this.engine;
+    const ls = eng.layerService;
+    return {
+      spec: { ...this.canvasSpec },
+      layers: ls.layers.map(l => ls.snapshotLayer(l, true, true)),
+      roots: [...ls.rootLayerIds],
+      activeId: ls.activeLayerId,
+    };
+  }
+
+  async restoreCanvasSnapshot(snapshot: CanvasSnapshot): Promise<void> {
+    const eng = this.engine;
+    const ls = eng.layerService;
+    this.canvasSpec = { ...snapshot.spec };
+    const pixels = canvasPixels(snapshot.spec);
+    eng.artboard.resize(pixels.width, pixels.height);
+    ls.layers = [];
+    for (const layer of snapshot.layers) await ls.restoreLayer(layer);
+    ls.rootLayerIds = [...snapshot.roots];
+    ls.activeLayerId = snapshot.activeId;
+    eng.compositor.syncWorkCanvases();
+    eng.compositor.textRenderer.clear();
+    eng.compositor.syncTextRenders();
+    useStore.getState().set({ canvasW: eng.artboard.w, canvasH: eng.artboard.h, canvasSpec: { ...this.canvasSpec } });
+  }
+
+  async resizeCanvas(spec: CanvasSpec): Promise<void> {
+    const eng = this.engine;
+    const ls = eng.layerService;
+    if (eng.isBusy()) throw new Error('処理の完了後にサイズを変更してください');
+    const error = validateCanvasSpec(spec);
+    if (error) throw new Error(error);
+    if (JSON.stringify(spec) === JSON.stringify(this.canvasSpec)) return;
+    ls.finishFloating();
+    eng.cancelSessions();
+    eng.setBusy(true);
+    const before = this.canvasSnapshot();
+    try {
+      const { width, height } = canvasPixels(spec);
+      const factor = spec.ppi / this.canvasSpec.ppi;
+      const rasters = new Map<string, HTMLCanvasElement>();
+      for (const layer of ls.layers) if (layer.type === 'raster') {
+        const canvas = makeCanvas(width, height);
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) throw new Error('キャンバス用のメモリを確保できませんでした');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(layer.canvas, 0, 0, layer.canvas.width * factor, layer.canvas.height * factor);
+        rasters.set(layer.id, canvas);
+      }
+      for (const layer of ls.layers) {
+        if (layer.type === 'raster') { layer.canvas = rasters.get(layer.id)!; layer.ctx = layer.canvas.getContext('2d', { willReadFrequently: true })!; }
+        else if (layer.type === 'shape') layer.shape = scaleShape(layer.shape, factor);
+        else if (layer.type === 'text') layer.text = { ...layer.text, x: layer.text.x * factor, y: layer.text.y * factor, width: layer.text.width === null ? null : layer.text.width * factor, height: layer.text.height === null ? null : layer.text.height * factor };
+        ls.bumpLayer(layer.id);
+      }
+      this.canvasSpec = { ...spec };
+      eng.artboard.resize(width, height);
+      eng.compositor.syncWorkCanvases();
+      const after = this.canvasSnapshot();
+      const node = eng.history.push({ kind: 'canvasChange', before, after }, 'キャンバスサイズ・解像度');
+      node.ready = Promise.all([...before.layers, ...after.layers].map(async snapshot => {
+        if (snapshot.canvas) {
+          try { snapshot.blob = await toBlobP(snapshot.canvas); snapshot.canvas = undefined; }
+          catch { /* Keep the original canvas so undo remains lossless; persistence can retry. */ }
+        }
+      })).then(() => undefined);
+      useStore.getState().set({ canvasW: width, canvasH: height, canvasSpec: { ...spec } });
+      eng.compositor.textRenderer.clear();
+    } catch (error) {
+      await this.restoreCanvasSnapshot(before);
+      throw error;
+    } finally { eng.setBusy(false); }
+    eng.committed();
+  }
+
+  async newProject(): Promise<void> {
+    const eng = this.engine;
+    const ls = eng.layerService;
+    const pages = eng.pages;
+    if (eng.isBusy()) throw new Error('処理の完了後に新規作成してください');
+    eng.finishTextEditing();
+    eng.cancelSessions();
+    eng.input.clearPendingPress();
+    eng.activeTool().cancel?.();
+    eng.cancelShapeEdit();
+    eng.input.activePointer = null;
+    eng.setBusy(true);
+    this.projectGeneration++;
+    try {
+      await eng.recorderPublic().reset();
+      if (eng.autosave.saveTimer !== null) { clearTimeout(eng.autosave.saveTimer); eng.autosave.saveTimer = null; }
+      await eng.autosave.saving;
+      const layer = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
+      const st = useStore.getState();
+      const history = new HistoryTree();
+      const pageId = pages.newPageId();
+      const meta: SavedProjectMeta = {
+        version: PROJECT_VERSION,
+        pageOrder: [pageId],
+        activePageId: pageId,
+        fonts: [],
+        tools: structuredClone(st.tools),
+        activeToolId: st.activeToolId,
+        penColor: st.penColor,
+        penSize: st.penSize,
+        toolLayout: structuredClone(st.toolLayout),
+        toolStacks: structuredClone(st.toolStacks),
+        colorHistory: [...st.colorHistory],
+      };
+      const page: SavedPage = {
+        id: pageId,
+        canvasSpec: { ...this.canvasSpec },
+        rootLayerIds: [layer.id],
+        activeLayerId: layer.id,
+        layers: [{ ...ls.snapshotLayer(layer, false), blob: await toBlobP(layer.canvas) }],
+        history: await history.serialize(toBlobP),
+        view: { x: 0, y: 0, scale: 1, rot: 0 },
+        thumbnailVersion: 0,
+      };
+      await replaceProject(meta, [page]);
+      pages.activePageId = pageId; pages.pageOrder = [pageId]; pages.thumbnailVersion = 0;
+      setPersistencePageId(pageId);
+      ls.layers = [layer]; ls.rootLayerIds = [layer.id]; ls.activeLayerId = layer.id;
+      ls.layerCounter = 1; ls.adjustCounter = 0; eng.history = history; ls.clearVersions();
+      eng.compositor.textRenderer.clear();
+      await loadFonts([]);
+      eng.autosave.persistedRevision = eng.autosave.saveRevision;
+      useStore.getState().set({ fonts: [], textEditingId: null, projectGeneration: this.projectGeneration, selectionActive: false, freeTransform: false, selectedLayerIds: [layer.id], multiSelectMode: false, clipboardAvailable: false, pages: [{ id: pageId, thumbnailVersion: 0 }], activePageId: pageId });
+      eng.events.emit('projectReset');
+      eng.view.reset();
+      eng.requestRender(); eng.syncStore(); eng.scheduleStorageRefresh();
+    } finally { eng.setBusy(false); }
+  }
+
+  async addFont(file: File): Promise<ProjectFont | null> {
+    const eng = this.engine;
+    if (eng.isBusy()) return null;
+    const generation = this.projectGeneration;
+    if (!/\.(ttf|otf|woff2?)$/i.test(file.name)) throw new Error('TTF・OTF・WOFF・WOFF2を選択してください');
+    const dataUrl = await blobToDataURL(file);
+    const font = { id: crypto.randomUUID(), name: file.name.replace(/\.[^.]+$/, ''), dataUrl };
+    const probe = new FontFace(`rin-font-${font.id}`, `url("${dataUrl}")`);
+    await probe.load();
+    if (generation !== this.projectGeneration) return null;
+    const existing = useStore.getState().fonts.find(f => f.dataUrl === dataUrl);
+    if (existing) return existing;
+    const fonts = [...useStore.getState().fonts, font];
+    useStore.getState().set({ fonts });
+    await loadFonts(fonts);
+    if (generation !== this.projectGeneration) return null;
+    eng.compositor.textRenderer.clear();
+    eng.committed();
+    return font;
+  }
+
+  async exportPNG(): Promise<void> {
+    const eng = this.engine;
+    if (!eng.compositor.main) return;
+    eng.finishTextEditing();
+    await eng.readyToRender();
+    downloadBlob(await pngWithPpi(await toBlobP(eng.compositor.main), this.canvasSpec.ppi), 'rin-paint.png');
+  }
+
+  async exportProject(): Promise<void> {
+    const eng = this.engine;
+    if (eng.isBusy()) throw new Error('処理の完了後に保存してください');
+    eng.layerService.finishFloating();
+    eng.scheduleSave(); await eng.flushSavePublic();
+    const meta = await loadProjectMeta();
+    if (!meta) throw new Error('プロジェクトを保存できませんでした');
+    const pages = (await Promise.all(meta.pageOrder.map(loadPage))).filter((page): page is SavedPage => !!page);
+    if (pages.length !== meta.pageOrder.length) throw new Error('一部のページを読み込めませんでした');
+    downloadBlob(await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages }), `rin-paint-${new Date().toISOString().slice(0, 10)}.rinpaint`);
+  }
+
+  async importProject(file: File): Promise<void> {
+    const eng = this.engine;
+    const ls = eng.layerService;
+    const pages = eng.pages;
+    if (eng.isBusy()) throw new Error('busy');
+    const archive = await unpackProjectFile(file);
+    const proj = archive.pages.find(page => page.id === archive.meta.activePageId) ?? archive.pages[0];
+    if (eng.isBusy()) throw new Error('busy');
+    ls.finishFloating();
+    eng.cancelSessions();
+    const before = this.canvasSnapshot();
+    const previousFonts = useStore.getState().fonts;
+    const previousHistory = eng.history;
+    eng.setBusy(true);
+    this.projectGeneration++;
+    try {
+      await eng.recorderPublic().reset();
+      if (eng.autosave.saveTimer !== null) { clearTimeout(eng.autosave.saveTimer); eng.autosave.saveTimer = null; }
+      await eng.autosave.saving;
+      const meta: SavedProjectMeta = {
+        ...archive.meta,
+        activePageId: proj.id,
+        pageOrder: archive.pages.map(page => page.id),
+      };
+      await replaceProject(meta, archive.pages);
+      pages.pageOrder = [...meta.pageOrder]; pages.activePageId = meta.activePageId; setPersistencePageId(pages.activePageId);
+      this.canvasSpec = { ...proj.canvasSpec };
+      const pixels = canvasPixels(this.canvasSpec);
+      eng.artboard.resize(pixels.width, pixels.height);
+      await loadFonts(archive.meta.fonts);
+      useStore.getState().set({ fonts: archive.meta.fonts });
+      eng.compositor.textRenderer.clear();
+      eng.compositor.syncWorkCanvases();
+      const layers: Layer[] = [];
+      let rasterCount = 0;
+      let adjustCount = 0;
+      for (const pl of proj.layers) {
+        if (pl.type === 'adjust') {
+          const l = createAdjustLayer(pl.name ?? `色調補正 ${++adjustCount}`, pl.id);
+          l.params = { ...DEFAULT_ADJUST, ...(pl.params ?? {}) };
+          l.maskLayerIds = [...(pl.maskLayerIds ?? [])];
+          l.opacity = pl.opacity ?? 1;
+          l.blend = pl.blend ?? 'source-over';
+          l.visible = pl.visible ?? true;
+          l.parentId = pl.parentId;
+          l.childIds = [...pl.childIds];
+          layers.push(l);
+        } else if (pl.type === 'raster') {
+          const l = createRasterLayer(pl.name ?? `レイヤー ${++rasterCount}`, eng.artboard.w, eng.artboard.h, pl.id);
+          l.opacity = pl.opacity ?? 1;
+          l.blend = pl.blend ?? 'source-over';
+          l.visible = pl.visible ?? true;
+          l.parentId = pl.parentId;
+          l.childIds = [...pl.childIds];
+          if (pl.blob) {
+            const bmp = await createImageBitmap(pl.blob);
+            l.ctx.drawImage(bmp, 0, 0);
+            bmp.close();
+          }
+          layers.push(l);
+        } else if (pl.type === 'text' && pl.text) {
+          const l = createTextLayer(pl.name, pl.text, pl.id);
+          Object.assign(l, { opacity: pl.opacity, blend: pl.blend, visible: pl.visible, parentId: pl.parentId, childIds: [...pl.childIds] });
+          layers.push(l);
+        } else if (pl.shape) {
+          const l = createShapeLayer(pl.name, { ...pl.shape }, pl.id);
+          l.opacity = pl.opacity;
+          l.blend = pl.blend;
+          l.visible = pl.visible;
+          l.parentId = pl.parentId;
+          l.childIds = [...pl.childIds];
+          layers.push(l);
+        }
+      }
+      if (!layers.some((l) => l.type === 'raster')) {
+        const fallback = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
+        layers.push(fallback);
+        proj.rootLayerIds.push(fallback.id);
+      }
+      if (!validateLayerTree(proj.rootLayerIds, layers)) throw new Error('invalid layer tree');
+      ls.layers = layers;
+      ls.rootLayerIds = [...proj.rootLayerIds];
+      ls.activeLayerId = proj.activeLayerId ?? '';
+      ls.layerCounter = layers.filter((l) => l.type === 'raster').length;
+      ls.adjustCounter = layers.filter((l) => l.type === 'adjust').length;
+      eng.history = new HistoryTree();
+      if (isPersistedHistory(proj.history)) eng.history.restore(proj.history);
+      for (const l of layers) ls.bumpLayer(l.id);
+      useStore.getState().set({
+        penColor: archive.meta.penColor,
+        penSize: archive.meta.penSize,
+        colorHistory: Array.isArray(archive.meta.colorHistory)
+          ? archive.meta.colorHistory
+          : useStore.getState().colorHistory,
+        canvasW: eng.artboard.w,
+        canvasH: eng.artboard.h,
+        canvasSpec: { ...this.canvasSpec },
+        clipboardAvailable: false,
+        activePageId: pages.activePageId,
+        pages: pages.pageOrder.map(id => ({ id, thumbnailVersion: archive.pages.find(page => page.id === id)?.thumbnailVersion ?? 0 })),
+      });
+      this.restoreTools(archive.meta.tools, archive.meta.activeToolId, archive.meta.toolLayout, archive.meta.toolStacks);
+      ls.fixActive();
+      eng.compositor.syncTextRenders();
+    } catch (error) {
+      await loadFonts(previousFonts);
+      useStore.getState().set({ fonts: previousFonts });
+      await this.restoreCanvasSnapshot(before);
+      eng.history = previousHistory;
+      eng.syncStore();
+      throw error;
+    } finally {
+      eng.setBusy(false);
+    }
+    eng.requestRender();
+    eng.syncStore();
+    eng.scheduleSave();
+  }
+}

@@ -14,17 +14,14 @@ import {
   type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from 'react';
-import { engine } from '../engine/PaintEngine';
+import { useEngine } from './EngineContext';
 import {
   clearReferenceImage,
   loadReferenceImage,
   saveReferenceImage,
   referenceEpoch,
 } from '../engine/persistence/db';
-import {
-  importReferenceImage,
-  REFERENCE_IMAGE_IMPORT_EVENT,
-} from '../referenceImage';
+import { importReferenceImage } from '../referenceImage';
 import { appAlert } from './AppDialogs';
 
 interface ReferenceImageState {
@@ -85,6 +82,7 @@ export function ReferenceImageWindow({
 }: {
   areaRef: RefObject<HTMLDivElement | null>;
 }) {
+  const engine = useEngine();
   const [reference, setReference] = useState<ReferenceImageState | null>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const interaction = useRef<Interaction | null>(null);
@@ -117,9 +115,8 @@ export function ReferenceImageWindow({
         setReference({ ...saved, url });
       }).catch(() => undefined);
     };
-    window.addEventListener('rinpaint:project-reset', reset);
-    const openFile = (event: Event) => {
-      const file = (event as CustomEvent<File>).detail;
+    engine.events.on('projectReset', reset);
+    const openFile = (file: File) => {
       if (!file?.type.startsWith('image/')) return;
       const sequence = ++loadSequence.current;
       const epoch = referenceEpoch();
@@ -165,7 +162,7 @@ export function ReferenceImageWindow({
       };
       image.src = url;
     };
-    window.addEventListener(REFERENCE_IMAGE_IMPORT_EVENT, openFile);
+    engine.events.on('referenceImageImport', openFile);
     const restoreSequence = ++loadSequence.current;
     void loadReferenceImage()
       .then((saved) => {
@@ -178,9 +175,9 @@ export function ReferenceImageWindow({
         // 参照画像だけが読めない場合もキャンバス操作は続けられる。
       });
     return () => {
-      window.removeEventListener('rinpaint:project-reset', reset);
+      engine.events.off('projectReset', reset);
       loadSequence.current++;
-      window.removeEventListener(REFERENCE_IMAGE_IMPORT_EVENT, openFile);
+      engine.events.off('referenceImageImport', openFile);
       if (currentUrl.current) URL.revokeObjectURL(currentUrl.current);
     };
   }, [areaRef]);

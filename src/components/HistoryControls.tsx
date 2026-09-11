@@ -2,10 +2,11 @@ import RedoIcon from '@mui/icons-material/Redo';
 import UndoIcon from '@mui/icons-material/Undo';
 import { Badge, Box, IconButton, Menu, MenuItem, Tooltip, Typography } from '@mui/material';
 import { useState, type MouseEvent } from 'react';
-import { engine } from '../engine/PaintEngine';
 import { useStore } from '../state/store';
+import { useEngine } from './EngineContext';
 
 export function HistoryControls() {
+  const engine = useEngine();
   const canUndo = useStore((s) => s.canUndo);
   const canRedo = useStore((s) => s.canRedo);
   const branches = useStore((s) => s.redoBranches);

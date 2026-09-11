@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { engine } from '../engine/PaintEngine';
+import { useEngine } from './EngineContext';
 import { populateText } from '../engine/text/render';
 import { replaceText, resizeTextBox, styleAt, type TextResizeCorner } from '../engine/text/model';
 import { editorSelection, plainEditorText, restoreEditorSelection, useTextSession } from '../engine/text/session';
@@ -7,6 +7,7 @@ import { useStore } from '../state/store';
 import type { TextParams } from '../types';
 
 export function TextEditor({ fitScale }: { fitScale: number }) {
+  const engine = useEngine();
   const layers = useStore(s => s.layers);
   const activeId = useStore(s => s.activeLayerId);
   const editingId = useStore(s => s.textEditingId);
@@ -87,10 +88,10 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   useEffect(() => {
     const flush = () => handlers.current.commit();
     const selection = () => handlers.current.captureSelection();
-    window.addEventListener('rinpaint:text-commit', flush);
+    engine.events.on('textCommitRequest', flush);
     document.addEventListener('selectionchange', selection);
     return () => {
-      window.removeEventListener('rinpaint:text-commit', flush);
+      engine.events.off('textCommitRequest', flush);
       document.removeEventListener('selectionchange', selection);
       if (timer.current) clearTimeout(timer.current);
     };

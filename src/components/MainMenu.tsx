@@ -15,13 +15,14 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
-import { useRef, useState, type ChangeEvent, type MouseEvent } from 'react';
-import { engine } from '../engine/PaintEngine';
+import { useState, type MouseEvent } from 'react';
 import { exportTimelapse } from '../engine/timelapse/exporter';
 import { importReferenceImage } from '../referenceImage';
 import { useStore } from '../state/store';
 import { canvasPixels, validateCanvasSpec } from '../engine/canvasSpec';
 import { appAlert, appConfirm } from './AppDialogs';
+import { useEngine } from './EngineContext';
+import { pickFile } from './hooks/pickFile';
 
 async function startTimelapse(): Promise<void> {
   const set = useStore.getState().set;
@@ -38,6 +39,7 @@ async function startTimelapse(): Promise<void> {
 }
 
 function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
+  const engine = useEngine();
   const spec = useStore((s) => s.canvasSpec);
   const initialW = String(Number(spec.widthMm.toFixed(3)));
   const initialH = String(Number(spec.heightMm.toFixed(3)));
@@ -99,6 +101,7 @@ function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
 
 /** 入出力やツール追加などをまとめたドロップダウンメニュー */
 export function MainMenu() {
+  const engine = useEngine();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [sizeOpen, setSizeOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
@@ -106,14 +109,11 @@ export function MainMenu() {
   const progress = useStore((s) => s.exportProgress);
   const timelapseEnabled = useStore((s) => s.timelapseEnabled);
   const historyPrunableCount = useStore((s) => s.historyPrunableCount);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const imageRef = useRef<HTMLInputElement>(null);
 
   const close = () => setAnchor(null);
 
-  const onImportFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
+  const onImportFile = async () => {
+    const file = await pickFile('.rinpaint,application/json');
     if (!file) return;
     const ok = await appConfirm(
       '現在のキャンバスを読み込んだプロジェクトで置き換えます。よろしいですか？',
@@ -126,9 +126,8 @@ export function MainMenu() {
     }
   };
 
-  const onImportImage = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
+  const onImportImage = async () => {
+    const file = await pickFile('image/*');
     if (!file) return;
     if (!importReferenceImage(file)) await appAlert('画像ファイルを選択してください');
   };
@@ -167,8 +166,8 @@ export function MainMenu() {
         </MenuItem>
         <MenuItem
           onClick={() => {
-            imageRef.current?.click();
             close();
+            void onImportImage();
           }}
         >
           画像をインポート…
@@ -191,8 +190,8 @@ export function MainMenu() {
         </MenuItem>
         <MenuItem
           onClick={() => {
-            fileRef.current?.click();
             close();
+            void onImportFile();
           }}
         >
           プロジェクトを読み込み…
@@ -255,20 +254,6 @@ export function MainMenu() {
           }}>{creating ? '作成中…' : '新規作成'}</Button>
         </DialogActions>
       </Dialog>
-      <input
-        ref={imageRef}
-        type="file"
-        accept="image/*"
-        style={{ display: 'none' }}
-        onChange={(e) => void onImportImage(e)}
-      />
-      <input
-        ref={fileRef}
-        type="file"
-        accept=".rinpaint,application/json"
-        style={{ display: 'none' }}
-        onChange={(e) => void onImportFile(e)}
-      />
     </Box>
   );
 }

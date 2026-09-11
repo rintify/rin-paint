@@ -1,0 +1,1 @@
+export const HISTORY_PRUNE_DEFAULT = 10;

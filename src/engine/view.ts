@@ -1,4 +1,4 @@
-import { ART_H, ART_W } from '../types';
+import type { Artboard } from './artboard';
 
 export interface ViewState {
   x: number;
@@ -22,11 +22,15 @@ export class ViewController {
   rot = 0;
 
   /** アートボードを領域にフィットさせたときの CSS ピクセル幅/高さ */
-  private fitW = ART_W;
+  private fitW = 1600;
   private area: HTMLElement | null = null;
   private board: HTMLElement | null = null;
 
   onChange: (() => void) | null = null;
+
+  constructor(private readonly artboard: Artboard) {
+    this.fitW = artboard.w;
+  }
 
   attach(area: HTMLElement, board: HTMLElement): void {
     this.area = area;
@@ -45,7 +49,7 @@ export class ViewController {
   }
 
   fitScale(): number {
-    return this.fitW / ART_W;
+    return this.fitW / this.artboard.w;
   }
 
   /** アート座標の1pxが画面上で何pxになるか */
@@ -94,7 +98,7 @@ export class ViewController {
     const ux = (dx * cos + dy * sin) / this.scale;
     const uy = (-dx * sin + dy * cos) / this.scale;
     const fs = this.fitScale();
-    return { x: ux / fs + ART_W / 2, y: uy / fs + ART_H / 2 };
+    return { x: ux / fs + this.artboard.w / 2, y: uy / fs + this.artboard.h / 2 };
   }
 
   panBy(dx: number, dy: number): void {

@@ -10,14 +10,16 @@ import {
   Typography,
 } from '@mui/material';
 import { useEffect, useState } from 'react';
+import { useEngine } from './EngineContext';
 import { useStore } from '../state/store';
 import {
   normalizePenDetailSettings,
   TRANSPARENT,
   type PenDetailSettings,
-} from '../types';
+} from '../model';
 
 export function PenSettings() {
+  const engine = useEngine();
   const penSize = useStore((s) => s.penSize);
   const penColor = useStore((s) => s.penColor);
   const kind = useStore((s) => s.tool);
@@ -40,7 +42,7 @@ export function PenSettings() {
   const transparent = penColor === TRANSPARENT;
   const penDetails = normalizePenDetailSettings(activeTool?.penSettings);
   const setDetail = (key: keyof PenDetailSettings, value: number) =>
-    useStore.getState().setPenDetail(key, value);
+    engine.setPenDetail(key, value);
 
   const title =
     kind === 'blur'
@@ -93,7 +95,7 @@ export function PenSettings() {
             min={1}
             max={128}
             value={penSize}
-            onChange={(_, v) => useStore.getState().setPenSize(v as number)}
+            onChange={(_, v) => engine.setPenSize(Array.isArray(v) ? v[0] : v)}
             sx={{ flex: 1 }}
           />
           <Typography
@@ -164,7 +166,7 @@ function DetailSlider({
         min={0}
         max={100}
         value={value}
-        onChange={(_, v) => onChange(v as number)}
+        onChange={(_, v) => onChange(Array.isArray(v) ? v[0] : v)}
       />
       <Typography
         variant="body2"

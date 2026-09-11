@@ -1,7 +1,7 @@
-import type { RasterLayer } from '../layers';
 import type { DirtyRect } from '../brush';
+import type { RasterLayer } from '../layers';
 
-export const TILE = 256;
+export const TILE_SIZE = 256;
 
 /** 変更のあったタイルの before/after を PNG Blob で保持する軽量パッチ */
 export interface TilePatch {
@@ -11,6 +11,28 @@ export interface TilePatch {
   h: number;
   before: Blob;
   after: Blob;
+}
+
+interface PendingTile {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  beforeData: ImageData;
+  afterData: ImageData;
+}
+
+export interface ExtractTilesOptions {
+  /** true なら少数タイルごとにメインスレッドへ yield する (スキャン自体が非同期) */
+  batchYield?: boolean;
+  shouldContinue?: () => boolean;
+  batchSize?: number;
+}
+
+export interface ExtractTilesResult {
+  /** 同期スキャン時の差分タイル数。batchYield 時は -1 */
+  tileCount: number;
+  ready: Promise<TilePatch[]>;
 }
 
 function encode(img: ImageData): Promise<Blob> {
@@ -36,10 +58,56 @@ function yieldToMainThread(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+async function encodePending(pending: PendingTile[]): Promise<TilePatch[]> {
+  return Promise.all(
+    pending.map(async (tile) => ({
+      x: tile.x,
+      y: tile.y,
+      w: tile.w,
+      h: tile.h,
+      before: await encode(tile.beforeData),
+      after: await encode(tile.afterData),
+    })),
+  );
+}
+
+function collectPending(
+  beforeCtx: CanvasRenderingContext2D,
+  afterCtx: CanvasRenderingContext2D,
+  rect: DirtyRect,
+  W: number,
+  H: number,
+): PendingTile[] {
+  const minX = Math.max(0, Math.floor(rect.minX));
+  const minY = Math.max(0, Math.floor(rect.minY));
+  const maxX = Math.min(W, Math.ceil(rect.maxX));
+  const maxY = Math.min(H, Math.ceil(rect.maxY));
+  if (maxX <= minX || maxY <= minY) return [];
+
+  const tx0 = Math.floor(minX / TILE_SIZE);
+  const ty0 = Math.floor(minY / TILE_SIZE);
+  const tx1 = Math.floor((maxX - 1) / TILE_SIZE);
+  const ty1 = Math.floor((maxY - 1) / TILE_SIZE);
+  const pending: PendingTile[] = [];
+  for (let ty = ty0; ty <= ty1; ty++) {
+    for (let tx = tx0; tx <= tx1; tx++) {
+      const x = tx * TILE_SIZE;
+      const y = ty * TILE_SIZE;
+      const w = Math.min(TILE_SIZE, W - x);
+      const h = Math.min(TILE_SIZE, H - y);
+      const beforeData = beforeCtx.getImageData(x, y, w, h);
+      const afterData = afterCtx.getImageData(x, y, w, h);
+      if (!sameData(beforeData, afterData)) {
+        pending.push({ x, y, w, h, beforeData, afterData });
+      }
+    }
+  }
+  return pending;
+}
+
 /**
- * before(スクラッチ)と after(レイヤー本体)を比較し、dirty rect と交差する
- * タイルのうち実際に変化したものだけをパッチ化する。
- * Blob 化は非同期なので、完了を ready で待てるようにして返す。
+ * before と after を比較し、dirty rect と交差するタイルのうち変化したものだけをパッチ化する。
+ * Blob 化は非同期。完了した TilePatch[] は ready で受け取る。
  */
 export function extractTiles(
   beforeCtx: CanvasRenderingContext2D,
@@ -47,101 +115,52 @@ export function extractTiles(
   rect: DirtyRect,
   W: number,
   H: number,
-): { tiles: TilePatch[]; ready: Promise<void> } {
-  const minX = Math.max(0, Math.floor(rect.minX));
-  const minY = Math.max(0, Math.floor(rect.minY));
-  const maxX = Math.min(W, Math.ceil(rect.maxX));
-  const maxY = Math.min(H, Math.ceil(rect.maxY));
-  const tiles: TilePatch[] = [];
-  const jobs: Promise<void>[] = [];
-  if (maxX <= minX || maxY <= minY) return { tiles, ready: Promise.resolve() };
+  opts: ExtractTilesOptions = {},
+): ExtractTilesResult {
+  const shouldContinue = opts.shouldContinue ?? (() => true);
+  const batchSize = Math.max(1, opts.batchSize ?? 4);
 
-  const tx0 = Math.floor(minX / TILE);
-  const ty0 = Math.floor(minY / TILE);
-  const tx1 = Math.floor((maxX - 1) / TILE);
-  const ty1 = Math.floor((maxY - 1) / TILE);
-
-  for (let ty = ty0; ty <= ty1; ty++) {
-    for (let tx = tx0; tx <= tx1; tx++) {
-      const x = tx * TILE;
-      const y = ty * TILE;
-      const w = Math.min(TILE, W - x);
-      const h = Math.min(TILE, H - y);
-      const a = beforeCtx.getImageData(x, y, w, h);
-      const b = afterCtx.getImageData(x, y, w, h);
-      if (sameData(a, b)) continue;
-      const patch: TilePatch = { x, y, w, h, before: null!, after: null! };
-      tiles.push(patch);
-      jobs.push(
-        encode(a).then((blob) => {
-          patch.before = blob;
-        }),
-        encode(b).then((blob) => {
-          patch.after = blob;
-        }),
-      );
-    }
+  if (!opts.batchYield) {
+    const pending = collectPending(beforeCtx, afterCtx, rect, W, H);
+    return { tileCount: pending.length, ready: encodePending(pending) };
   }
-  return { tiles, ready: Promise.all(jobs).then(() => undefined) };
-}
 
-/**
- * 全面合成のように dirty rect が大きい処理向けのタイル抽出。
- * 少数タイルずつ PNG 化して、全画素分の ImageData を同時に保持しない。
- */
-export async function extractTilesBatched(
-  beforeCtx: CanvasRenderingContext2D,
-  afterCtx: CanvasRenderingContext2D,
-  rect: DirtyRect,
-  W: number,
-  H: number,
-  shouldContinue: () => boolean = () => true,
-  batchSize = 4,
-): Promise<TilePatch[]> {
-  const minX = Math.max(0, Math.floor(rect.minX));
-  const minY = Math.max(0, Math.floor(rect.minY));
-  const maxX = Math.min(W, Math.ceil(rect.maxX));
-  const maxY = Math.min(H, Math.ceil(rect.maxY));
-  if (maxX <= minX || maxY <= minY) return [];
+  const ready = (async () => {
+    const minX = Math.max(0, Math.floor(rect.minX));
+    const minY = Math.max(0, Math.floor(rect.minY));
+    const maxX = Math.min(W, Math.ceil(rect.maxX));
+    const maxY = Math.min(H, Math.ceil(rect.maxY));
+    if (maxX <= minX || maxY <= minY) return [];
 
-  const tx0 = Math.floor(minX / TILE);
-  const ty0 = Math.floor(minY / TILE);
-  const tx1 = Math.floor((maxX - 1) / TILE);
-  const ty1 = Math.floor((maxY - 1) / TILE);
-  const tiles: TilePatch[] = [];
-  let jobs: Promise<void>[] = [];
-  let scanned = 0;
-
-  const flush = async () => {
-    await Promise.all(jobs);
-    jobs = [];
-    if (!shouldContinue()) throw new Error('tile extraction cancelled');
-    await yieldToMainThread();
-  };
-
-  for (let ty = ty0; ty <= ty1; ty++) {
-    for (let tx = tx0; tx <= tx1; tx++) {
-      if (!shouldContinue()) throw new Error('tile extraction cancelled');
-      const x = tx * TILE;
-      const y = ty * TILE;
-      const w = Math.min(TILE, W - x);
-      const h = Math.min(TILE, H - y);
-      const a = beforeCtx.getImageData(x, y, w, h);
-      const b = afterCtx.getImageData(x, y, w, h);
-      if (!sameData(a, b)) {
-        const patch: TilePatch = { x, y, w, h, before: null!, after: null! };
-        tiles.push(patch);
-        jobs.push(
-          encode(a).then((blob) => { patch.before = blob; }),
-          encode(b).then((blob) => { patch.after = blob; }),
-        );
+    const tx0 = Math.floor(minX / TILE_SIZE);
+    const ty0 = Math.floor(minY / TILE_SIZE);
+    const tx1 = Math.floor((maxX - 1) / TILE_SIZE);
+    const ty1 = Math.floor((maxY - 1) / TILE_SIZE);
+    const pending: PendingTile[] = [];
+    let scanned = 0;
+    for (let ty = ty0; ty <= ty1; ty++) {
+      for (let tx = tx0; tx <= tx1; tx++) {
+        if (!shouldContinue()) throw new Error('tile extraction cancelled');
+        const x = tx * TILE_SIZE;
+        const y = ty * TILE_SIZE;
+        const w = Math.min(TILE_SIZE, W - x);
+        const h = Math.min(TILE_SIZE, H - y);
+        const beforeData = beforeCtx.getImageData(x, y, w, h);
+        const afterData = afterCtx.getImageData(x, y, w, h);
+        if (!sameData(beforeData, afterData)) {
+          pending.push({ x, y, w, h, beforeData, afterData });
+        }
+        scanned++;
+        if (scanned % batchSize === 0) {
+          await yieldToMainThread();
+          if (!shouldContinue()) throw new Error('tile extraction cancelled');
+        }
       }
-      scanned++;
-      if (scanned % Math.max(1, batchSize) === 0) await flush();
     }
-  }
-  if (jobs.length) await flush();
-  return tiles;
+    return encodePending(pending);
+  })();
+
+  return { tileCount: -1, ready };
 }
 
 export async function applyTiles(

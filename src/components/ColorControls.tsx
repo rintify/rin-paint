@@ -4,16 +4,18 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import { useEngine } from './EngineContext';
 import { useStore } from '../state/store';
-import { TRANSPARENT } from '../types';
+import { TRANSPARENT } from '../model';
 
 export function ColorControls() {
+  const engine = useEngine();
   const penColor = useStore((s) => s.penColor);
   const colorHistory = useStore((s) => s.colorHistory);
   const kind = useStore((s) => s.tool);
-  const set = useStore((s) => s.setPenColor);
   if (kind === 'lasso' || kind === 'blur') return null;
   const transparent = penColor === TRANSPARENT;
+  const set = (c: string) => engine.setPenColor(c);
 
   return (
     <Box className="section">

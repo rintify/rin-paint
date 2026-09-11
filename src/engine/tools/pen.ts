@@ -1,14 +1,12 @@
-import { useStore } from '../../state/store';
 import {
   normalizePenDetailSettings,
   TRANSPARENT,
   type PenDetailSettings,
   type StrokePoint,
-} from '../../types';
+} from '../../model';
 import { emptyRect, expandRect, stampSegment, type DirtyRect } from '../brush';
 import type { RasterLayer } from '../layers';
-import type { PaintEngine } from '../PaintEngine';
-import type { Tool } from './types';
+import type { Tool, ToolContext } from './types';
 
 interface RecordedPoint extends StrokePoint {
   /** ストローク始端からの累積距離 */
@@ -30,7 +28,7 @@ export class PenTool implements Tool {
   private points: RecordedPoint[] = [];
   private totalDistance = 0;
 
-  constructor(private engine: PaintEngine) {}
+  constructor(private ctx: ToolContext) {}
 
   /** 補正量 0 なら入力をそのまま、100 なら緩やかに追従する。 */
   private stabilizePressure(pressure: number, first: boolean): number {
@@ -74,16 +72,15 @@ export class PenTool implements Tool {
   }
 
   onDown(p: StrokePoint): void {
-    const layer = this.engine.activeRaster();
+    const layer = this.ctx.activeRaster();
     if (!layer) return;
     this.layer = layer;
-    this.engine.captureBefore(layer);
-    const st = useStore.getState();
-    const instance = st.tools.find((tool) => tool.id === st.activeToolId);
-    this.size = st.penSize;
-    this.color = st.penColor;
-    this.settings = normalizePenDetailSettings(instance?.penSettings);
-    this.erase = st.penColor === TRANSPARENT;
+    this.ctx.captureBefore(layer);
+    const settings = this.ctx.settings();
+    this.size = settings?.size ?? 10;
+    this.color = settings?.color ?? '#000';
+    this.settings = normalizePenDetailSettings(settings?.penSettings);
+    this.erase = this.color === TRANSPARENT;
     this.rect = emptyRect();
     this.points = [{ ...p, distance: 0 }];
     this.totalDistance = 0;
@@ -94,7 +91,7 @@ export class PenTool implements Tool {
     this.lastX = p.x;
     this.lastY = p.y;
     this.lastR = r;
-    this.engine.requestRender();
+    this.ctx.requestRender();
   }
 
   onMove(p: StrokePoint): void {
@@ -123,7 +120,7 @@ export class PenTool implements Tool {
     this.lastX = p.x;
     this.lastY = p.y;
     this.lastR = r;
-    this.engine.requestRender();
+    this.ctx.requestRender();
   }
 
   onUp(p: StrokePoint, event: PointerEvent): void {
@@ -138,27 +135,27 @@ export class PenTool implements Tool {
     }
     // 抜きは終点が確定して初めて長さを計算できるため、確定時に再描画する。
     if (this.settings.taperOut > 0) this.repaintWithTaperOut();
-    this.engine.commitRasterEdit(
+    this.ctx.commitRasterEdit(
       this.layer,
       this.rect,
       this.erase ? '透明ペン' : 'ペン',
     );
-    useStore.getState().pushColor(this.color);
+    this.ctx.pushColor(this.color);
     this.layer = null;
     this.points = [];
   }
 
   cancel(): void {
     if (!this.layer) return;
-    this.engine.restoreBefore(this.layer);
+    this.ctx.restoreBefore(this.layer);
     this.layer = null;
     this.points = [];
-    this.engine.requestRender();
+    this.ctx.requestRender();
   }
 
   private repaintWithTaperOut(): void {
     const layer = this.layer!;
-    this.engine.restoreBefore(layer);
+    this.ctx.restoreBefore(layer);
     this.rect = emptyRect();
     this.press = this.points[0]?.pressure ?? 0.5;
     let prev: RecordedPoint | null = null;
@@ -201,6 +198,6 @@ export class PenTool implements Tool {
       prev = point;
       prevR = r;
     }
-    this.engine.requestRender();
+    this.ctx.requestRender();
   }
 }

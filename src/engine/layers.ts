@@ -1,12 +1,7 @@
-import {
-  ART_H,
-  ART_W,
-  DEFAULT_ADJUST,
-  type AdjustParams,
-  type BlendMode,
-  type ShapeParams,
-  type TextParams,
-} from '../types';
+import { DEFAULT_ADJUST, type AdjustParams } from '../model/adjust';
+import type { BlendMode } from '../model/blend';
+import type { ShapeParams } from '../model/shape';
+import type { TextParams } from '../model/text';
 
 interface LayerTreeFields {
   parentId: string | null;
@@ -57,7 +52,17 @@ export interface TextLayer extends LayerTreeFields {
 export type Layer = RasterLayer | AdjustLayer | ShapeLayer | TextLayer;
 
 export function createTextLayer(name: string, text: TextParams, id = newLayerId()): TextLayer {
-  return { id, type: 'text', name, text: structuredClone(text), opacity: 1, blend: 'source-over', visible: true, parentId: null, childIds: [] };
+  return {
+    id,
+    type: 'text',
+    name,
+    text: structuredClone(text),
+    opacity: 1,
+    blend: 'source-over',
+    visible: true,
+    parentId: null,
+    childIds: [],
+  };
 }
 
 let idCounter = 0;
@@ -65,15 +70,15 @@ export function newLayerId(): string {
   return `L${Date.now().toString(36)}-${(idCounter++).toString(36)}`;
 }
 
-export function makeCanvas(w = ART_W, h = ART_H): HTMLCanvasElement {
+export function makeCanvas(w: number, h: number): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = w;
   c.height = h;
   return c;
 }
 
-export function createRasterLayer(name: string, id = newLayerId()): RasterLayer {
-  const canvas = makeCanvas();
+export function createRasterLayer(name: string, w: number, h: number, id = newLayerId()): RasterLayer {
+  const canvas = makeCanvas(w, h);
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   return {
     id,
@@ -104,11 +109,7 @@ export function createAdjustLayer(name: string, id = newLayerId()): AdjustLayer 
   };
 }
 
-export function createShapeLayer(
-  name: string,
-  shape: ShapeParams,
-  id = newLayerId(),
-): ShapeLayer {
+export function createShapeLayer(name: string, shape: ShapeParams, id = newLayerId()): ShapeLayer {
   return {
     id,
     type: 'shape',

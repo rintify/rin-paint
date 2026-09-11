@@ -78,6 +78,11 @@ export function populateText(el: HTMLElement, text: TextParams, ppi: number): vo
 }
 
 interface Cache { key: string; canvas: HTMLCanvasElement | null; ready: Promise<void>; error?: unknown }
+/**
+ * DOM + html-to-image による文字ビットマップ生成。
+ * 公開 API は request / draw / ready / get / clear / retain。
+ * 将来 Canvas 直描画実装へ差し替え可能な境界として扱う。
+ */
 export class TextRenderer {
   private cache = new Map<string, Cache>();
   clear(): void { this.cache.clear(); }

@@ -9,11 +9,11 @@ import { ColorControls } from './ColorControls';
 import { HistoryControls } from './HistoryControls';
 import { LayerPanel } from './LayerPanel';
 import { MainMenu } from './MainMenu';
+import { PageManagerButton, PageStepper } from './PageControls';
 import { PenSettings } from './PenSettings';
 import { StorageUsage } from './StorageUsage';
 import { ToolPicker } from './ToolPicker';
 import { TextToolSettings } from './TextToolSettings';
-import { PageControls } from './PageControls';
 
 function ExportProgress() {
   const progress = useStore((s) => s.exportProgress);
@@ -50,13 +50,15 @@ export function LeftPanel() {
         spacing={1}
         sx={{ alignItems: 'center', justifyContent: 'space-between', px: 1.75, pt: 1.5, pb: 1 }}
       >
-        <Stack direction="row" spacing={.75} sx={{ alignItems: 'center' }}>
-          <Typography variant="subtitle1" component="h1" sx={{ m: 0, letterSpacing: 0.5, fontWeight: 600 }}>rin-paint</Typography>
-          <PageControls />
+        <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
+          <Typography variant="subtitle1" component="h1" sx={{ m: 0, letterSpacing: 0.5, fontWeight: 600 }}>
+            rin-paint
+          </Typography>
+          <PageStepper />
         </Stack>
         <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
           <HistoryControls />
-          <PageControls compact />
+          <PageManagerButton />
           <MainMenu />
         </Stack>
       </Stack>

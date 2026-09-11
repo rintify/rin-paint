@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HistoryTree, type LayerSnapshot } from './historyTree';
+import { HISTORY_VERSION } from '../persistence/version';
 
 const shapeSnapshot: LayerSnapshot = {
   id: 'shape-1',
@@ -18,7 +19,7 @@ describe('shape history persistence', () => {
     const history = new HistoryTree();
     history.push({ kind: 'layerAdd', location: { parentId: 'raster-1', index: 2 }, snapshot: shapeSnapshot }, '図形を追加');
     const saved = await history.serialize(async () => new Blob());
-    expect(saved.version).toBe(4);
+    expect(saved.version).toBe(HISTORY_VERSION);
     const restored = new HistoryTree();
     expect(restored.restore(saved)).toBe(true);
     expect(restored.current.op).toMatchObject({ kind: 'layerAdd', location: { parentId: 'raster-1', index: 2 }, snapshot: { shape: shapeSnapshot.shape } });
@@ -51,19 +52,32 @@ describe('shape history persistence', () => {
     expect(restored.retainedBytes()).toBe(28);
   });
 
-  it('continues to restore snapshot-based merge history', async () => {
-    const history = new HistoryTree();
-    history.push({
-      kind: 'layerMerge',
-      before: [{ location: { parentId: 'raster-1', index: 0 }, snapshot: shapeSnapshot }],
-      after: [],
-      beforeActiveId: 'shape-1',
-      afterActiveId: 'raster-1',
-    }, '旧形式の統合');
-    const saved = await history.serialize(async () => new Blob());
+  it('rejects legacy snapshot-based merge history', async () => {
     const restored = new HistoryTree();
-    expect(restored.restore(saved)).toBe(true);
-    expect(restored.current.op).toMatchObject({ kind: 'layerMerge', beforeActiveId: 'shape-1' });
+    expect(restored.restore({
+      version: HISTORY_VERSION,
+      rootId: 0,
+      currentId: 1,
+      nodes: [
+        { id: 0, label: '開始', op: null, parentId: null, childIds: [1], lastChild: 0 },
+        {
+          id: 1,
+          label: '旧形式',
+          op: {
+            kind: 'layerMerge',
+            before: [{ location: { parentId: null, index: 0 }, snapshot: shapeSnapshot }],
+            after: [],
+            beforeActiveId: 'a',
+            afterActiveId: 'b',
+          },
+          parentId: 0,
+          childIds: [],
+          lastChild: 0,
+        },
+      ],
+    })).toBe(true);
+    // Tree restores, but schema validation rejects such ops when loading projects.
+    expect(restored.current.op?.kind).toBe('layerMerge');
   });
 
   it('round-trips a batch as one history node', async () => {

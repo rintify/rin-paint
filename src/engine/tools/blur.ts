@@ -1,9 +1,7 @@
-import { useStore } from '../../state/store';
-import type { StrokePoint } from '../../types';
+import type { StrokePoint } from '../../model';
 import { emptyRect, expandRect, rectValid, type DirtyRect } from '../brush';
 import type { RasterLayer } from '../layers';
-import type { PaintEngine } from '../PaintEngine';
-import type { Tool } from './types';
+import type { Tool, ToolContext } from './types';
 
 /**
  * ぼかしブラシ。なぞった場所を円形のソフトマスクで
@@ -26,14 +24,14 @@ export class BlurTool implements Tool {
   private mix = document.createElement('canvas');
   private mixCtx = this.mix.getContext('2d')!;
 
-  constructor(private engine: PaintEngine) {}
+  constructor(private ctx: ToolContext) {}
 
   onDown(p: StrokePoint): void {
-    const layer = this.engine.activeRaster();
+    const layer = this.ctx.activeRaster();
     if (!layer) return;
     this.layer = layer;
-    this.engine.captureBefore(layer);
-    const size = useStore.getState().penSize;
+    this.ctx.captureBefore(layer);
+    const size = this.ctx.settings()?.size ?? 14;
     this.radius = Math.max(3, size * 0.5);
     this.blurPx = Math.max(1, size * 0.14);
     this.rect = emptyRect();
@@ -41,7 +39,7 @@ export class BlurTool implements Tool {
     this.dab(p.x, p.y);
     this.lastX = p.x;
     this.lastY = p.y;
-    this.engine.requestRender();
+    this.ctx.requestRender();
   }
 
   onMove(p: StrokePoint): void {
@@ -63,22 +61,22 @@ export class BlurTool implements Tool {
     this.acc += dist - travelled;
     this.lastX = p.x;
     this.lastY = p.y;
-    this.engine.requestRender();
+    this.ctx.requestRender();
   }
 
   onUp(): void {
     if (!this.layer) return;
     if (rectValid(this.rect)) {
-      this.engine.commitRasterEdit(this.layer, this.rect, 'ぼかし');
+      this.ctx.commitRasterEdit(this.layer, this.rect, 'ぼかし');
     }
     this.layer = null;
   }
 
   cancel(): void {
     if (!this.layer) return;
-    this.engine.restoreBefore(this.layer);
+    this.ctx.restoreBefore(this.layer);
     this.layer = null;
-    this.engine.requestRender();
+    this.ctx.requestRender();
   }
 
   private ensureSize(s: number): void {
