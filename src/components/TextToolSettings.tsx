@@ -17,6 +17,7 @@ import { STANDARD_FONTS } from '../engine/text/render';
 import { useStore } from '../state/store';
 import { normalizeTextToolSettings } from '../types';
 import { appAlert } from './AppDialogs';
+import { NumericField } from './NumericField';
 
 export function TextToolSettings() {
   const kind = useStore(state => state.tool);
@@ -70,26 +71,18 @@ export function TextToolSettings() {
           }}
         />
         <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
-          <TextField
+          <NumericField
             label="フォントサイズ"
-            type="number"
             value={settings.sizePt}
-            slotProps={{ htmlInput: { min: 1, max: 512, step: 0.5 } }}
-            onChange={event => {
-              const value = Number(event.target.value);
-              if (value >= 1 && value <= 512) update({ sizePt: value });
-            }}
+            min={1} max={512}
+            onCommit={value => update({ sizePt: value })}
             helperText="pt"
           />
-          <TextField
+          <NumericField
             label="行間"
-            type="number"
             value={settings.lineHeight}
-            slotProps={{ htmlInput: { min: 1, max: 5, step: 0.1 } }}
-            onChange={event => {
-              const value = Number(event.target.value);
-              if (value >= 1 && value <= 5) update({ lineHeight: value });
-            }}
+            min={1} max={5}
+            onCommit={value => update({ lineHeight: value })}
             helperText="倍"
           />
         </Box>

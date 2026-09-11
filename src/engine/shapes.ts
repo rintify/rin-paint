@@ -17,7 +17,7 @@ export function shapeFromDrag(
   const h = Math.abs(b.y - a.y);
   if (w === 0 || h === 0) return null;
   if (kind === 'rect') {
-    return { kind, x, y, width: w, height: h, color, strokeWidth: width };
+    return { kind, x, y, width: w, height: h, color, strokeWidth: width, rotation: 0 };
   }
   return {
     kind,
@@ -27,6 +27,7 @@ export function shapeFromDrag(
     ry: h / 2,
     color,
     strokeWidth: width,
+    rotation: 0,
   };
 }
 
@@ -54,9 +55,13 @@ export function drawShape(
     ctx.moveTo(shape.x1, shape.y1);
     ctx.lineTo(shape.x2, shape.y2);
   } else if (shape.kind === 'rect') {
-    ctx.rect(shape.x, shape.y, shape.width, shape.height);
+    const cx = shape.x + shape.width / 2;
+    const cy = shape.y + shape.height / 2;
+    ctx.translate(cx, cy);
+    ctx.rotate(shape.rotation ?? 0);
+    ctx.rect(-shape.width / 2, -shape.height / 2, shape.width, shape.height);
   } else {
-    ctx.ellipse(shape.cx, shape.cy, shape.rx, shape.ry, 0, 0, Math.PI * 2);
+    ctx.ellipse(shape.cx, shape.cy, shape.rx, shape.ry, shape.rotation ?? 0, 0, Math.PI * 2);
   }
   ctx.stroke();
   ctx.restore();
@@ -71,8 +76,51 @@ export function shapeBounds(shape: ShapeParams): { x: number; y: number; w: numb
       h: Math.abs(shape.y2 - shape.y1),
     };
   }
-  if (shape.kind === 'rect') return { x: shape.x, y: shape.y, w: shape.width, h: shape.height };
-  return { x: shape.cx - shape.rx, y: shape.cy - shape.ry, w: shape.rx * 2, h: shape.ry * 2 };
+  if (shape.kind === 'rect') {
+    const cs = shapeCorners(shape);
+    const xs = cs.map((p) => p.x), ys = cs.map((p) => p.y);
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+  }
+  const a = shape.rotation ?? 0;
+  const rx = Math.sqrt(shape.rx ** 2 * Math.cos(a) ** 2 + shape.ry ** 2 * Math.sin(a) ** 2);
+  const ry = Math.sqrt(shape.rx ** 2 * Math.sin(a) ** 2 + shape.ry ** 2 * Math.cos(a) ** 2);
+  return { x: shape.cx - rx, y: shape.cy - ry, w: rx * 2, h: ry * 2 };
+}
+
+export interface ShapePoint { x: number; y: number }
+
+export function shapeCenter(shape: ShapeParams): ShapePoint {
+  if (shape.kind === 'line') return { x: (shape.x1 + shape.x2) / 2, y: (shape.y1 + shape.y2) / 2 };
+  if (shape.kind === 'rect') return { x: shape.x + shape.width / 2, y: shape.y + shape.height / 2 };
+  return { x: shape.cx, y: shape.cy };
+}
+
+export function shapeCorners(shape: Exclude<ShapeParams, { kind: 'line' }>): ShapePoint[] {
+  const center = shapeCenter(shape);
+  const hw = shape.kind === 'rect' ? shape.width / 2 : shape.rx;
+  const hh = shape.kind === 'rect' ? shape.height / 2 : shape.ry;
+  const angle = shape.rotation ?? 0;
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([x, y]) => ({
+    x: center.x + x * cos - y * sin,
+    y: center.y + x * sin + y * cos,
+  }));
+}
+
+export function rotateShape(shape: ShapeParams, angle: number, pivot = shapeCenter(shape)): ShapeParams {
+  const turn = (x: number, y: number) => {
+    const dx = x - pivot.x, dy = y - pivot.y, cos = Math.cos(angle), sin = Math.sin(angle);
+    return { x: pivot.x + dx * cos - dy * sin, y: pivot.y + dx * sin + dy * cos };
+  };
+  if (shape.kind === 'line') {
+    const a = turn(shape.x1, shape.y1), b = turn(shape.x2, shape.y2);
+    return { ...shape, x1: a.x, y1: a.y, x2: b.x, y2: b.y };
+  }
+  const originalCenter = shapeCenter(shape);
+  const center = turn(originalCenter.x, originalCenter.y);
+  return shape.kind === 'rect'
+    ? { ...shape, x: center.x - shape.width / 2, y: center.y - shape.height / 2, rotation: (shape.rotation ?? 0) + angle }
+    : { ...shape, cx: center.x, cy: center.y, rotation: (shape.rotation ?? 0) + angle };
 }
 
 export function translateShape(shape: ShapeParams, dx: number, dy: number): ShapeParams {

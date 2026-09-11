@@ -18,7 +18,7 @@ describe('shape history persistence', () => {
     const history = new HistoryTree();
     history.push({ kind: 'layerAdd', location: { parentId: 'raster-1', index: 2 }, snapshot: shapeSnapshot }, '図形を追加');
     const saved = await history.serialize(async () => new Blob());
-    expect(saved.version).toBe(3);
+    expect(saved.version).toBe(4);
     const restored = new HistoryTree();
     expect(restored.restore(saved)).toBe(true);
     expect(restored.current.op).toMatchObject({ kind: 'layerAdd', location: { parentId: 'raster-1', index: 2 }, snapshot: { shape: shapeSnapshot.shape } });
@@ -64,5 +64,16 @@ describe('shape history persistence', () => {
     const restored = new HistoryTree();
     expect(restored.restore(saved)).toBe(true);
     expect(restored.current.op).toMatchObject({ kind: 'layerMerge', beforeActiveId: 'shape-1' });
+  });
+
+  it('round-trips a batch as one history node', async () => {
+    const history = new HistoryTree();
+    history.push({ kind: 'batch', ops: [
+      { kind: 'layerProps', layerId: 'a', before: { opacity: 1 }, after: { opacity: .5 } },
+      { kind: 'layerProps', layerId: 'b', before: { visible: true }, after: { visible: false } },
+    ] }, '複数レイヤー設定');
+    const restored = new HistoryTree();
+    expect(restored.restore(await history.serialize(async () => new Blob()))).toBe(true);
+    expect(restored.current.op).toMatchObject({ kind: 'batch', ops: [{ layerId: 'a' }, { layerId: 'b' }] });
   });
 });

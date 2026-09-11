@@ -7,6 +7,11 @@ import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import {
   Box,
   Button,
+  Checkbox,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
   IconButton,
   MenuItem,
@@ -15,6 +20,7 @@ import {
   Select,
   Slider,
   Stack,
+  Switch,
   TextField,
   Tooltip,
   Typography,
@@ -26,6 +32,7 @@ import { useStore } from '../state/store';
 import { selectedLayerRows } from '../engine/layerTree';
 import { TextControls } from './TextControls';
 import { appAlert } from './AppDialogs';
+import { NumericField } from './NumericField';
 import {
   ART_H,
   ART_W,
@@ -111,30 +118,12 @@ function ShapeNumber({
   make: (value: number, shape: ShapeParams) => ShapeParams;
   meta: LayerMeta;
 }) {
-  const before = useRef<ShapeParams | null>(null);
   return (
-    <TextField
+    <NumericField
       size="small"
       label={label}
-      type="number"
       value={Math.round(value * 10) / 10}
-      slotProps={{ htmlInput: { step: 0.1 } }}
-      onFocus={() => {
-        before.current = engine.getShape(meta.id);
-      }}
-      onChange={(e) => {
-        const shape = engine.getShape(meta.id);
-        if (!shape) return;
-        if (!before.current) before.current = shape;
-        engine.updateShapeParams(meta.id, before.current, make(Number(e.target.value), shape), true);
-      }}
-      onBlur={() => {
-        const shape = engine.getShape(meta.id);
-        if (before.current && shape && JSON.stringify(before.current) !== JSON.stringify(shape)) {
-          engine.updateShapeParams(meta.id, before.current, shape);
-        }
-        before.current = null;
-      }}
+      onCommit={(number) => { const shape = engine.getShape(meta.id); if (shape) engine.updateShapeParams(meta.id, shape, make(number, shape)); }}
       sx={{ minWidth: 0 }}
     />
   );
@@ -192,6 +181,7 @@ function ShapeControls({ meta }: { meta: LayerMeta }) {
     field('横半径', shape.rx, (v, s) => ({ ...(s as typeof shape), rx: Math.max(0.1, v) }));
     field('縦半径', shape.ry, (v, s) => ({ ...(s as typeof shape), ry: Math.max(0.1, v) }));
   }
+  if (shape.kind !== 'line') field('回転', (shape.rotation ?? 0) * 180 / Math.PI, (v, s) => ({ ...s, rotation: v * Math.PI / 180 } as ShapeParams));
   return (
     <Stack spacing={1} sx={{ pt: 0.5 }}>
       <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.75 }}>{fields}</Box>
@@ -244,6 +234,8 @@ function ShapeControls({ meta }: { meta: LayerMeta }) {
 }
 
 function LayerControls({ meta }: { meta: LayerMeta }) {
+  const multi = useStore(s => s.multiSelectMode);
+  if (multi) return <MultiLayerControls />;
   const pct = Math.round(meta.opacity * 100);
   return (
     <Stack spacing={1}>
@@ -325,13 +317,60 @@ function LayerControls({ meta }: { meta: LayerMeta }) {
             </Typography>
           </Stack>
         ))}
+      {meta.type === 'adjust' && <MaskControls meta={meta} />}
       {meta.type === 'shape' && <ShapeControls meta={meta} />}
       {meta.type === 'text' && <TextControls meta={meta} />}
     </Stack>
   );
 }
 
+function MultiLayerControls() {
+  const layers = useStore(s => s.layers);
+  const ids = useStore(s => s.selectedLayerIds);
+  const selected = layers.filter(layer => ids.includes(layer.id));
+  const common = <T,>(read: (layer: LayerMeta) => T): T | null => {
+    if (!selected.length) return null;
+    const first = read(selected[0]);
+    return selected.every(layer => Object.is(read(layer), first)) ? first : null;
+  };
+  const opacity = common(layer => Math.round(layer.opacity * 100));
+  const visible = common(layer => layer.visible);
+  const blend = common(layer => layer.blend);
+  return <Stack spacing={1.25}>
+    <Typography variant="caption" color="text.secondary">{selected.length}レイヤーの共通設定。異なる値は「—」で表示します。</Typography>
+    <Stack direction="row" sx={{ alignItems: 'center' }}><Typography variant="body2" sx={{ flex: 1 }}>表示 {visible === null ? '—' : ''}</Typography><Switch checked={visible ?? false} onChange={event => engine.commitSelectedLayerProps({}, { visible: event.target.checked }, '複数レイヤーの表示')} /></Stack>
+    <NumericField label="不透明度 (%)" value={opacity} min={0} max={100} onCommit={value => engine.commitSelectedLayerProps({}, { opacity: value / 100 }, '複数レイヤーの不透明度')} />
+    <TextField select label="合成モード" value={blend ?? ''} slotProps={{ select: { displayEmpty: true } }} onChange={event => engine.commitSelectedLayerProps({}, { blend: event.target.value as BlendMode }, '複数レイヤーの合成モード')}>
+      {!blend && <MenuItem value="" disabled>—</MenuItem>}{BLEND_OPTIONS.map(option => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+    </TextField>
+  </Stack>;
+}
+
+function MaskControls({ meta }: { meta: LayerMeta }) {
+  const layers = useStore(s => s.layers);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [draft, setDraft] = useState<string[]>(meta.maskLayerIds ?? []);
+  const candidates = layers.filter(layer => layer.id !== meta.id && layer.type !== 'adjust' && layer.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  const show = () => { setDraft([...(meta.maskLayerIds ?? [])]); setOpen(true); };
+  return <>
+    <Stack spacing={.75}>
+      <Stack direction="row" sx={{ alignItems: 'center' }}><Typography variant="caption" color="text.secondary" sx={{ flex: 1 }}>マスク</Typography><Button size="small" onClick={show}>追加・編集</Button></Stack>
+      {(meta.maskLayerIds ?? []).map(id => <Stack key={id} direction="row" sx={{ alignItems: 'center' }}><Typography variant="body2" noWrap sx={{ flex: 1 }}>{layers.find(layer => layer.id === id)?.name ?? '削除済み'}</Typography><Button size="small" onClick={() => engine.commitLayerProps(meta.id, { maskLayerIds: meta.maskLayerIds }, { maskLayerIds: (meta.maskLayerIds ?? []).filter(value => value !== id) }, 'マスクを解除')}>解除</Button></Stack>)}
+      {!(meta.maskLayerIds?.length) && <Typography variant="caption" color="text.secondary">未設定（全面を補正）</Typography>}
+    </Stack>
+    <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
+      <DialogTitle>マスク元レイヤー</DialogTitle>
+      <DialogContent><TextField fullWidth placeholder="レイヤーを検索" value={query} onChange={event => setQuery(event.target.value)} sx={{ mb: 1 }} />
+        <Stack spacing={.5}>{candidates.map(layer => <Box key={layer.id} className="mask-layer-card" onClick={() => setDraft(current => current.includes(layer.id) ? current.filter(id => id !== layer.id) : [...current, layer.id])}><Checkbox checked={draft.includes(layer.id)} /><Thumb meta={layer} /><Typography variant="body2">{layer.name}</Typography></Box>)}</Stack>
+      </DialogContent>
+      <DialogActions><Button onClick={() => setOpen(false)}>キャンセル</Button><Button variant="contained" onClick={() => { engine.commitLayerProps(meta.id, { maskLayerIds: meta.maskLayerIds ?? [] }, { maskLayerIds: draft }, 'マスクを変更'); setOpen(false); }}>適用</Button></DialogActions>
+    </Dialog>
+  </>;
+}
+
 function LayerControlsPalette({ meta, onClose }: { meta: LayerMeta; onClose: () => void }) {
+  const multi = useStore(s => s.multiSelectMode);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const paper = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
@@ -409,6 +448,7 @@ function LayerControlsPalette({ meta, onClose }: { meta: LayerMeta; onClose: () 
         <IconButton size="small" aria-label="レイヤーの設定を閉じる" onPointerDown={e => e.stopPropagation()} onClick={onClose}><CloseIcon fontSize="small" /></IconButton>
       </Box>
       <Box className="layer-controls-palette-content">
+        {multi && <Button fullWidth size="small" variant="outlined" sx={{ mb: 1 }} onClick={() => engine.exitMultiSelect()}>複数選択を解除</Button>}
         <LayerControls meta={meta} />
       </Box>
     </Paper>
@@ -423,8 +463,12 @@ const MOTION_MS = 220;
 export function LayerPanel() {
   const layers = useStore(s => s.layers);
   const activeId = useStore(s => s.activeLayerId);
+  const selectedIds = useStore(s => s.selectedLayerIds);
+  const multi = useStore(s => s.multiSelectMode);
+  const clipboard = useStore(s => s.clipboardAvailable);
   const generation = useStore(s => s.projectGeneration);
   const previousGeneration = useRef(generation);
+  const previousMulti = useRef(multi);
   const byId = useMemo(() => new Map(layers.map(l => [l.id, l])), [layers]);
   const active = byId.get(activeId);
   const [palette, setPalette] = useState<{ id: string; open: boolean }>({ id: '', open: false });
@@ -434,7 +478,9 @@ export function LayerPanel() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [drop, setDrop] = useState<DropTarget | null>(null);
   const frozen = useRef<{ id: string; depth: number }[] | null>(null);
-  const desired = useMemo(() => selectedLayerRows(engine.layerRootIds(), layers, activeId), [layers, activeId]);
+  const desired = useMemo(() => selectedLayerRows(engine.layerRootIds(), layers, multi ? selectedIds : activeId), [layers, activeId, multi, selectedIds]);
+  const [rename, setRename] = useState<{ id: string; value: string } | null>(null);
+  const press = useRef<{ id: string; x: number; y: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const visible = dragId && frozen.current ? frozen.current : desired;
   const signature = visible.map(r => r.id + ':' + r.depth).join('|');
   const [rows, setRows] = useState<VisibleRow[]>([]);
@@ -527,6 +573,10 @@ export function LayerPanel() {
     previousGeneration.current = generation;
     setMenu(null); setDragId(null); setDrop(null); setPalette({ id: activeId, open: false }); setSpacing({ top: 0, height: 0 });
   }, [generation]);
+  useEffect(() => {
+    if (multi && !previousMulti.current) setPalette({ id: activeId, open: true });
+    previousMulti.current = multi;
+  }, [multi, activeId]);
 
   const select = (id: string) => {
     oldRects.current = new Map([...elements.current].map(([key, node]) => [key, node.getBoundingClientRect()]));
@@ -549,6 +599,7 @@ export function LayerPanel() {
       <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
         <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1 }}>レイヤー</Typography>
         <Stack direction="row" spacing={0.5}>
+          {clipboard && <Button size="small" onClick={() => void engine.pasteLayers().catch(error => appAlert(String(error)))}>ペースト</Button>}
           <Tooltip title="レイヤーを追加"><IconButton size="small" onClick={() => engine.addRasterLayer()} aria-label="レイヤーを追加"><AddIcon fontSize="small" /></IconButton></Tooltip>
           <Button size="small" onClick={() => engine.addAdjustLayer()} startIcon={<TuneIcon sx={{ fontSize: 14 }} />} sx={{ fontSize: 12 }}>補正</Button>
         </Stack>
@@ -583,13 +634,21 @@ export function LayerPanel() {
           {rows.map(row => {
             const meta = byId.get(row.id) ?? metadata.current.get(row.id);
             if (!meta) return null;
-            const isActive = activeId === meta.id;
+            const isActive = selectedIds.includes(meta.id);
             const guide = drop?.anchorId === meta.id ? drop : null;
             return (
               <Box key={meta.id} ref={(node: HTMLElement | null) => { if (node) elements.current.set(meta.id, node); else elements.current.delete(meta.id); }}
                 className={'layer-row layer-flat-row' + (isActive ? ' active' : '') + (dragId === meta.id ? ' is-dragging' : '') + (guide?.edge === 'inside' ? ' drop-inside' : '')}
                 style={{ top: spacing.top + row.index * ROW_HEIGHT, left: row.depth * 16, height: ROW_HEIGHT - 4, pointerEvents: row.exiting ? 'none' : undefined, opacity: row.exiting ? 0 : undefined }}
                 draggable={!row.exiting} onClick={() => select(meta.id)}
+                onPointerDown={event => {
+                  if ((event.target as HTMLElement).closest('button')) return;
+                  const timer = setTimeout(() => { engine.beginMultiSelect(meta.id); setPalette({ id: meta.id, open: true }); press.current = null; }, 450);
+                  press.current = { id: meta.id, x: event.clientX, y: event.clientY, timer };
+                }}
+                onPointerMove={event => { const p = press.current; if (p?.id === meta.id && Math.hypot(event.clientX - p.x, event.clientY - p.y) >= 8) { clearTimeout(p.timer); press.current = null; } }}
+                onPointerUp={() => { if (press.current) clearTimeout(press.current.timer); press.current = null; }}
+                onPointerCancel={() => { if (press.current) clearTimeout(press.current.timer); press.current = null; }}
                 onDragStart={event => {
                   if ((event.target as HTMLElement).closest('button')) { event.preventDefault(); return; }
                   event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', meta.id);
@@ -632,9 +691,16 @@ export function LayerPanel() {
       </Box>
       <Menu anchorEl={menu?.anchor} open={!!menu && !!menuMeta} onClose={() => setMenu(null)}>
         <MenuItem onClick={() => { if (menu) { select(menu.id); setPalette({ id: menu.id, open: true }); } setMenu(null); }}>レイヤーの設定</MenuItem>
+        <MenuItem onClick={() => { if (menu && menuMeta) setRename({ id: menu.id, value: menuMeta.name }); setMenu(null); }}>名称変更</MenuItem>
+        <MenuItem onClick={() => { const id = menu?.id; setMenu(null); if (id) void engine.copyLayers(id).catch(error => appAlert(String(error))); }}>コピー</MenuItem>
         <MenuItem disabled={!menu || !engine.canMergeLayerDown(menu.id)} onClick={() => { const id = menu?.id; setMenu(null); if (id) void engine.mergeLayerDown(id).catch(error => appAlert(String(error))); }}>下と統合</MenuItem>
         <MenuItem disabled={!menu || !engine.canRemoveLayer(menu.id)} onClick={() => { if (menu) engine.removeLayer(menu.id); setMenu(null); }} sx={{ color: 'error.main' }}>削除</MenuItem>
       </Menu>
+      <Dialog open={!!rename} onClose={() => setRename(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>レイヤー名を変更</DialogTitle>
+        <DialogContent><TextField autoFocus fullWidth value={rename?.value ?? ''} error={!!rename && !rename.value.trim()} helperText={rename && !rename.value.trim() ? '空白だけの名称は使えません' : ' '} onChange={event => setRename(current => current ? { ...current, value: event.target.value } : null)} onKeyDown={event => { if (event.key === 'Enter' && rename?.value.trim()) { engine.renameLayer(rename.id, rename.value); setRename(null); } }} /></DialogContent>
+        <DialogActions><Button onClick={() => setRename(null)}>キャンセル</Button><Button variant="contained" disabled={!rename?.value.trim()} onClick={() => { if (rename) engine.renameLayer(rename.id, rename.value); setRename(null); }}>変更</Button></DialogActions>
+      </Dialog>
       {active && palette.id === active.id && palette.open && <LayerControlsPalette meta={active} onClose={() => setPalette({ id: active.id, open: false })} />}
     </Box>
   );

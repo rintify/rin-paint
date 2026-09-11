@@ -135,6 +135,13 @@ export class TextRenderer {
   draw(ctx: CanvasRenderingContext2D, id: string, text: TextParams): void {
     const canvas = this.get(id);
     if (!canvas) return;
-    ctx.drawImage(canvas, text.x - Number(canvas.dataset.textOffsetX ?? 0), text.y - Number(canvas.dataset.textOffsetY ?? 0));
+    const offsetX = Number(canvas.dataset.textOffsetX ?? 0), offsetY = Number(canvas.dataset.textOffsetY ?? 0);
+    const width = Number(canvas.dataset.textWidth ?? canvas.width), height = Number(canvas.dataset.textHeight ?? canvas.height);
+    const rotation = text.rotation ?? 0;
+    ctx.save();
+    ctx.translate(text.x + width / 2, text.y + height / 2);
+    ctx.rotate(rotation);
+    ctx.drawImage(canvas, -width / 2 - offsetX, -height / 2 - offsetY);
+    ctx.restore();
   }
 }

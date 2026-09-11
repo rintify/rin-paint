@@ -7,6 +7,7 @@ import { useTextSession } from '../engine/text/session';
 import { useStore } from '../state/store';
 import type { LayerMeta, TextParams, TextStyle } from '../types';
 import { appAlert } from './AppDialogs';
+import { NumericField } from './NumericField';
 
 export function TextControls({ meta }: { meta: LayerMeta }) {
   const session = useTextSession();
@@ -40,7 +41,7 @@ export function TextControls({ meta }: { meta: LayerMeta }) {
         if (chosen) void engine.addFont(chosen).then(font => { if (font && useStore.getState().activeLayerId === meta.id) format({ fontId: font.id }); }).catch(error => appAlert(error instanceof Error ? error.message : 'フォントを読み込めませんでした'));
       }} />
       <Stack direction="row" spacing={1}>
-        <TextField size="small" label="サイズ (pt)" type="number" value={style.sizePt} disabled={session.composing} slotProps={{ htmlInput: { min: 1, max: 512, step: .5 } }} onChange={e => { const n = Number(e.target.value); if (n >= 1 && n <= 512) format({ sizePt: n }); }} />
+        <NumericField size="small" label="サイズ (pt)" value={style.sizePt} min={1} max={512} disabled={session.composing} onCommit={n => format({ sizePt: n })} />
         <TextField size="small" label="文字色" type="color" value={style.color} disabled={session.composing} onChange={e => format({ color: e.target.value })} sx={{ width: 100 }} />
       </Stack>
       <Stack direction="row" spacing={1}>
@@ -51,7 +52,8 @@ export function TextControls({ meta }: { meta: LayerMeta }) {
       <TextField select size="small" label="文字全体の方向" value={text.direction} disabled={session.composing} onChange={e => change(before => ({ ...before, direction: e.target.value as TextParams['direction'] }))}>
         <MenuItem value="horizontal">横書き</MenuItem><MenuItem value="vertical">縦書き</MenuItem>
       </TextField>
-      <TextField size="small" label="行間 (倍)" type="number" value={text.lineHeight} disabled={session.composing} slotProps={{ htmlInput: { min: 1, max: 5, step: .1 } }} onChange={e => { const value = Number(e.target.value); if (value >= 1 && value <= 5) change(before => ({ ...before, lineHeight: value })); }} />
+      <NumericField size="small" label="行間 (倍)" value={text.lineHeight} min={1} max={5} disabled={session.composing} onCommit={value => change(before => ({ ...before, lineHeight: value }))} />
+      <NumericField size="small" label="回転 (度)" value={Math.round((text.rotation ?? 0) * 1800 / Math.PI) / 10} min={-3600} max={3600} disabled={session.composing} onCommit={value => change(before => ({ ...before, rotation: value * Math.PI / 180 }))} />
       <Button onClick={() => engine.editTextLayer(meta.id)}>キャンバス上で文字を編集</Button>
     </Stack>
   );

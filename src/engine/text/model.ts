@@ -2,7 +2,7 @@ import { DEFAULT_TEXT_TOOL_SETTINGS, type TextParams, type TextStyle, type TextT
 
 export const DEFAULT_TEXT_STYLE: TextStyle = { fontId: DEFAULT_TEXT_TOOL_SETTINGS.fontId, color: '#222222', sizePt: DEFAULT_TEXT_TOOL_SETTINGS.sizePt };
 export function newText(x: number, y: number, color: string, width: number | null = null, height: number | null = null, settings: TextToolSettings = DEFAULT_TEXT_TOOL_SETTINGS): TextParams {
-  return { content: '', style: { fontId: settings.fontId, sizePt: settings.sizePt, color: color === 'transparent' ? '#222222' : color }, ranges: [], ruby: [], direction: settings.direction, lineHeight: settings.lineHeight, x, y, width, height };
+  return { content: '', style: { fontId: settings.fontId, sizePt: settings.sizePt, color: color === 'transparent' ? '#222222' : color }, ranges: [], ruby: [], direction: settings.direction, lineHeight: settings.lineHeight, x, y, width, height, rotation: 0 };
 }
 
 export function isEmptyText(text: TextParams): boolean {

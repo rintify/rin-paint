@@ -109,6 +109,13 @@ export function ReferenceImageWindow({
       currentUrl.current = null;
       interaction.current = null;
       setReference(null);
+      const sequence = loadSequence.current;
+      void loadReferenceImage().then(saved => {
+        if (!saved || sequence !== loadSequence.current) return;
+        const url = URL.createObjectURL(saved.blob);
+        currentUrl.current = url;
+        setReference({ ...saved, url });
+      }).catch(() => undefined);
     };
     window.addEventListener('rinpaint:project-reset', reset);
     const openFile = (event: Event) => {

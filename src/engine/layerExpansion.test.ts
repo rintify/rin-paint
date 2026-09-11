@@ -11,4 +11,7 @@ describe('selection-driven expansion', () => {
     expect(selectedLayerRows(['a', 'z'], layers, 'c').map(r => r.id)).toEqual(['z', 'a', 'c', 'e', 'b']);
     expect(selectedLayerRows(['a', 'z'], layers, 'z').map(r => r.id)).toEqual(['z', 'zz', 'a']);
   });
+  it('unions all selected ancestor paths and their direct children', () => {
+    expect(selectedLayerRows(['a', 'z'], layers, ['d', 'zz']).map(r => r.id)).toEqual(['z', 'zz', 'a', 'c', 'b', 'd', 'f']);
+  });
 });

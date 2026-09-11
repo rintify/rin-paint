@@ -26,6 +26,20 @@ export interface ToolInstance {
   textSettings?: TextToolSettings;
 }
 
+export interface ToolStack {
+  id: string;
+  name: string;
+  toolIds: string[];
+}
+
+export type ToolLayoutItem =
+  | { type: 'tool'; toolId: string }
+  | { type: 'stack'; stackId: string };
+
+export function newToolStackId(): string {
+  return `TS${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
+}
+
 export interface TextToolSettings {
   fontId: string;
   sizePt: number;
@@ -152,6 +166,8 @@ export interface RectShapeParams {
   height: number;
   color: string;
   strokeWidth: number;
+  /** 中心基準の回転角（ラジアン） */
+  rotation?: number;
 }
 
 export interface EllipseShapeParams {
@@ -162,6 +178,8 @@ export interface EllipseShapeParams {
   ry: number;
   color: string;
   strokeWidth: number;
+  /** 中心基準の回転角（ラジアン） */
+  rotation?: number;
 }
 
 export type ShapeParams = LineShapeParams | RectShapeParams | EllipseShapeParams;
@@ -182,6 +200,8 @@ export interface TextParams {
   y: number;
   width: number | null;
   height: number | null;
+  /** 文字枠の中心基準の回転角（ラジアン） */
+  rotation?: number;
 }
 export interface ProjectFont { id: string; name: string; dataUrl: string }
 export interface CanvasSpec { widthMm: number; heightMm: number; ppi: number }
@@ -198,10 +218,16 @@ export interface LayerMeta {
   parentId: string | null;
   childIds: string[];
   params?: AdjustParams;
+  maskLayerIds?: string[];
   shape?: ShapeParams;
   text?: TextParams;
   /** ラスター内容が変わるたびに増える (サムネイル再描画用) */
   version: number;
+}
+
+export interface PageMeta {
+  id: string;
+  thumbnailVersion: number;
 }
 
 export interface StrokePoint {

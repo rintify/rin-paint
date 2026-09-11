@@ -25,7 +25,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   const [natural, setNatural] = useState({ id: '', width: 0, height: 0 });
   const drag = useRef<{
     pointerId: number;
-    mode: 'move' | 'resize';
+    mode: 'move' | 'resize' | 'rotate';
     corner?: TextResizeCorner;
     x: number;
     y: number;
@@ -132,7 +132,8 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   const width = text.width ?? Math.max(30, measured.width || Number(canvas?.dataset.textWidth ?? 100));
   const height = text.height ?? Math.max(30, measured.height || Number(canvas?.dataset.textHeight ?? 60));
   const displayScale = Math.max(0.0001, fitScale * viewScale);
-  const begin = (event: ReactPointerEvent<HTMLDivElement>, mode: 'move' | 'resize', corner?: TextResizeCorner) => {
+  const begin = (event: ReactPointerEvent<HTMLDivElement>, mode: 'move' | 'resize' | 'rotate', corner?: TextResizeCorner) => {
+    if (composing.current) return;
     if (event.button !== 0) return;
     commit();
     event.preventDefault(); event.stopPropagation();
@@ -149,7 +150,9 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
     const dy = p.y - d.y;
     const next = d.mode === 'move'
       ? { ...d.before, x: d.before.x + dx, y: d.before.y + dy }
-      : resizeTextBox(d.before, d.width, d.height, d.corner!, dx, dy);
+      : d.mode === 'rotate'
+        ? { ...d.before, rotation: Math.atan2(p.y - (d.before.y + d.height / 2), p.x - (d.before.x + d.width / 2)) + Math.PI / 2 }
+        : resizeTextBox(d.before, d.width, d.height, d.corner!, dx, dy);
     engine.updateText(activeId, d.before, next, true);
   };
   const finish = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -170,7 +173,8 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
         top: text.y * fitScale,
         width,
         height,
-        transform: `scale(${fitScale})`,
+        transform: `scale(${fitScale}) rotate(${text.rotation ?? 0}rad)`,
+        transformOrigin: 'center',
         '--text-handle-size': `${10 / displayScale}px`,
         '--text-hit-size': `${8 / displayScale}px`,
         '--text-outline-size': `${1.5 / displayScale}px`,
@@ -211,6 +215,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
       {resizeHandles.map(corner => (
         <div key={corner} className={`text-resize-handle ${corner}`} title="文字枠のサイズを変更" onPointerDown={event => begin(event, 'resize', corner)} />
       ))}
+      {!editing && <div className="text-rotate-stem"><div className="text-rotate-handle" title="文字を回転" onPointerDown={event => begin(event, 'rotate')} /></div>}
       {overflow && editing && <div className="text-overflow-hint">枠からはみ出しています</div>}
     </div>
   );

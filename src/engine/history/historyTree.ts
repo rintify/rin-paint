@@ -12,6 +12,7 @@ export interface LayerSnapshot {
   parentId: string | null;
   childIds: string[];
   params?: AdjustParams;
+  maskLayerIds?: string[];
   shape?: ShapeParams;
   text?: TextParams;
   /** ラスター内容。作成直後は canvas、PNG エンコード完了後は blob に置き換わる */
@@ -20,10 +21,12 @@ export interface LayerSnapshot {
 }
 
 export interface LayerProps {
+  name?: string;
   opacity?: number;
   blend?: BlendMode;
   visible?: boolean;
   params?: AdjustParams;
+  maskLayerIds?: string[];
   shape?: ShapeParams;
   text?: TextParams;
 }
@@ -46,6 +49,7 @@ export interface LegacyLayerMergeOp {
   after: LocatedLayerSnapshot[];
   beforeActiveId: string;
   afterActiveId: string;
+  maskChanges?: { layerId: string; before: string[]; after: string[] }[];
 }
 
 export interface TileLayerMergeOp {
@@ -56,11 +60,12 @@ export interface TileLayerMergeOp {
   tiles: TilePatch[];
   beforeActiveId: string;
   afterActiveId: string;
+  maskChanges?: { layerId: string; before: string[]; after: string[] }[];
 }
 
 export type LayerMergeOp = LegacyLayerMergeOp | TileLayerMergeOp;
 
-export type Op =
+export type AtomicOp =
   | { kind: 'canvasChange'; before: CanvasSnapshot; after: CanvasSnapshot }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
   | { kind: 'layerAdd'; location: LayerLocation; snapshot: LayerSnapshot }
@@ -68,6 +73,8 @@ export type Op =
   | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
   | LayerMergeOp;
+
+export type Op = AtomicOp | { kind: 'batch'; ops: AtomicOp[] };
 
 export interface HistoryNode {
   id: number;
@@ -115,7 +122,7 @@ export interface PersistedTileLayerMergeOp {
   afterActiveId: string;
 }
 
-export type PersistedOp =
+export type PersistedAtomicOp =
   | { kind: 'canvasChange'; before: PersistedCanvasSnapshot; after: PersistedCanvasSnapshot }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
   | { kind: 'layerAdd'; location: LayerLocation; snapshot: PersistedLayerSnapshot }
@@ -125,8 +132,10 @@ export type PersistedOp =
   | PersistedLegacyLayerMergeOp
   | PersistedTileLayerMergeOp;
 
+export type PersistedOp = PersistedAtomicOp | { kind: 'batch'; ops: PersistedAtomicOp[] };
+
 export interface PersistedHistory {
-  version: 3;
+  version: 4;
   rootId: number;
   currentId: number;
   nodes: {
@@ -196,10 +205,7 @@ export class HistoryTree {
           snapshot: await snapshot(entry.snapshot),
         })),
       );
-    const persistOp = async (node: HistoryNode): Promise<PersistedOp | null> => {
-      await node.ready;
-      const op = node.op;
-      if (!op) return null;
+    const persistAtomic = async (op: AtomicOp): Promise<PersistedAtomicOp> => {
       switch (op.kind) {
         case 'canvasChange':
           return { ...op, before: { ...op.before, layers: await Promise.all(op.before.layers.map(snapshot)) }, after: { ...op.after, layers: await Promise.all(op.after.layers.map(snapshot)) } };
@@ -235,9 +241,17 @@ export class HistoryTree {
           };
       }
     };
+    const persistOp = async (node: HistoryNode): Promise<PersistedOp | null> => {
+      await node.ready;
+      const op = node.op;
+      if (!op) return null;
+      return op.kind === 'batch'
+        ? { kind: 'batch', ops: await Promise.all(op.ops.map(persistAtomic)) }
+        : persistAtomic(op);
+    };
 
     return {
-      version: 3,
+      version: 4,
       rootId,
       currentId,
       nodes: await Promise.all(
@@ -257,7 +271,7 @@ export class HistoryTree {
   restore(value: unknown): boolean {
     if (!value || typeof value !== 'object') return false;
     const saved = value as Partial<PersistedHistory>;
-    if (saved.version !== 3 || !Array.isArray(saved.nodes) || saved.nodes.length === 0) {
+    if (saved.version !== 4 || !Array.isArray(saved.nodes) || saved.nodes.length === 0) {
       return false;
     }
     try {
@@ -398,6 +412,7 @@ export class HistoryTree {
       (snapshot.canvas ? snapshot.canvas.width * snapshot.canvas.height * 4 : 0);
     const opBytes = (op: Op | null): number => {
       if (!op) return 0;
+      if (op.kind === 'batch') return op.ops.reduce((sum, item) => sum + opBytes(item), 0);
       if (op.kind === 'canvasChange') return [...op.before.layers, ...op.after.layers].reduce((sum, snapshot) => sum + snapshotBytes(snapshot), 0);
       if (op.kind === 'raster') {
         return op.tiles.reduce(

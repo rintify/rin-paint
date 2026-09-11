@@ -1,7 +1,7 @@
 import { ART_H, ART_W, type StrokePoint } from '../../types';
 import { unionRect, type DirtyRect } from '../brush';
 import type { RasterLayer } from '../layers';
-import type { PaintEngine } from '../PaintEngine';
+import type { PaintEngine, SelectedObjectTransform } from '../PaintEngine';
 import type { Tool } from './types';
 
 interface Pt {
@@ -22,6 +22,7 @@ interface Float {
   /** 投げ縄の輪郭 (切り出し画像のローカル座標) */
   outline: Pt[];
 }
+interface RasterFloat { layer: RasterLayer; canvas: HTMLCanvasElement; before: HTMLCanvasElement }
 
 type DragMode = 'move' | 'scale' | 'rotate' | 'corner';
 
@@ -123,12 +124,16 @@ export class LassoTool implements Tool {
   private pts: Pt[] = [];
   private layer: RasterLayer | null = null;
   private float: Float | null = null;
+  private rasterFloats: RasterFloat[] = [];
+  private objectTransforms: SelectedObjectTransform[] = [];
+  private sourceCorners: Pt[] = [];
   private origRect: DirtyRect | null = null;
   private drag: Drag | null = null;
 
   constructor(private engine: PaintEngine) {}
 
   setFreeTransform(on: boolean): void {
+    if (on && this.objectTransforms.length) return;
     if (this.free === on) return;
     this.free = on;
     this.drag = null;
@@ -160,12 +165,13 @@ export class LassoTool implements Tool {
   }
 
   private beginDraw(p: StrokePoint): void {
-    const layer = this.engine.activeRaster();
-    if (!layer) {
+    const layers = this.engine.selectedRasters();
+    const layer = layers.find(item => item.id === this.engine.activeRaster()?.id) ?? layers[0];
+    if (!layer && !this.engine.hasSelectedObjects()) {
       this.phase = 'idle';
       return;
     }
-    this.layer = layer;
+    this.layer = layer ?? null;
     this.phase = 'draw';
     this.pts = [{ x: p.x, y: p.y }];
   }
@@ -204,6 +210,7 @@ export class LassoTool implements Tool {
           y: c.y + (q.x - c.x) * sin + (q.y - c.y) * cos,
         })) as Float['corners'];
       }
+      if (this.objectTransforms.length) this.engine.previewObjectGroup(this.objectTransforms, this.sourceCorners, f.corners);
       this.engine.requestRender();
     }
   }
@@ -241,7 +248,6 @@ export class LassoTool implements Tool {
 
   /** 囲んだ範囲をレイヤーから切り出して浮動状態にする */
   private extract(): void {
-    const layer = this.layer!;
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -264,21 +270,17 @@ export class LassoTool implements Tool {
       return;
     }
 
-    this.engine.captureBefore(layer);
     const path = this.lassoPath();
-
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const cc = canvas.getContext('2d')!;
-    cc.translate(-minX, -minY);
-    cc.clip(path);
-    cc.drawImage(layer.canvas, 0, 0);
-
-    layer.ctx.save();
-    layer.ctx.globalCompositeOperation = 'destination-out';
-    layer.ctx.fill(path);
-    layer.ctx.restore();
+    const selected = this.engine.selectedRasters();
+    this.rasterFloats = selected.map(item => {
+      const before = document.createElement('canvas'); before.width = ART_W; before.height = ART_H; before.getContext('2d')!.drawImage(item.canvas, 0, 0);
+      const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+      const cc = canvas.getContext('2d')!; cc.translate(-minX, -minY); cc.clip(path); cc.drawImage(item.canvas, 0, 0);
+      item.ctx.save(); item.ctx.globalCompositeOperation = 'destination-out'; item.ctx.fill(path); item.ctx.restore();
+      return { layer: item, canvas, before };
+    });
+    const canvas = (this.layer ? this.rasterFloats.find(item => item.layer.id === this.layer!.id)?.canvas : undefined) ?? this.rasterFloats[0]?.canvas ?? document.createElement('canvas');
+    if (!canvas.width) { canvas.width = w; canvas.height = h; }
 
     this.float = {
       canvas,
@@ -293,35 +295,41 @@ export class LassoTool implements Tool {
       outline: this.pts.map((pt) => ({ x: pt.x - minX, y: pt.y - minY })),
     };
     this.origRect = { minX: minX - 2, minY: minY - 2, maxX: maxX + 2, maxY: maxY + 2 };
+    this.objectTransforms = this.engine.selectedObjectsInRect(this.origRect, this.pts);
+    this.sourceCorners = this.float.corners.map(point => ({ ...point }));
     this.phase = 'float';
     this.pts = [];
-    this.engine.bumpLayer(layer.id);
+    for (const item of this.rasterFloats) this.engine.bumpLayer(item.layer.id);
     this.engine.requestRender();
   }
 
   /** 現在の変形位置でレイヤーへスタンプ (浮動状態は継続) */
   duplicate(): void {
-    if (this.phase !== 'float' || !this.float || !this.layer) return;
+    if (this.phase !== 'float' || !this.float) return;
     this.stamp();
     // 複製した場所も確定時の履歴パッチ対象に含める
     this.origRect = unionRect(this.origRect!, this.transformedRect(4));
-    this.engine.bumpLayer(this.layer.id);
+    for (const item of this.rasterFloats) this.engine.bumpLayer(item.layer.id);
     this.engine.requestRender();
   }
 
   commit(): void {
-    if (this.phase !== 'float' || !this.float || !this.layer) return;
-    const layer = this.layer;
+    if (this.phase !== 'float' || !this.float) return;
     this.stamp();
     const rect = unionRect(this.origRect!, this.transformedRect(4));
+    const entries = this.rasterFloats.map(item => ({ layer: item.layer, before: item.before, rect }));
+    const objects = this.objectTransforms;
     this.reset();
-    this.engine.commitRasterEdit(layer, rect, '選択範囲');
+    this.engine.commitRasterBatch(entries, '複数レイヤーの選択範囲', objects);
   }
 
   cancelSelection(): void {
-    if (this.phase === 'float' && this.layer) {
-      this.engine.restoreBefore(this.layer);
-      this.engine.bumpLayer(this.layer.id);
+    if (this.phase === 'float') {
+      for (const item of this.rasterFloats) {
+        item.layer.ctx.clearRect(0, 0, ART_W, ART_H); item.layer.ctx.drawImage(item.before, 0, 0);
+        this.engine.bumpLayer(item.layer.id);
+      }
+      this.engine.restoreObjectGroup(this.objectTransforms);
     }
     this.reset();
     this.engine.requestRender();
@@ -332,6 +340,9 @@ export class LassoTool implements Tool {
     this.phase = 'idle';
     this.free = false;
     this.float = null;
+    this.rasterFloats = [];
+    this.objectTransforms = [];
+    this.sourceCorners = [];
     this.layer = null;
     this.origRect = null;
     this.drag = null;
@@ -362,7 +373,7 @@ export class LassoTool implements Tool {
   }
 
   /** 現在のクアッドへ切り出し画像を描く (平行四辺形なら1回の transform で) */
-  private drawFloatImage(ctx: CanvasRenderingContext2D): void {
+  private drawFloatImage(ctx: CanvasRenderingContext2D, image: HTMLCanvasElement = this.float!.canvas): void {
     const f = this.float!;
     const [c0, c1, , c3] = f.corners;
     ctx.save();
@@ -377,7 +388,7 @@ export class LassoTool implements Tool {
         c0.x,
         c0.y,
       );
-      ctx.drawImage(f.canvas, 0, 0);
+      ctx.drawImage(image, 0, 0);
     } else {
       // 双一次ワープ: グリッドに分割し三角形ごとにアフィン描画
       let maxEdge = 0;
@@ -401,8 +412,8 @@ export class LassoTool implements Tool {
           const d10 = this.toWorld(sx1, sy0);
           const d11 = this.toWorld(sx1, sy1);
           const d01 = this.toWorld(sx0, sy1);
-          drawTriangle(ctx, f.canvas, s00, s10, s11, d00, d10, d11);
-          drawTriangle(ctx, f.canvas, s00, s11, s01, d00, d11, d01);
+          drawTriangle(ctx, image, s00, s10, s11, d00, d10, d11);
+          drawTriangle(ctx, image, s00, s11, s01, d00, d11, d01);
         }
       }
     }
@@ -410,7 +421,7 @@ export class LassoTool implements Tool {
   }
 
   private stamp(): void {
-    this.drawFloatImage(this.layer!.ctx);
+    for (const item of this.rasterFloats) this.drawFloatImage(item.layer.ctx, item.canvas);
   }
 
   private rotateHandlePos(): Pt {
@@ -456,6 +467,12 @@ export class LassoTool implements Tool {
   drawAboveLayer(ctx: CanvasRenderingContext2D): void {
     if (this.phase !== 'float' || !this.float) return;
     this.drawFloatImage(ctx);
+  }
+
+  drawAboveLayerFor(ctx: CanvasRenderingContext2D, layerId: string): void {
+    if (this.phase !== 'float') return;
+    const item = this.rasterFloats.find(value => value.layer.id === layerId);
+    if (item) this.drawFloatImage(ctx, item.canvas);
   }
 
   drawOverlay(ctx: CanvasRenderingContext2D): void {

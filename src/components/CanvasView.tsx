@@ -43,6 +43,7 @@ export function CanvasView() {
   const [dropActive, setDropActive] = useState(false);
   const selectionActive = useStore((s) => s.selectionActive);
   const freeTransform = useStore((s) => s.freeTransform);
+  const objectSelected = useStore((s) => s.selectedLayerIds.some(id => { const layer = s.layers.find(item => item.id === id); return layer?.type === 'shape' || layer?.type === 'text'; }));
   const canvasW = useStore((s) => s.canvasW);
   const canvasH = useStore((s) => s.canvasH);
 
@@ -128,7 +129,8 @@ export function CanvasView() {
         >
           <Button
             variant={freeTransform ? 'contained' : 'outlined'}
-            title="角を個別に動かして変形"
+            disabled={objectSelected}
+            title={objectSelected ? '図形・文字を含む選択では自由変形を使用できません' : '角を個別に動かして変形'}
             onClick={() => engine.setSelectionFreeTransform(!freeTransform)}
           >
             自由変形

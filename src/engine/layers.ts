@@ -29,6 +29,7 @@ export interface AdjustLayer extends LayerTreeFields {
   type: 'adjust';
   name: string;
   params: AdjustParams;
+  maskLayerIds: string[];
   opacity: number;
   blend: BlendMode;
   visible: boolean;
@@ -94,6 +95,7 @@ export function createAdjustLayer(name: string, id = newLayerId()): AdjustLayer 
     type: 'adjust',
     name,
     params: { ...DEFAULT_ADJUST },
+    maskLayerIds: [],
     opacity: 1,
     blend: 'source-over',
     visible: true,

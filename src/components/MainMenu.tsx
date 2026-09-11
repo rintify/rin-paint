@@ -63,7 +63,8 @@ function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, pt: 1 }}>
         <TextField
           label="幅 (mm)"
-          type="number"
+          type="text"
+          inputMode="decimal"
           value={w}
           onChange={(e) => setW(e.target.value)}
           slotProps={{
@@ -72,14 +73,15 @@ function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
         />
         <TextField
           label="高さ (mm)"
-          type="number"
+          type="text"
+          inputMode="decimal"
           value={h}
           onChange={(e) => setH(e.target.value)}
           slotProps={{
             htmlInput: { min: 0.01, step: 0.1 },
           }}
         />
-        <TextField label="解像度 (ppi)" type="number" value={ppi} onChange={e => setPpi(e.target.value)} slotProps={{ htmlInput: { min: 1, step: 1 } }} />
+        <TextField label="解像度 (ppi)" type="text" inputMode="decimal" value={ppi} onChange={e => setPpi(e.target.value)} />
         <Typography variant="body2" color={error ? 'error' : 'text.secondary'}>{error ?? `${pixels.width} × ${pixels.height} px`}</Typography>
         <Typography variant="caption" color="text.secondary">
           幅・高さは左上基準で変更します。解像度の変更は、実寸を保って画像を補間します。変更は取り消せます。

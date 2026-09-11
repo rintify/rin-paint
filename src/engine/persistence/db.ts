@@ -1,227 +1,169 @@
 import { openDB, type IDBPDatabase } from 'idb';
-import type { AdjustParams, BlendMode, LayerType, ShapeParams, ToolInstance, TextParams, CanvasSpec, ProjectFont } from '../../types';
-import type { PersistedHistory } from '../history/historyTree';
+import type {
+  AdjustParams, BlendMode, LayerType, ShapeParams, ToolInstance, TextParams,
+  CanvasSpec, ProjectFont, ToolLayoutItem, ToolStack,
+} from '../../types';
+import type { PersistedHistory, PersistedOp, PersistedAtomicOp } from '../history/historyTree';
 import type { ViewState } from '../view';
 
 export interface SavedLayer {
-  id: string;
-  type: LayerType;
-  name: string;
-  opacity: number;
-  blend: BlendMode;
-  visible: boolean;
-  parentId: string | null;
-  childIds: string[];
-  params?: AdjustParams;
-  shape?: ShapeParams;
-  text?: TextParams;
-  blob?: Blob;
+  id: string; type: LayerType; name: string; opacity: number; blend: BlendMode;
+  visible: boolean; parentId: string | null; childIds: string[];
+  params?: AdjustParams; maskLayerIds?: string[]; shape?: ShapeParams; text?: TextParams; blob?: Blob;
 }
-
-export interface SavedProject {
-  version: 3;
-  canvasSpec: CanvasSpec;
-  fonts: ProjectFont[];
-  rootLayerIds: string[];
-  layers: SavedLayer[];
-  activeLayerId: string;
-  penColor: string;
-  penSize: number;
-  colorHistory: string[];
-  /** アートボードサイズ (古い保存データには無い) */
-  width?: number;
-  height?: number;
-  /** ツールインスタンス (古い保存データには無い) */
-  tools?: ToolInstance[];
-  activeToolId?: string;
-  /** 履歴の全分岐と現在位置 (古い保存データには無い) */
-  history?: PersistedHistory;
-  /** パン・拡大率・回転 (古い保存データには無い) */
-  view?: ViewState;
+export interface SavedPage {
+  id: string; canvasSpec: CanvasSpec; rootLayerIds: string[]; layers: SavedLayer[];
+  activeLayerId: string; history: PersistedHistory; view: ViewState;
+  thumbnail?: Blob; thumbnailVersion: number;
 }
-
-export interface TimelapseFrame {
-  t: number;
-  blob: Blob;
+export interface SavedProjectMeta {
+  version: 4; pageOrder: string[]; activePageId: string; fonts: ProjectFont[];
+  penColor: string; penSize: number; colorHistory: string[]; tools: ToolInstance[];
+  toolLayout: ToolLayoutItem[]; toolStacks: ToolStack[]; activeToolId: string | null;
 }
-
+/** Active-page facade; storage itself remains page-separated. */
+export interface SavedProject extends SavedProjectMeta, Omit<SavedPage, 'id'> { pages?: SavedPage[] }
+export interface LayerClipboard { version: 1; sourcePageId: string; sourcePpi: number; rootIds: string[]; layers: SavedLayer[] }
+export interface TimelapseFrame { key?: string; pageId?: string; t: number; blob: Blob }
 export interface SavedReferenceImage {
-  blob: Blob;
-  name: string;
-  naturalWidth: number;
-  naturalHeight: number;
-  x: number;
-  y: number;
-  width: number;
-  rotation: number;
-  opacity: number;
-  locked: boolean;
+  blob: Blob; name: string; naturalWidth: number; naturalHeight: number; x: number; y: number;
+  width: number; rotation: number; opacity: number; locked: boolean;
 }
 
 const DB_NAME = 'rin-paint';
-
 let dbPromise: Promise<IDBPDatabase> | null = null;
+let activePageId = '';
 let projectBytes = 0;
 let frameBytes: number | null = null;
-let frameBytesPromise: Promise<number> | null = null;
 let referenceGeneration = 0;
 export function referenceEpoch(): number { return referenceGeneration; }
-
-function savedProjectBytes(project: SavedProject | undefined): number {
-  if (!project) return 0;
-  let bytes = project.layers.reduce(
-    (sum, layer) => sum + (layer.blob?.size ?? 0),
-    0,
-  );
-  for (const node of project.history?.nodes ?? []) {
-    const op = node.op;
-    if (!op) continue;
-    if (op.kind === 'raster') {
-      for (const tile of op.tiles) bytes += tile.before.size + tile.after.size;
-    } else if (op.kind === 'layerAdd') {
-      bytes += op.snapshot.blob?.size ?? 0;
-    } else if (op.kind === 'layerRemove') {
-      for (const snapshot of op.snapshots) bytes += snapshot.blob?.size ?? 0;
-    } else if (op.kind === 'canvasChange') {
-      for (const snapshot of [...op.before.layers, ...op.after.layers]) bytes += snapshot.blob?.size ?? 0;
-    } else if (op.kind === 'layerMerge') {
-      if (op.format === 'tiles-v1') {
-        bytes += op.removed.snapshot.blob?.size ?? 0;
-        for (const tile of op.tiles) bytes += tile.before.size + tile.after.size;
-      } else {
-        for (const entry of [...op.before, ...op.after]) {
-          bytes += entry.snapshot.blob?.size ?? 0;
-        }
-      }
-    }
-  }
-  return bytes + (project.fonts ?? []).reduce((sum, font) => sum + font.dataUrl.length, 0);
-}
-
-/** Atomically replace project-owned data; UI/tool preferences live elsewhere. */
-export async function replaceProject(p: SavedProject): Promise<void> {
-  await ensureFrameBytes();
-  const d = await db();
-  const previousGeneration = referenceGeneration;
-  referenceGeneration++;
-  const tx = d.transaction(['kv', 'frames'], 'readwrite');
-  void tx.objectStore('kv').put(p, 'project');
-  void tx.objectStore('kv').delete('reference-image');
-  void tx.objectStore('frames').clear();
-  try { await tx.done; }
-  catch (error) { referenceGeneration = previousGeneration; throw error; }
-  projectBytes = savedProjectBytes(p);
-  frameBytes = 0;
-}
+export function setPersistencePageId(id: string): void { activePageId = id; referenceGeneration++; }
 
 function db(): Promise<IDBPDatabase> {
-  dbPromise ??= openDB(DB_NAME, 1, {
+  dbPromise ??= openDB(DB_NAME, 4, {
     upgrade(d) {
+      for (const name of [...d.objectStoreNames]) d.deleteObjectStore(name);
       d.createObjectStore('kv');
-      d.createObjectStore('frames', { autoIncrement: true });
+      d.createObjectStore('pages', { keyPath: 'id' });
+      d.createObjectStore('references');
+      const frames = d.createObjectStore('frames', { keyPath: 'key' });
+      frames.createIndex('pageId', 'pageId');
+      d.createObjectStore('clipboard');
+      d.createObjectStore('thumbnails');
     },
   });
   return dbPromise;
 }
 
-export async function saveProject(p: SavedProject): Promise<void> {
-  await (await db()).put('kv', p, 'project');
-  projectBytes = savedProjectBytes(p);
-}
-
-export async function loadProject(): Promise<SavedProject | undefined> {
-  const project = await (await db()).get('kv', 'project') as SavedProject | undefined;
-  projectBytes = savedProjectBytes(project);
-  return project;
-}
-
-export async function saveReferenceImage(image: SavedReferenceImage, generation = referenceGeneration): Promise<void> {
-  const d = await db();
-  if (generation !== referenceGeneration) return;
-  await d.put('kv', image, 'reference-image');
-}
-
-export async function loadReferenceImage(): Promise<SavedReferenceImage | undefined> {
-  return (await (await db()).get('kv', 'reference-image')) as
-    | SavedReferenceImage
-    | undefined;
-}
-
-export async function clearReferenceImage(): Promise<void> {
-  await (await db()).delete('kv', 'reference-image');
-}
-
-export async function addFrame(f: TimelapseFrame): Promise<void> {
-  await ensureFrameBytes();
-  await (await db()).add('frames', f);
-  frameBytes! += f.blob.size;
-}
-
-export async function frameCount(): Promise<number> {
-  return (await db()).count('frames');
-}
-
-export async function getFrames(): Promise<TimelapseFrame[]> {
-  return (await db()).getAll('frames');
-}
-
-/** フレーム数が上限を超えたら1つおきに間引いて時間方向の網羅性を保つ */
-export async function thinFramesIfNeeded(max: number): Promise<void> {
-  const d = await db();
-  const count = await d.count('frames');
-  if (count <= max) return;
-  await ensureFrameBytes();
-  const entries = await d.getAll('frames') as TimelapseFrame[];
-  const keys = await d.getAllKeys('frames');
-  let removedBytes = 0;
-  const tx = d.transaction('frames', 'readwrite');
-  for (let i = 1; i < keys.length; i += 2) {
-    void tx.store.delete(keys[i]);
-    removedBytes += entries[i]?.blob.size ?? 0;
+function atomicBytes(op: PersistedAtomicOp): number {
+  if (op.kind === 'raster') return op.tiles.reduce((n, t) => n + t.before.size + t.after.size, 0);
+  if (op.kind === 'layerAdd') return op.snapshot.blob?.size ?? 0;
+  if (op.kind === 'layerRemove') return op.snapshots.reduce((n, s) => n + (s.blob?.size ?? 0), 0);
+  if (op.kind === 'canvasChange') return [...op.before.layers, ...op.after.layers].reduce((n, s) => n + (s.blob?.size ?? 0), 0);
+  if (op.kind === 'layerMerge') {
+    if (op.format === 'tiles-v1') return (op.removed.snapshot.blob?.size ?? 0) + op.tiles.reduce((n, t) => n + t.before.size + t.after.size, 0);
+    return [...op.before, ...op.after].reduce((n, e) => n + (e.snapshot.blob?.size ?? 0), 0);
   }
-  await tx.done;
-  frameBytes! -= removedBytes;
+  return 0;
+}
+function opBytes(op: PersistedOp): number { return op.kind === 'batch' ? op.ops.reduce((n, item) => n + atomicBytes(item), 0) : atomicBytes(op); }
+function pageBytes(page: SavedPage): number {
+  return page.layers.reduce((n, layer) => n + (layer.blob?.size ?? 0), 0)
+    + page.history.nodes.reduce((n, node) => n + (node.op ? opBytes(node.op) : 0), 0)
+    + (page.thumbnail?.size ?? 0);
+}
+async function refreshProjectBytes(): Promise<void> {
+  const d = await db();
+  const [meta, pages] = await Promise.all([
+    d.get('kv', 'project-meta') as Promise<SavedProjectMeta | undefined>,
+    d.getAll('pages') as Promise<SavedPage[]>,
+  ]);
+  projectBytes = pages.reduce((n, page) => n + pageBytes(page), 0)
+    + (meta?.fonts ?? []).reduce((n, font) => n + font.dataUrl.length, 0);
 }
 
+export async function saveProjectMeta(meta: SavedProjectMeta): Promise<void> { await (await db()).put('kv', meta, 'project-meta'); }
+export async function loadProjectMeta(): Promise<SavedProjectMeta | undefined> { return await (await db()).get('kv', 'project-meta') as SavedProjectMeta | undefined; }
+export async function savePage(page: SavedPage): Promise<void> { const d = await db(); const tx = d.transaction(['pages', 'thumbnails'], 'readwrite'); void tx.objectStore('pages').put(page); if (page.thumbnail) void tx.objectStore('thumbnails').put(page.thumbnail, page.id); await tx.done; void refreshProjectBytes(); }
+export async function loadPage(id: string): Promise<SavedPage | undefined> { return await (await db()).get('pages', id) as SavedPage | undefined; }
+export async function loadPageThumbnail(id: string): Promise<Blob | undefined> { return await (await db()).get('thumbnails', id) as Blob | undefined; }
+
+export async function saveProject(p: SavedProject): Promise<void> {
+  const { canvasSpec, rootLayerIds, layers, activeLayerId: pageActive, history, view, thumbnail, thumbnailVersion, pages, ...meta } = p;
+  const d = await db();
+  const tx = d.transaction(['kv', 'pages', 'thumbnails'], 'readwrite');
+  void tx.objectStore('kv').put(meta satisfies SavedProjectMeta, 'project-meta');
+  void tx.objectStore('pages').put({ id: p.activePageId, canvasSpec, rootLayerIds, layers, activeLayerId: pageActive, history, view, thumbnail, thumbnailVersion } satisfies SavedPage);
+  if (thumbnail) void tx.objectStore('thumbnails').put(thumbnail, p.activePageId);
+  for (const page of pages ?? []) { void tx.objectStore('pages').put(page); if (page.thumbnail) void tx.objectStore('thumbnails').put(page.thumbnail, page.id); }
+  await tx.done; activePageId = p.activePageId; void refreshProjectBytes();
+}
+export async function loadProject(): Promise<SavedProject | undefined> {
+  const meta = await loadProjectMeta();
+  if (!meta || meta.version !== 4 || !meta.pageOrder.length) return undefined;
+  const page = await loadPage(meta.activePageId);
+  if (!page) return undefined;
+  activePageId = page.id; await refreshProjectBytes();
+  const { id: _id, ...rest } = page;
+  return { ...meta, ...rest };
+}
+export async function replaceProject(p: SavedProject): Promise<void> {
+  const d = await db(); referenceGeneration++;
+  const tx = d.transaction(['kv', 'pages', 'references', 'frames', 'clipboard', 'thumbnails'], 'readwrite');
+  await Promise.all([tx.objectStore('pages').clear(), tx.objectStore('references').clear(), tx.objectStore('frames').clear(), tx.objectStore('clipboard').clear(), tx.objectStore('thumbnails').clear()]);
+  const { canvasSpec, rootLayerIds, layers, activeLayerId: pageActive, history, view, thumbnail, thumbnailVersion, pages, ...meta } = p;
+  void tx.objectStore('kv').put(meta satisfies SavedProjectMeta, 'project-meta');
+  const records: SavedPage[] = pages?.length ? pages : [{ id: p.activePageId, canvasSpec, rootLayerIds, layers, activeLayerId: pageActive, history, view, thumbnail, thumbnailVersion }];
+  for (const page of records) { void tx.objectStore('pages').put(page); if (page.thumbnail) void tx.objectStore('thumbnails').put(page.thumbnail, page.id); }
+  await tx.done; activePageId = p.activePageId; frameBytes = 0; await refreshProjectBytes();
+}
+export async function deletePageData(id: string): Promise<void> {
+  const d = await db();
+  const tx = d.transaction(['pages', 'references', 'frames', 'thumbnails'], 'readwrite');
+  void tx.objectStore('pages').delete(id); void tx.objectStore('references').delete(id);
+  void tx.objectStore('thumbnails').delete(id);
+  const keys = await tx.objectStore('frames').index('pageId').getAllKeys(id);
+  for (const key of keys) void tx.objectStore('frames').delete(key);
+  await tx.done; frameBytes = null; void refreshProjectBytes();
+}
+
+export async function saveClipboard(value: LayerClipboard): Promise<void> { await (await db()).put('clipboard', value, 'layers'); }
+export async function loadClipboard(): Promise<LayerClipboard | undefined> { return await (await db()).get('clipboard', 'layers') as LayerClipboard | undefined; }
+export async function hasClipboard(): Promise<boolean> { return (await (await db()).count('clipboard')) > 0; }
+export async function clearClipboard(): Promise<void> { await (await db()).clear('clipboard'); }
+
+export async function saveReferenceImage(image: SavedReferenceImage, generation = referenceGeneration, pageId = activePageId): Promise<void> {
+  if (generation !== referenceGeneration || !pageId) return;
+  await (await db()).put('references', image, pageId);
+}
+export async function loadReferenceImage(pageId = activePageId): Promise<SavedReferenceImage | undefined> { return await (await db()).get('references', pageId) as SavedReferenceImage | undefined; }
+export async function clearReferenceImage(pageId = activePageId): Promise<void> { if (pageId) await (await db()).delete('references', pageId); }
+
+export async function addFrame(frame: TimelapseFrame, pageId = activePageId): Promise<void> {
+  if (!pageId) return;
+  const value = { ...frame, key: `${pageId}:${frame.t}:${crypto.randomUUID()}`, pageId };
+  await (await db()).put('frames', value); frameBytes = null;
+}
+export async function frameCount(pageId = activePageId): Promise<number> { return pageId ? await (await db()).countFromIndex('frames', 'pageId', pageId) : 0; }
+export async function getFrames(pageId = activePageId): Promise<TimelapseFrame[]> { return pageId ? await (await db()).getAllFromIndex('frames', 'pageId', pageId) as TimelapseFrame[] : []; }
+export async function thinFramesIfNeeded(max: number, pageId = activePageId): Promise<void> {
+  if (!pageId) return;
+  const d = await db(); const entries = await d.getAllFromIndex('frames', 'pageId', pageId) as TimelapseFrame[];
+  if (entries.length <= max) return;
+  const tx = d.transaction('frames', 'readwrite');
+  for (let i = 1; i < entries.length; i += 2) if (entries[i].key) void tx.store.delete(entries[i].key!);
+  await tx.done; frameBytes = null;
+}
 async function ensureFrameBytes(): Promise<number> {
   if (frameBytes !== null) return frameBytes;
-  frameBytesPromise ??= (async () => {
-    const frames = await (await db()).getAll('frames') as TimelapseFrame[];
-    frameBytes = frames.reduce((sum, frame) => sum + frame.blob.size, 0);
-    return frameBytes;
-  })().catch((error) => {
-    frameBytesPromise = null;
-    throw error;
-  });
-  return frameBytesPromise;
+  frameBytes = (await (await db()).getAll('frames') as TimelapseFrame[]).reduce((n, f) => n + f.blob.size, 0);
+  return frameBytes;
 }
-
-export async function loadTimelapseEnabled(): Promise<boolean> {
-  const value = await (await db()).get('kv', 'timelapse-enabled');
-  return typeof value === 'boolean' ? value : true;
-}
-
-export async function saveTimelapseEnabled(enabled: boolean): Promise<void> {
-  await (await db()).put('kv', enabled, 'timelapse-enabled');
-}
-
-export interface PersistenceUsage {
-  project: number;
-  timelapse: number;
-  other: number;
-}
-
+export async function loadTimelapseEnabled(): Promise<boolean> { const value = await (await db()).get('kv', 'timelapse-enabled'); return typeof value === 'boolean' ? value : true; }
+export async function saveTimelapseEnabled(enabled: boolean): Promise<void> { await (await db()).put('kv', enabled, 'timelapse-enabled'); }
+export interface PersistenceUsage { project: number; timelapse: number; other: number }
 export async function getPersistenceUsage(): Promise<PersistenceUsage> {
-  const timelapse = await ensureFrameBytes();
-  let originUsage = projectBytes + timelapse;
-  try {
-    originUsage = (await navigator.storage?.estimate?.())?.usage ?? originUsage;
-  } catch {
-    // StorageManager が利用できない環境では既知の Blob サイズだけを使う。
-  }
-  return {
-    project: projectBytes,
-    timelapse,
-    other: Math.max(0, originUsage - projectBytes - timelapse),
-  };
+  const timelapse = await ensureFrameBytes(); let originUsage = projectBytes + timelapse;
+  try { originUsage = (await navigator.storage?.estimate?.())?.usage ?? originUsage; } catch { /* optional */ }
+  return { project: projectBytes, timelapse, other: Math.max(0, originUsage - projectBytes - timelapse) };
 }

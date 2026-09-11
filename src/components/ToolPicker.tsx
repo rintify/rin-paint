@@ -23,12 +23,13 @@ import {
   DialogTitle,
   IconButton,
   InputAdornment,
+  Popover,
   Stack,
   TextField,
   Tooltip,
   Typography,
 } from '@mui/material';
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { engine } from '../engine/PaintEngine';
 import { useStore } from '../state/store';
 import { normalizeTextToolSettings, TOOL_KIND_LABELS, type ToolInstance, type ToolKind } from '../types';
@@ -113,7 +114,7 @@ function AddToolDialog({ onClose }: { onClose: () => void }) {
                 <ChevronRightIcon color="action" />
               </ButtonBase>
             )}
-            {results.slice(0, 120).map(kind => (
+            {results.map(kind => (
               <ToolCatalogCard key={kind} kind={kind} path={normalized && shapeKinds.includes(kind) ? '図形' : undefined} onClick={() => add(kind)} />
             ))}
           </Box>
@@ -121,11 +122,6 @@ function AddToolDialog({ onClose }: { onClose: () => void }) {
             <Box className="tool-catalog-empty">
               <Typography color="text.secondary">一致するツールがありません</Typography>
             </Box>
-          )}
-          {results.length > 120 && (
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, textAlign: 'center' }}>
-              候補が多いため先頭120件を表示しています。検索語を追加してください。
-            </Typography>
           )}
         </Box>
       </DialogContent>
@@ -143,12 +139,20 @@ function toolSummary(tool: ToolInstance): string {
   return `${tool.size}px・${tool.color === 'transparent' ? '透明' : tool.color}`;
 }
 
+function ToolNameEditor({ tool }: { tool: ToolInstance }) {
+  const [draft, setDraft] = useState(tool.name);
+  useEffect(() => setDraft(tool.name), [tool.name]);
+  const commit = () => { if (!engine.renameToolInstance(tool.id, draft)) setDraft(tool.name); };
+  return <TextField variant="standard" value={draft} slotProps={{ htmlInput: { 'aria-label': `${tool.name}の名称` } }} onClick={event => event.stopPropagation()} onChange={event => setDraft(event.target.value)} onBlur={commit} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); commit(); (event.target as HTMLInputElement).blur(); } else if (event.key === 'Escape') { setDraft(tool.name); (event.target as HTMLInputElement).blur(); } }} sx={{ minWidth: 0 }} />;
+}
+
 function ManageToolsDialog({ onClose }: { onClose: () => void }) {
   const tools = useStore(state => state.tools);
+  const stacks = useStore(state => state.toolStacks);
   const activeId = useStore(state => state.activeToolId);
   const [addOpen, setAddOpen] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
-  const [dropTarget, setDropTarget] = useState<{ anchorId: string; slot: number; side: 'before' | 'after' } | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ anchorId: string; slot: number; side: 'before' | 'after' | 'center' } | null>(null);
   const cardElements = useRef(new Map<string, HTMLElement>());
   const beforeMove = useRef<Map<string, DOMRect> | null>(null);
 
@@ -174,6 +178,8 @@ function ManageToolsDialog({ onClose }: { onClose: () => void }) {
   const finishDrag = () => { setDragId(null); setDropTarget(null); };
   const dropAt = (slot: number) => {
     if (!dragId) return finishDrag();
+    const owner = useStore.getState().toolStacks.find(stack => stack.toolIds.includes(dragId));
+    if (owner) useStore.getState().unstackTool(dragId, slot);
     const from = tools.findIndex(tool => tool.id === dragId);
     if (from < 0) return finishDrag();
     const to = from < slot ? slot - 1 : slot;
@@ -201,6 +207,13 @@ function ManageToolsDialog({ onClose }: { onClose: () => void }) {
           </Stack>
         </DialogTitle>
         <DialogContent className="manage-tools-content">
+          {stacks.length > 0 && <Box sx={{ mb: 2 }}>
+            <Typography variant="overline" color="text.secondary">スタック</Typography>
+            <Stack spacing={1}>{stacks.map(stack => <Box key={stack.id} className="manage-stack-card">
+              <TextField size="small" value={stack.name} label="グループ名" onChange={event => { if (event.target.value.trim()) useStore.getState().renameToolStack(stack.id, event.target.value); }} />
+              <Stack direction="row" spacing={.5} sx={{ flexWrap: 'wrap' }}>{stack.toolIds.map(id => { const tool = tools.find(item => item.id === id); return tool ? <Chip key={id} icon={<>{TOOL_ICONS[tool.kind]}</>} label={tool.name} onDelete={() => useStore.getState().unstackTool(id)} /> : null; })}</Stack>
+            </Box>)}</Stack>
+          </Box>}
           <Box className="manage-tool-card-grid">
             {tools.map((tool, index) => {
               const target = dropTarget?.anchorId === tool.id ? dropTarget : null;
@@ -224,17 +237,28 @@ function ManageToolsDialog({ onClose }: { onClose: () => void }) {
                     event.preventDefault();
                     event.dataTransfer.dropEffect = 'move';
                     const rect = event.currentTarget.getBoundingClientRect();
-                    const before = (event.clientX - rect.left) / rect.width + (event.clientY - rect.top) / rect.height < 1;
-                    setDropTarget({ anchorId: tool.id, slot: index + (before ? 0 : 1), side: before ? 'before' : 'after' });
+                    const rx = (event.clientX - rect.left) / rect.width;
+                    const ry = (event.clientY - rect.top) / rect.height;
+                    const center = rx > .25 && rx < .75 && ry > .2 && ry < .8;
+                    const before = rx + ry < 1;
+                    setDropTarget({ anchorId: tool.id, slot: index + (before ? 0 : 1), side: center ? 'center' : before ? 'before' : 'after' });
                   }}
-                  onDrop={event => { event.preventDefault(); event.stopPropagation(); if (dropTarget) dropAt(dropTarget.slot); }}
+                  onDrop={event => { event.preventDefault(); event.stopPropagation(); if (dropTarget?.side === 'center' && dragId) {
+                    beforeMove.current = new Map([...cardElements.current].map(([id, element]) => [id, element.getBoundingClientRect()]));
+                    let state = useStore.getState();
+                    const sourceOwner = state.toolStacks.find(stack => stack.toolIds.includes(dragId));
+                    if (sourceOwner) { state.unstackTool(dragId); state = useStore.getState(); }
+                    const targetOwner = state.toolStacks.find(stack => stack.toolIds.includes(tool.id));
+                    if (targetOwner) state.moveToolToStack(dragId, targetOwner.id); else state.createToolStack(dragId, tool.id);
+                    finishDrag();
+                  } else if (dropTarget) dropAt(dropTarget.slot); }}
                   sx={{ opacity: dragId === tool.id ? 0.4 : 1 }}
                 >
                   <Box className="manage-tool-card-top">
                     <Box className="manage-tool-icon">{TOOL_ICONS[tool.kind]}</Box>
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                       <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center' }}>
-                        <Typography variant="body2" noWrap sx={{ minWidth: 0, fontWeight: 650 }}>{tool.name}</Typography>
+                        <ToolNameEditor tool={tool} />
                         {active && <Chip label="使用中" color="primary" size="small" sx={{ height: 20, fontSize: 10 }} />}
                       </Stack>
                       <Typography variant="caption" color="text.secondary" noWrap>{toolSummary(tool)}</Typography>
@@ -243,9 +267,9 @@ function ManageToolsDialog({ onClose }: { onClose: () => void }) {
                   </Box>
                   <Box className="manage-tool-card-actions">
                     <Typography variant="caption" color="text.secondary">{TOOL_KIND_LABELS[tool.kind]}</Typography>
-                    <Tooltip title={tools.length <= 1 ? '最後のツールは削除できません' : '削除'}>
+                    <Tooltip title="削除">
                       <span>
-                        <IconButton size="small" disabled={tools.length <= 1} onClick={event => { event.stopPropagation(); engine.removeToolInstance(tool.id); }} aria-label={`${tool.name}を削除`}>
+                        <IconButton size="small" onClick={event => { event.stopPropagation(); engine.removeToolInstance(tool.id); }} aria-label={`${tool.name}を削除`}>
                           <DeleteOutlinedIcon fontSize="small" />
                         </IconButton>
                       </span>
@@ -264,8 +288,12 @@ function ManageToolsDialog({ onClose }: { onClose: () => void }) {
 
 export function ToolPicker() {
   const tools = useStore(state => state.tools);
+  const layout = useStore(state => state.toolLayout);
+  const stacks = useStore(state => state.toolStacks);
   const activeId = useStore(state => state.activeToolId);
+  const multi = useStore(state => state.multiSelectMode);
   const [manageOpen, setManageOpen] = useState(false);
+  const [stackOpen, setStackOpen] = useState<{ id: string; anchor: HTMLElement } | null>(null);
 
   return (
     <Box className="tool-rail">
@@ -276,11 +304,24 @@ export function ToolPicker() {
         </Tooltip>
       </Box>
       <Box className="tool-rail-scroll">
-        {tools.map(tool => {
+        {layout.map(item => {
+          if (item.type === 'stack') {
+            const stack = stacks.find(value => value.id === item.stackId);
+            if (!stack) return null;
+            const members = stack.toolIds.map(id => tools.find(tool => tool.id === id)).filter((tool): tool is ToolInstance => !!tool);
+            const active = members.some(tool => tool.id === activeId);
+            return <Button key={stack.id} onClick={event => setStackOpen({ id: stack.id, anchor: event.currentTarget })} onMouseEnter={event => setStackOpen({ id: stack.id, anchor: event.currentTarget })} title={stack.name} variant={active ? 'contained' : 'text'} color={active ? 'primary' : 'inherit'} className="tool-rail-button tool-stack-button">
+              <Box className="tool-stack-icons">{members.slice(0, 4).map((tool, index) => <Box key={tool.id} sx={{ transform: `translate(${index * 3}px, ${index * -2}px)` }}>{TOOL_ICONS[tool.kind]}</Box>)}</Box>
+              <Typography variant="caption" noWrap>{stack.name}</Typography>
+            </Button>;
+          }
+          const tool = tools.find(value => value.id === item.toolId);
+          if (!tool) return null;
           const active = activeId === tool.id;
           return (
             <Button
               key={tool.id}
+              disabled={multi && tool.kind !== 'lasso'}
               onClick={() => engine.selectToolInstance(tool.id)}
               title={tool.name}
               variant={active ? 'contained' : 'text'}
@@ -296,6 +337,11 @@ export function ToolPicker() {
           );
         })}
       </Box>
+      <Popover open={!!stackOpen} anchorEl={stackOpen?.anchor} onClose={() => setStackOpen(null)} anchorOrigin={{ vertical: 'center', horizontal: 'right' }} transformOrigin={{ vertical: 'center', horizontal: 'left' }} disableRestoreFocus>
+        <Stack sx={{ p: 1, minWidth: 180 }} spacing={.5} onMouseLeave={() => setStackOpen(null)}>
+          {stacks.find(stack => stack.id === stackOpen?.id)?.toolIds.map(id => { const tool = tools.find(value => value.id === id); return tool ? <Button key={id} disabled={multi && tool.kind !== 'lasso'} startIcon={TOOL_ICONS[tool.kind]} variant={activeId === id ? 'contained' : 'text'} onClick={() => { engine.selectToolInstance(id); setStackOpen(null); }}>{tool.name}</Button> : null; })}
+        </Stack>
+      </Popover>
       {manageOpen && <ManageToolsDialog onClose={() => setManageOpen(false)} />}
     </Box>
   );

@@ -6,11 +6,13 @@ export interface TreeLayerLike {
 }
 
 /** Only ancestors and the selected layer are open; siblings remain visible. */
-export function selectedLayerRows(roots: string[], layers: TreeLayerLike[], activeId: string): { id: string; depth: number }[] {
+export function selectedLayerRows(roots: string[], layers: TreeLayerLike[], activeId: string | string[]): { id: string; depth: number }[] {
   const byId = new Map(layers.map(layer => [layer.id, layer]));
   const open = new Set<string>();
-  let cursor: string | null = activeId;
-  while (cursor && !open.has(cursor)) { open.add(cursor); cursor = byId.get(cursor)?.parentId ?? null; }
+  for (const selected of Array.isArray(activeId) ? activeId : [activeId]) {
+    let cursor: string | null = selected;
+    while (cursor && !open.has(cursor)) { open.add(cursor); cursor = byId.get(cursor)?.parentId ?? null; }
+  }
   const rows: { id: string; depth: number }[] = [];
   const visit = (ids: string[], depth: number) => {
     for (const id of [...ids].reverse()) {
