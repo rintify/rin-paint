@@ -8,6 +8,7 @@ import { Blob as NodeBlob } from 'node:buffer';
 import { newText } from './text/model';
 import { useStore } from '../state/store';
 import { addFrame, frameCount, loadProject, loadReferenceImage, saveReferenceImage, referenceEpoch } from './persistence/db';
+import type { HistoryNode, HistoryTree, TileLayerMergeOp } from './history/historyTree';
 
 // Real pixel buffers/PNG roundtrips without launching a browser.
 const native = new WeakMap<HTMLCanvasElement, Canvas>();
@@ -44,6 +45,19 @@ beforeAll(async () => {
   engine.setTimelapseEnabled(false);
 });
 afterAll(() => vi.restoreAllMocks());
+
+function internalHistory(): HistoryTree {
+  return (engine as unknown as { history: HistoryTree }).history;
+}
+
+async function settleMergeCompactions(): Promise<void> {
+  const pending = (engine as unknown as { mergeCompactions: Set<Promise<void>> }).mergeCompactions;
+  while (pending.size) await Promise.all([...pending]);
+}
+
+function pixel(layerId: string, x: number, y: number): number[] {
+  return [...engine.getLayerCanvas(layerId)!.getContext('2d')!.getImageData(x, y, 1, 1).data];
+}
 
 describe('canvas history and new project', () => {
   it('restores cropped pixels, dimensions, and earlier raster history across reload', async () => {
@@ -122,5 +136,136 @@ describe('canvas history and new project', () => {
     expect(useStore.getState().layers.some(layer => layer.id === id)).toBe(true);
     expect(engine.finishTextEditing()).toBe(true);
     expect(useStore.getState().layers.some(layer => layer.id === id)).toBe(false);
+  });
+
+  it('compacts raster merges into exact changed tiles across undo, redo and reload', async () => {
+    await engine.newProject();
+    const lowerId = useStore.getState().activeLayerId;
+    const lower = engine.getLayerCanvas(lowerId)!;
+    lower.getContext('2d')!.fillStyle = '#ff0000';
+    lower.getContext('2d')!.fillRect(0, 0, 100, 100);
+    engine.addRasterLayer();
+    const upperId = useStore.getState().activeLayerId;
+    const upper = engine.getLayerCanvas(upperId)!;
+    upper.getContext('2d')!.fillStyle = '#0000ff';
+    upper.getContext('2d')!.fillRect(10, 10, 20, 20);
+    engine.commitLayerProps(
+      upperId,
+      { opacity: 1, blend: 'source-over' },
+      { opacity: 0.5, blend: 'screen' },
+      '合成設定',
+    );
+
+    await engine.mergeLayerDown(upperId);
+    const mergedPixel = pixel(lowerId, 15, 15);
+    const mergeNode: HistoryNode = internalHistory().current;
+    // Undo must keep working while the fallback snapshots are still being compacted.
+    await engine.undo();
+    expect(pixel(lowerId, 15, 15)).toEqual([255, 0, 0, 255]);
+    expect(useStore.getState().layers.some(layer => layer.id === upperId)).toBe(true);
+    await settleMergeCompactions();
+    expect(mergeNode.op).toMatchObject({ kind: 'layerMerge', format: 'tiles-v1', targetLayerId: lowerId });
+    const compact = mergeNode.op as TileLayerMergeOp;
+    expect(compact.tiles).toHaveLength(1);
+    expect(compact.removed.snapshot.id).toBe(upperId);
+    expect(compact.removed.snapshot.blob?.size).toBeGreaterThan(0);
+    expect(compact.removed.snapshot.canvas).toBeUndefined();
+    expect(internalHistory().retainedBytes()).toBeLessThan(lower.width * lower.height * 4 * 3);
+
+    await engine.redo();
+    expect(pixel(lowerId, 15, 15)).toEqual(mergedPixel);
+    expect(useStore.getState().layers.some(layer => layer.id === upperId)).toBe(false);
+
+    await (engine as unknown as { flushSave(): Promise<void> }).flushSave();
+    const persisted = await loadProject();
+    const savedMerge = persisted?.history?.nodes.find(node => node.id === mergeNode.id)?.op;
+    expect(savedMerge).toMatchObject({ kind: 'layerMerge', format: 'tiles-v1' });
+    const restored = new (await import('./history/historyTree')).HistoryTree();
+    expect(restored.restore(persisted?.history)).toBe(true);
+    (engine as unknown as { history: HistoryTree }).history = restored;
+    await engine.undo();
+    expect(pixel(lowerId, 15, 15)).toEqual([255, 0, 0, 255]);
+    await engine.redo();
+    expect(pixel(lowerId, 15, 15)).toEqual(mergedPixel);
+  });
+
+  it('stores no changed tiles when merging a transparent raster', async () => {
+    await engine.newProject();
+    const lowerId = useStore.getState().activeLayerId;
+    engine.addRasterLayer();
+    const upperId = useStore.getState().activeLayerId;
+    await engine.mergeLayerDown(upperId);
+    const mergeNode = internalHistory().current;
+    await settleMergeCompactions();
+    expect((mergeNode.op as TileLayerMergeOp).tiles).toHaveLength(0);
+    await engine.undo();
+    expect(useStore.getState().layers.some(layer => layer.id === upperId)).toBe(true);
+    expect(useStore.getState().activeLayerId).toBe(upperId);
+    await engine.redo();
+    expect(useStore.getState().activeLayerId).toBe(lowerId);
+  });
+
+  it('compacts shape, text and adjustment merges without raster snapshots for the removed layer', async () => {
+    const verify = async (type: 'shape' | 'text' | 'adjust', add: () => void) => {
+      await engine.newProject();
+      add();
+      const upperId = useStore.getState().activeLayerId;
+      await engine.mergeLayerDown(upperId);
+      const mergeNode = internalHistory().current;
+      await settleMergeCompactions();
+      const compact = mergeNode.op as TileLayerMergeOp;
+      expect(compact).toMatchObject({ kind: 'layerMerge', format: 'tiles-v1' });
+      expect(compact.removed.snapshot).toMatchObject({ id: upperId, type });
+      expect(compact.removed.snapshot.blob).toBeUndefined();
+      expect(compact.removed.snapshot.canvas).toBeUndefined();
+      await engine.undo();
+      expect(useStore.getState().layers.find(layer => layer.id === upperId)?.type).toBe(type);
+      await engine.redo();
+      expect(useStore.getState().layers.some(layer => layer.id === upperId)).toBe(false);
+    };
+
+    await verify('shape', () => engine.addShapeLayer({ kind: 'line', x1: 10, y1: 10, x2: 70, y2: 40, color: '#123456', width: 6 }));
+    await verify('text', () => engine.addTextLayer({ ...newText(20, 30, '#222222'), content: '統合' }));
+    await verify('adjust', () => engine.addAdjustLayer());
+  });
+
+  it('keeps the full snapshot fallback when tile compaction fails', async () => {
+    await engine.newProject();
+    const lowerId = useStore.getState().activeLayerId;
+    engine.addShapeLayer({ kind: 'line', x1: 5, y1: 5, x2: 80, y2: 80, color: '#abcdef', width: 8 });
+    const upperId = useStore.getState().activeLayerId;
+    vi.mocked(HTMLCanvasElement.prototype.toBlob).mockImplementationOnce((callback) => callback(null));
+    await engine.mergeLayerDown(upperId);
+    const mergeNode = internalHistory().current;
+    await settleMergeCompactions();
+    expect(mergeNode.op).toMatchObject({ kind: 'layerMerge', format: 'snapshots-v1' });
+    if (mergeNode.op?.kind === 'layerMerge' && mergeNode.op.format !== 'tiles-v1') {
+      for (const entry of [...mergeNode.op.before, ...mergeNode.op.after]) {
+        if (entry.snapshot.type === 'raster') {
+          expect(entry.snapshot.canvas).toBeUndefined();
+          expect(entry.snapshot.blob?.size).toBeGreaterThan(0);
+        }
+      }
+    }
+    await engine.undo();
+    expect(useStore.getState().layers.some(layer => layer.id === upperId)).toBe(true);
+    await engine.redo();
+    expect(useStore.getState().activeLayerId).toBe(lowerId);
+  });
+
+  it('does not let stale compaction write back after creating a new project', async () => {
+    await engine.newProject();
+    engine.addRasterLayer();
+    const upperId = useStore.getState().activeLayerId;
+    engine.getLayerCanvas(upperId)!.getContext('2d')!.fillRect(0, 0, 800, 800);
+    await engine.mergeLayerDown(upperId);
+    const pending = [...(engine as unknown as { mergeCompactions: Set<Promise<void>> }).mergeCompactions];
+    await engine.newProject();
+    await Promise.all(pending);
+    await (engine as unknown as { flushSave(): Promise<void> }).flushSave();
+    const saved = await loadProject();
+    expect(saved?.layers).toHaveLength(1);
+    expect(saved?.history?.nodes).toHaveLength(1);
+    expect(saved?.history?.nodes[0].op).toBeNull();
   });
 });

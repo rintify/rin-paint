@@ -38,6 +38,28 @@ export interface LocatedLayerSnapshot {
   snapshot: LayerSnapshot;
 }
 
+export interface LegacyLayerMergeOp {
+  kind: 'layerMerge';
+  /** 保存済み version 3 には format が無いため省略可能。 */
+  format?: 'snapshots-v1';
+  before: LocatedLayerSnapshot[];
+  after: LocatedLayerSnapshot[];
+  beforeActiveId: string;
+  afterActiveId: string;
+}
+
+export interface TileLayerMergeOp {
+  kind: 'layerMerge';
+  format: 'tiles-v1';
+  targetLayerId: string;
+  removed: LocatedLayerSnapshot;
+  tiles: TilePatch[];
+  beforeActiveId: string;
+  afterActiveId: string;
+}
+
+export type LayerMergeOp = LegacyLayerMergeOp | TileLayerMergeOp;
+
 export type Op =
   | { kind: 'canvasChange'; before: CanvasSnapshot; after: CanvasSnapshot }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
@@ -45,13 +67,7 @@ export type Op =
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: LayerSnapshot[] }
   | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
-  | {
-      kind: 'layerMerge';
-      before: LocatedLayerSnapshot[];
-      after: LocatedLayerSnapshot[];
-      beforeActiveId: string;
-      afterActiveId: string;
-    };
+  | LayerMergeOp;
 
 export interface HistoryNode {
   id: number;
@@ -80,6 +96,25 @@ export interface PersistedCanvasSnapshot extends Omit<CanvasSnapshot, 'layers'> 
   layers: PersistedLayerSnapshot[];
 }
 
+export interface PersistedLegacyLayerMergeOp {
+  kind: 'layerMerge';
+  format?: 'snapshots-v1';
+  before: { location: LayerLocation; snapshot: PersistedLayerSnapshot }[];
+  after: { location: LayerLocation; snapshot: PersistedLayerSnapshot }[];
+  beforeActiveId: string;
+  afterActiveId: string;
+}
+
+export interface PersistedTileLayerMergeOp {
+  kind: 'layerMerge';
+  format: 'tiles-v1';
+  targetLayerId: string;
+  removed: { location: LayerLocation; snapshot: PersistedLayerSnapshot };
+  tiles: TilePatch[];
+  beforeActiveId: string;
+  afterActiveId: string;
+}
+
 export type PersistedOp =
   | { kind: 'canvasChange'; before: PersistedCanvasSnapshot; after: PersistedCanvasSnapshot }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
@@ -87,13 +122,8 @@ export type PersistedOp =
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: PersistedLayerSnapshot[] }
   | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
-  | {
-      kind: 'layerMerge';
-      before: { location: LayerLocation; snapshot: PersistedLayerSnapshot }[];
-      after: { location: LayerLocation; snapshot: PersistedLayerSnapshot }[];
-      beforeActiveId: string;
-      afterActiveId: string;
-    };
+  | PersistedLegacyLayerMergeOp
+  | PersistedTileLayerMergeOp;
 
 export interface PersistedHistory {
   version: 3;
@@ -188,6 +218,16 @@ export class HistoryTree {
             after: { ...op.after },
           };
         case 'layerMerge':
+          if (op.format === 'tiles-v1') {
+            return {
+              ...op,
+              removed: {
+                location: { ...op.removed.location },
+                snapshot: await snapshot(op.removed.snapshot),
+              },
+              tiles: op.tiles.map((tile) => ({ ...tile })),
+            };
+          }
           return {
             ...op,
             before: await located(op.before),
@@ -373,6 +413,12 @@ export class HistoryTree {
       }
       if (op.kind === 'layerRemove') return op.snapshots.reduce((sum, snapshot) => sum + snapshotBytes(snapshot), 0);
       if (op.kind === 'layerMerge') {
+        if (op.format === 'tiles-v1') {
+          return snapshotBytes(op.removed.snapshot) + op.tiles.reduce(
+            (sum, tile) => sum + tile.before.size + tile.after.size,
+            0,
+          );
+        }
         return [...op.before, ...op.after].reduce(
           (sum, entry) => sum + snapshotBytes(entry.snapshot),
           0,

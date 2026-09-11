@@ -122,6 +122,7 @@ export class TextRenderer {
         canvas.dataset.textHeight = String(rect.height);
         if (this.cache.get(id) === item) { item.canvas = canvas; onReady(); }
       } catch (error) { if (this.cache.get(id) === item) item.error = error; }
+      finally { host.remove(); }
     })();
   }
   async ready(): Promise<void> {

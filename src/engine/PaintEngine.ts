@@ -20,14 +20,17 @@ import {
 import { checkerPattern, rectValid, type DirtyRect } from './brush';
 import {
   HistoryTree,
+  type HistoryNode,
   type LayerLocation,
+  type LegacyLayerMergeOp,
   type LocatedLayerSnapshot,
   type LayerProps,
   type LayerSnapshot,
   type Op,
+  type TileLayerMergeOp,
   type CanvasSnapshot,
 } from './history/historyTree';
-import { applyTiles, extractTiles } from './history/tilePatch';
+import { applyTiles, extractTiles, extractTilesBatched } from './history/tilePatch';
 import {
   buildFilter,
   createAdjustLayer,
@@ -180,6 +183,7 @@ export class PaintEngine {
   private persistedRevision = 0;
   private saving: Promise<void> | null = null;
   private storageTimer: ReturnType<typeof setTimeout> | null = null;
+  private mergeCompactions = new Set<Promise<void>>();
   private lastViewState: ViewState = this.view.snapshot();
 
   constructor() {
@@ -997,6 +1001,24 @@ export class PaintEngine {
         break;
       }
       case 'layerMerge': {
+        if (op.format === 'tiles-v1') {
+          const target = this.rasterById(op.targetLayerId);
+          if (dir === 'undo') {
+            if (target) {
+              await applyTiles(target, op.tiles, 'before');
+              this.bumpLayer(target.id);
+            }
+            if (!this.byId(op.removed.snapshot.id)) await this.restoreEntries([op.removed]);
+          } else {
+            this.removeLayerExact(op.removed.snapshot.id);
+            if (target) {
+              await applyTiles(target, op.tiles, 'after');
+              this.bumpLayer(target.id);
+            }
+          }
+          this.activeLayerId = dir === 'undo' ? op.beforeActiveId : op.afterActiveId;
+          break;
+        }
         const remove = dir === 'undo' ? op.after : op.before;
         const restore = dir === 'undo' ? op.before : op.after;
         for (const entry of remove) this.removeLayerExact(entry.snapshot.id);
@@ -1426,6 +1448,116 @@ export class PaintEngine {
     }));
   }
 
+  private ownsMergeCompaction(
+    owner: HistoryTree,
+    node: HistoryNode,
+    op: LegacyLayerMergeOp,
+    generation: number,
+  ): boolean {
+    return this.history === owner && this.projectGeneration === generation && node.op === op;
+  }
+
+  private historyContains(history: HistoryTree, target: HistoryNode): boolean {
+    const visit = (node: HistoryNode): boolean =>
+      node === target || node.children.some(visit);
+    return visit(history.root);
+  }
+
+  private async snapshotWithBlob(snapshot: LayerSnapshot): Promise<LayerSnapshot> {
+    const { canvas, ...rest } = snapshot;
+    return {
+      ...rest,
+      blob: snapshot.blob ?? (canvas ? await toBlobP(canvas) : undefined),
+    };
+  }
+
+  private async compressLegacyMergeFallback(
+    owner: HistoryTree,
+    node: HistoryNode,
+    op: LegacyLayerMergeOp,
+    generation: number,
+  ): Promise<void> {
+    const snapshots = [...op.before, ...op.after]
+      .map((entry) => entry.snapshot)
+      .filter((snapshot) => snapshot.canvas);
+    const encoded = await Promise.all(
+      snapshots.map(async (snapshot) => {
+        try { return { snapshot, blob: await toBlobP(snapshot.canvas!) }; }
+        catch { return null; }
+      }),
+    );
+    if (!this.ownsMergeCompaction(owner, node, op, generation) || !this.historyContains(owner, node)) return;
+    let changed = false;
+    for (const result of encoded) {
+      if (!result) continue;
+      result.snapshot.blob = result.blob;
+      result.snapshot.canvas = undefined;
+      changed = true;
+    }
+    if (changed) {
+      this.scheduleSave();
+      this.scheduleStorageRefresh();
+    }
+  }
+
+  private startMergeCompaction(
+    node: HistoryNode,
+    op: LegacyLayerMergeOp,
+    targetLayerId: string,
+    removedLayerId: string,
+  ): void {
+    const owner = this.history;
+    const generation = this.projectGeneration;
+    const beforeTarget = op.before.find((entry) => entry.snapshot.id === targetLayerId);
+    const afterTarget = op.after.find((entry) => entry.snapshot.id === targetLayerId);
+    const removed = op.before.find((entry) => entry.snapshot.id === removedLayerId);
+    const beforeCanvas = beforeTarget?.snapshot.canvas;
+    const afterCanvas = afterTarget?.snapshot.canvas;
+    if (!beforeCanvas || !afterCanvas || !removed) return;
+
+    let cancelled = false;
+    const stillCurrent = () => !cancelled && this.ownsMergeCompaction(owner, node, op, generation);
+    const task = (async () => {
+      try {
+        const [tiles, removedSnapshot] = await Promise.all([
+          extractTilesBatched(
+            beforeCanvas.getContext('2d', { willReadFrequently: true })!,
+            afterCanvas.getContext('2d', { willReadFrequently: true })!,
+            { minX: 0, minY: 0, maxX: beforeCanvas.width, maxY: beforeCanvas.height },
+            beforeCanvas.width,
+            beforeCanvas.height,
+            stillCurrent,
+          ),
+          this.snapshotWithBlob(removed.snapshot),
+        ]);
+        if (!stillCurrent() || !this.historyContains(owner, node)) return;
+        const compact: TileLayerMergeOp = {
+          kind: 'layerMerge',
+          format: 'tiles-v1',
+          targetLayerId,
+          removed: {
+            location: { ...removed.location },
+            snapshot: removedSnapshot,
+          },
+          tiles,
+          beforeActiveId: op.beforeActiveId,
+          afterActiveId: op.afterActiveId,
+        };
+        node.op = compact;
+        this.scheduleSave();
+        this.scheduleStorageRefresh();
+      } catch {
+        const mayFallback = stillCurrent();
+        cancelled = true;
+        if (mayFallback) {
+          await this.compressLegacyMergeFallback(owner, node, op, generation);
+        }
+      }
+    })();
+    this.mergeCompactions.add(task);
+    void task.finally(() => this.mergeCompactions.delete(task));
+  }
+
   private mergeTarget(layer: Layer): RasterLayer | null {
     const targetId = structuralLowerId(layer, this.rootLayerIds, this.layers);
     return targetId ? this.rasterById(targetId) : null;
@@ -1483,16 +1615,16 @@ export class PaintEngine {
       this.activeLayerId = lower.id;
       this.bumpLayer(lower.id);
       const after = this.stableLayerEntries([lower]);
-      this.history.push(
-        {
-          kind: 'layerMerge',
-          before,
-          after,
-          beforeActiveId,
-          afterActiveId: lower.id,
-        },
-        '下のレイヤーと統合',
-      );
+      const op: LegacyLayerMergeOp = {
+        kind: 'layerMerge',
+        format: 'snapshots-v1',
+        before,
+        after,
+        beforeActiveId,
+        afterActiveId: lower.id,
+      };
+      const node = this.history.push(op, '下のレイヤーと統合');
+      this.startMergeCompaction(node, op, lower.id, upper.id);
     } finally { this.busy = false; }
     this.committed();
   }
@@ -1509,16 +1641,16 @@ export class PaintEngine {
     this.activeLayerId = parent.id;
     this.bumpLayer(parent.id);
     const after = this.stableLayerEntries([parent]);
-    this.history.push(
-      {
-        kind: 'layerMerge',
-        before,
-        after,
-        beforeActiveId,
-        afterActiveId: parent.id,
-      },
-      '図形を転写',
-    );
+    const op: LegacyLayerMergeOp = {
+      kind: 'layerMerge',
+      format: 'snapshots-v1',
+      before,
+      after,
+      beforeActiveId,
+      afterActiveId: parent.id,
+    };
+    const node = this.history.push(op, '図形を転写');
+    this.startMergeCompaction(node, op, parent.id, shape.id);
     this.committed();
   }
 

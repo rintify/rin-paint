@@ -85,8 +85,13 @@ function savedProjectBytes(project: SavedProject | undefined): number {
     } else if (op.kind === 'canvasChange') {
       for (const snapshot of [...op.before.layers, ...op.after.layers]) bytes += snapshot.blob?.size ?? 0;
     } else if (op.kind === 'layerMerge') {
-      for (const entry of [...op.before, ...op.after]) {
-        bytes += entry.snapshot.blob?.size ?? 0;
+      if (op.format === 'tiles-v1') {
+        bytes += op.removed.snapshot.blob?.size ?? 0;
+        for (const tile of op.tiles) bytes += tile.before.size + tile.after.size;
+      } else {
+        for (const entry of [...op.before, ...op.after]) {
+          bytes += entry.snapshot.blob?.size ?? 0;
+        }
       }
     }
   }
