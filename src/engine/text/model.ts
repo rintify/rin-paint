@@ -1,4 +1,5 @@
-import { DEFAULT_TEXT_TOOL_SETTINGS, type TextParams, type TextStyle, type TextToolSettings } from '../../types';
+import type { TextParams, TextStyle } from '../../model/text';
+import { DEFAULT_TEXT_TOOL_SETTINGS, type TextToolSettings } from '../../tools/text/settings';
 
 export const DEFAULT_TEXT_STYLE: TextStyle = { fontId: DEFAULT_TEXT_TOOL_SETTINGS.fontId, color: '#222222', sizePt: DEFAULT_TEXT_TOOL_SETTINGS.sizePt };
 export function newText(x: number, y: number, color: string, width: number | null = null, height: number | null = null, settings: TextToolSettings = DEFAULT_TEXT_TOOL_SETTINGS): TextParams {

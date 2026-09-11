@@ -7,57 +7,17 @@ import {
   MenuItem,
   Paper,
   Select,
-  Slider,
   Stack,
   Typography,
 } from '@mui/material';
 import { useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useEngine } from '../EngineContext';
-import { TextControls } from '../TextControls';
 import { useStore } from '../../state/store';
-import { BLEND_OPTIONS, type AdjustParams, type BlendMode, type LayerMeta } from '../../model';
-import { MaskControls } from './MaskControls';
-import { ShapeControls } from './ShapeControlsPanel';
+import { BLEND_OPTIONS, type BlendMode, type LayerMeta } from '../../model';
+import { layerTypeHandler } from '../../engine/layer-types/registry';
+import { CommitSlider } from './CommitSlider';
+import { layerControlsPanel } from './layerControls';
 import { MultiParameterControls } from './MultiParameterControls';
-
-function CommitSlider({
-  value,
-  min,
-  max,
-  onPreview,
-  onCommit,
-}: {
-  value: number | null;
-  min: number;
-  max: number;
-  onPreview: (v: number) => void;
-  onCommit: (before: number | null, after: number) => void;
-}) {
-  const before = useRef<number | null | undefined>(undefined);
-  const latest = useRef(value ?? 0);
-  if (value !== null) latest.current = value;
-  const finish = () => {
-    if (before.current !== undefined && before.current !== latest.current) {
-      onCommit(before.current, latest.current);
-    }
-    before.current = undefined;
-  };
-  return (
-    <Slider
-      min={min}
-      max={max}
-      value={value ?? 0}
-      className={value === null ? 'mixed-slider' : undefined}
-      onChange={(_, v) => {
-        if (before.current === undefined) before.current = value;
-        latest.current = v as number;
-        onPreview(v as number);
-      }}
-      onChangeCommitted={finish}
-      sx={{ flex: 1 }}
-    />
-  );
-}
 
 function OpacityControl({
   value,
@@ -85,17 +45,12 @@ function OpacityControl({
   );
 }
 
-const ADJUST_SLIDERS: { key: keyof AdjustParams; label: string; min: number; max: number }[] = [
-  { key: 'brightness', label: '明度', min: 0, max: 200 },
-  { key: 'contrast', label: 'コントラスト', min: 0, max: 200 },
-  { key: 'hue', label: '色相', min: -180, max: 180 },
-  { key: 'saturation', label: '彩度', min: 0, max: 200 },
-];
-
 function LayerControls({ meta }: { meta: LayerMeta }) {
   const engine = useEngine();
   const multi = useStore(s => s.multiSelectMode);
   if (multi) return <MultiLayerControls />;
+  const handler = layerTypeHandler(meta.type);
+  const TypeControls = layerControlsPanel(meta.type);
   const pct = Math.round(meta.opacity * 100);
   return (
     <Stack spacing={1}>
@@ -110,7 +65,7 @@ function LayerControls({ meta }: { meta: LayerMeta }) {
             '不透明度',
           )}
       />
-      {meta.type !== 'adjust' && (
+      {handler.supportsBlend && (
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
           <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>
             合成
@@ -133,38 +88,7 @@ function LayerControls({ meta }: { meta: LayerMeta }) {
           </FormControl>
         </Stack>
       )}
-      {meta.type === 'adjust' &&
-        ADJUST_SLIDERS.map((p) => (
-          <Stack direction="row" spacing={1} key={p.key} sx={{ alignItems: 'center' }}>
-            <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>
-              {p.label}
-            </Typography>
-            <CommitSlider
-              value={meta.params![p.key]}
-              min={p.min}
-              max={p.max}
-              onPreview={(v) =>
-                engine.previewLayerProps(meta.id, { params: { ...meta.params!, [p.key]: v } })}
-              onCommit={(b, a) =>
-                engine.commitLayerProps(
-                  meta.id,
-                  { params: { ...meta.params!, [p.key]: b ?? meta.params![p.key] } },
-                  { params: { ...meta.params!, [p.key]: a } },
-                  '色調補正',
-                )}
-            />
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              sx={{ width: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flex: 'none' }}
-            >
-              {meta.params![p.key]}
-            </Typography>
-          </Stack>
-        ))}
-      {meta.type === 'adjust' && <MaskControls meta={meta} />}
-      {meta.type === 'shape' && <ShapeControls meta={meta} />}
-      {meta.type === 'text' && <TextControls meta={meta} />}
+      {TypeControls && <TypeControls meta={meta} />}
     </Stack>
   );
 }

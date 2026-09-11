@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import type { ToolKind } from '../tools/registry';
 import { defaultTools, useStore } from './store';
 
 const original = useStore.getState();
@@ -8,7 +9,7 @@ afterEach(() => useStore.setState(original, true));
 describe('tool management', () => {
   it('reorders tools and leaves no active tool when the active one is removed', () => {
     const tools = defaultTools();
-    useStore.setState({ ...original, tools, activeToolId: tools[0].id, tool: tools[0].kind });
+    useStore.setState({ ...original, tools, activeToolId: tools[0].id, tool: tools[0].kind as ToolKind });
     useStore.getState().reorderTools(0, 1);
     expect(useStore.getState().tools.map((tool) => tool.id)).toEqual([tools[1].id, tools[0].id]);
     useStore.getState().removeTool(tools[0].id);
@@ -17,7 +18,7 @@ describe('tool management', () => {
 
   it('allows deleting the final tool', () => {
     const [tool] = defaultTools();
-    useStore.setState({ ...original, tools: [tool], activeToolId: tool.id, tool: tool.kind });
+    useStore.setState({ ...original, tools: [tool], activeToolId: tool.id, tool: tool.kind as ToolKind });
     useStore.getState().removeTool(tool.id);
     expect(useStore.getState().tools).toHaveLength(0);
   });
@@ -26,8 +27,8 @@ describe('tool management', () => {
     useStore.setState({ ...original, tools: defaultTools() });
     useStore.getState().addTool('text');
     const id = useStore.getState().activeToolId;
-    useStore.getState().setTextToolSettings({ fontId: 'serif', sizePt: 32, direction: 'vertical', lineHeight: 2 });
-    expect(useStore.getState().tools.find(tool => tool.id === id)?.textSettings).toEqual({
+    useStore.getState().updateActiveToolSettings({ fontId: 'serif', sizePt: 32, direction: 'vertical', lineHeight: 2 });
+    expect(useStore.getState().tools.find(tool => tool.id === id)?.settings).toEqual({
       fontId: 'serif', sizePt: 32, direction: 'vertical', lineHeight: 2,
     });
   });

@@ -5,14 +5,14 @@ import {
   type LayerMeta,
   type ShapeParams,
   type StrokePoint,
-  type ToolKind,
   type TextParams,
   type CanvasSpec,
   type ProjectFont,
-  type PenDetailSettings,
-  type FillToolSettings,
-  type ShapePaintMode,
 } from '../model';
+import { createTool, isToolKind, type ToolKind } from '../tools/registry';
+import type { ActiveToolSettings, Tool, ToolSession } from '../tools/types';
+import { LassoTool } from '../tools/lasso/tool';
+import { PolygonTool } from '../tools/polygon/tool';
 import { type DirtyRect } from './brush';
 import {
   type HistoryTree,
@@ -22,9 +22,6 @@ import {
 } from './history/historyTree';
 import { saveTimelapseEnabled, type SavedPage } from './persistence/db';
 import { TimelapseRecorder } from './timelapse/recorder';
-import { LassoTool } from './tools/lasso';
-import { createTools } from './tools/registry';
-import type { ActiveToolSettings, Tool, ToolContext, ToolSession } from './tools/types';
 import { ViewController, type ViewState } from './view';
 import { Compositor } from './core/Compositor';
 import { LayerService } from './core/LayerService';
@@ -38,7 +35,7 @@ import { ProjectService } from './core/ProjectService';
 import { ClipboardService } from './core/ClipboardService';
 import { FillService } from './core/FillService';
 import { PolygonSplitService } from './core/PolygonSplitService';
-import { PolygonTool } from './tools/polygon';
+import { layerTypeProps } from './layer-types/registry';
 import type { RasterLayer } from './layers';
 import type { LayerParameterValue } from './layerParameters';
 
@@ -63,10 +60,8 @@ export class PaintEngine {
 
   private recorder = new TimelapseRecorder(this, () => this.scheduleStorageRefresh());
 
-  private readonly toolCtx: ToolContext = this.createToolContext();
-  private tools: Record<ToolKind, Tool> = createTools(this.toolCtx);
-  readonly lasso = this.tools.lasso as LassoTool;
-  readonly polygon = this.tools.polygon as PolygonTool;
+  /** 遅延生成キャッシュ。種類を増やしても起動時コストは増えない。 */
+  private readonly toolCache = new Map<ToolKind, Tool>();
 
   private busy = false;
   readonly view = new ViewController(this.artboard);
@@ -83,64 +78,17 @@ export class PaintEngine {
   get history(): HistoryTree { return this.historyService.history; }
   set history(value: HistoryTree) { this.historyService.history = value; }
 
-  private createToolContext(): ToolContext {
-    const eng = this;
-    return {
-      get artboard() { return eng.artboard; },
-      uiScale: () => eng.uiScale(),
-      settings: (): ActiveToolSettings | null => {
-        const st = useStore.getState();
-        if (!st.tool || !st.activeToolId) return null;
-        const inst = st.tools.find((t) => t.id === st.activeToolId);
-        return {
-          kind: st.tool,
-          color: st.penColor,
-          size: st.penSize,
-          penSettings: inst?.penSettings,
-          textSettings: inst?.textSettings,
-          fillSettings: inst?.fillSettings,
-          shapeSettings: inst?.shapeSettings,
-          polygonSplitSettings: inst?.polygonSplitSettings,
-        };
-      },
-      pushColor: (color) => useStore.getState().pushColor(color),
-      activeRaster: () => eng.activeRaster(),
-      selectedRasters: () => eng.selectedRasters(),
-      getActiveLayerId: () => eng.getActiveLayerId(),
-      captureBefore: (layer) => eng.captureBefore(layer),
-      restoreBefore: (layer) => eng.restoreBefore(layer),
-      commitRasterEdit: (layer, rect, label) => eng.commitRasterEdit(layer, rect, label),
-      commitRasterBatch: (entries, label, objects) => eng.commitRasterBatch(entries, label, objects),
-      addShapeLayer: (shape) => eng.addShapeLayer(shape),
-      addTextLayer: (text) => eng.addTextLayer(text),
-      textAt: (x, y) => eng.textAt(x, y),
-      editTextLayer: (id) => eng.editTextLayer(id),
-      requestRender: () => eng.requestRender(),
-      bumpLayer: (id) => eng.bumpLayer(id),
-      syncStore: () => eng.syncStore(),
-      scheduleSave: () => eng.scheduleSave(),
-      hasSelectedObjects: () => eng.hasSelectedObjects(),
-      selectedObjectsInRect: (rect, polygon) => eng.selectedObjectsInRect(rect, polygon),
-      previewObjectGroup: (entries, source, target) => eng.previewObjectGroup(entries, source, target),
-      commitObjectGroup: (entries) => eng.commitObjectGroup(entries),
-      restoreObjectGroup: (entries) => eng.restoreObjectGroup(entries),
-      setSelectionState: (state) => {
-        useStore.getState().set({
-          selectionActive: state.active,
-          freeTransform: state.freeTransform,
-        });
-      },
-      setPolygonDraftState: (state) => {
-        useStore.getState().set({
-          polygonDraftActive: state.active,
-          polygonDraftPointCount: state.pointCount,
-        });
-      },
-      notify: (message) => useStore.getState().set({ toolNotice: message }),
-      fillAt: (point) => { void eng.fill.start(point); },
-      splitPolygons: (a, b) => { void eng.polygonSplit.split(a, b); },
-    };
+  private toolInstance(kind: ToolKind): Tool {
+    let tool = this.toolCache.get(kind);
+    if (!tool) {
+      tool = createTool(kind, this);
+      this.toolCache.set(kind, tool);
+    }
+    return tool;
   }
+
+  get lasso(): LassoTool { return this.toolInstance('lasso') as LassoTool; }
+  get polygon(): PolygonTool { return this.toolInstance('polygon') as PolygonTool; }
 
   /** @internal */ activeSession(): ToolSession | null {
     return this.activeTool().session ?? null;
@@ -201,7 +149,7 @@ export class PaintEngine {
   /** @internal */ getActiveLayerId(): string { return this.layerService.activeLayerId; }
   /** @internal */ activeTool(): Tool {
     const kind = useStore.getState().tool;
-    return kind ? this.tools[kind] : this.nullTool;
+    return kind && isToolKind(kind) ? this.toolInstance(kind) : this.nullTool;
   }
   /** @internal */ drawLoupeIfAny(ctx: CanvasRenderingContext2D): void { this.input.drawLoupeIfAny(ctx); }
 
@@ -348,24 +296,39 @@ export class PaintEngine {
     this.scheduleSave();
   }
 
-  setPenDetail(key: keyof PenDetailSettings, value: number): void {
-    useStore.getState().setPenDetail(key, value);
+  activeToolSettings(): ActiveToolSettings | null {
+    const st = useStore.getState();
+    if (!st.tool || !st.activeToolId) return null;
+    const inst = st.tools.find((t) => t.id === st.activeToolId);
+    return {
+      kind: st.tool,
+      color: st.penColor,
+      size: st.penSize,
+      settings: inst?.settings,
+    };
+  }
+
+  updateActiveToolSettings(patch: Record<string, unknown>): void {
+    useStore.getState().updateActiveToolSettings(patch);
     this.scheduleSave();
   }
 
-  setFillSettings(patch: Partial<FillToolSettings>): void {
-    useStore.getState().setFillSettings(patch);
-    this.scheduleSave();
+  pushColor(color: string): void {
+    useStore.getState().pushColor(color);
   }
 
-  setShapePaintMode(paintMode: ShapePaintMode): void {
-    useStore.getState().setShapePaintMode(paintMode);
-    this.scheduleSave();
+  setSelectionState(state: { active: boolean; freeTransform: boolean }): void {
+    useStore.getState().set({
+      selectionActive: state.active,
+      freeTransform: state.freeTransform,
+    });
   }
 
-  setPolygonSplitWidth(width: number): void {
-    useStore.getState().setPolygonSplitWidth(width);
-    this.scheduleSave();
+  setPolygonDraftState(state: { active: boolean; pointCount: number }): void {
+    useStore.getState().set({
+      polygonDraftActive: state.active,
+      polygonDraftPointCount: state.pointCount,
+    });
   }
 
   polygonCommit(): void { this.polygon.commit(); }
@@ -561,6 +524,7 @@ export class PaintEngine {
   syncStore(): void {
     const ls = this.layerService;
     const metas: LayerMeta[] = ls.layers.map((l) => ({
+      ...layerTypeProps(l),
       id: l.id,
       type: l.type,
       name: l.name,
@@ -569,10 +533,6 @@ export class PaintEngine {
       visible: l.visible,
       parentId: l.parentId,
       childIds: [...l.childIds],
-      params: l.type === 'adjust' ? { ...l.params } : undefined,
-      maskLayerIds: l.type === 'adjust' ? [...l.maskLayerIds] : undefined,
-      shape: l.type === 'shape' ? structuredClone(l.shape) : undefined,
-      text: l.type === 'text' ? structuredClone(l.text) : undefined,
       version: ls.versions.get(l.id) ?? 0,
       canMergeDown: ls.canMergeLayerDown(l.id),
       canRemove: ls.canRemoveLayer(l.id),

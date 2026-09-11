@@ -1,4 +1,5 @@
 import { MAX_ART_SIZE, MIN_ART_SIZE, type CanvasSpec, type ShapeParams } from '../types';
+import { scaleShapeBy } from './shapes';
 
 export function canvasPixels(spec: CanvasSpec): { width: number; height: number } {
   return { width: Math.round(spec.widthMm * spec.ppi / 25.4), height: Math.round(spec.heightMm * spec.ppi / 25.4) };
@@ -10,12 +11,7 @@ export function validateCanvasSpec(spec: CanvasSpec): string | null {
     ? `各辺が${MIN_ART_SIZE}〜${MAX_ART_SIZE}pxになるサイズ・ppiを指定してください` : null;
 }
 export function scaleShape(shape: ShapeParams, factor: number): ShapeParams {
-  switch (shape.kind) {
-    case 'line': return { ...shape, x1: shape.x1 * factor, y1: shape.y1 * factor, x2: shape.x2 * factor, y2: shape.y2 * factor, strokeWidth: shape.strokeWidth * factor };
-    case 'rect': return { ...shape, x: shape.x * factor, y: shape.y * factor, width: shape.width * factor, height: shape.height * factor, strokeWidth: shape.strokeWidth * factor };
-    case 'ellipse': return { ...shape, cx: shape.cx * factor, cy: shape.cy * factor, rx: shape.rx * factor, ry: shape.ry * factor, strokeWidth: shape.strokeWidth * factor };
-    case 'polygon': return { ...shape, cx: shape.cx * factor, cy: shape.cy * factor, points: shape.points.map(point => ({ x: point.x * factor, y: point.y * factor })), strokeWidth: shape.strokeWidth * factor };
-  }
+  return scaleShapeBy(shape, factor);
 }
 
 /** PNG pHYs (pixels/metre). Replace the browser's default 96dpi chunk. */

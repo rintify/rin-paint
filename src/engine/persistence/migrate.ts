@@ -1,12 +1,6 @@
-import {
-  normalizeFillToolSettings,
-  normalizePenDetailSettings,
-  normalizePolygonSplitToolSettings,
-  normalizeShapeToolSettings,
-  normalizeTextToolSettings,
-} from '../../model';
 import { isSavedPage, isSavedProjectMeta } from './schema';
 import { HISTORY_VERSION, PROJECT_VERSION } from './version';
+import { normalizeToolInstance } from '../../tools/registry';
 import type { LayerClipboard, SavedPage, SavedProjectMeta } from './db';
 
 type MutableRecord = Record<string, unknown>;
@@ -70,19 +64,9 @@ export function migrateProjectMeta(value: unknown): SavedProjectMeta {
   }
   value.version = PROJECT_VERSION;
   if (Array.isArray(value.tools)) {
-    value.tools = value.tools.map(tool => {
-      if (!isRecord(tool)) return tool;
-      if (tool.kind === 'pen') tool.penSettings = normalizePenDetailSettings(tool.penSettings);
-      if (tool.kind === 'text') tool.textSettings = normalizeTextToolSettings(tool.textSettings);
-      if (tool.kind === 'fill') tool.fillSettings = normalizeFillToolSettings(tool.fillSettings);
-      if (tool.kind === 'rect' || tool.kind === 'ellipse' || tool.kind === 'polygon') {
-        tool.shapeSettings = normalizeShapeToolSettings(tool.shapeSettings);
-      }
-      if (tool.kind === 'polygonSplit') {
-        tool.polygonSplitSettings = normalizePolygonSplitToolSettings(tool.polygonSplitSettings);
-      }
-      return tool;
-    });
+    value.tools = value.tools
+      .map(tool => normalizeToolInstance(tool))
+      .filter((tool): tool is NonNullable<typeof tool> => !!tool);
   }
   if (!isSavedProjectMeta(value)) throw new Error('プロジェクト設定をv6へ移行できませんでした');
   return value;

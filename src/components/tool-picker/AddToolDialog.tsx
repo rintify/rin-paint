@@ -15,24 +15,31 @@ import {
   Typography,
 } from '@mui/material';
 import { useMemo, useState } from 'react';
-import { TOOL_KIND_LABELS, type ToolKind } from '../../types';
-import { useEngine } from '../EngineContext';
 import {
-  ROOT_KINDS,
-  SHAPE_KINDS,
-  TOOL_DESCRIPTIONS,
-  TOOL_ICONS,
-  toolSearchHaystack,
-} from './toolCatalog';
+  getToolDescriptor,
+  TOOL_KINDS,
+  TOOL_REGISTRY,
+  type ToolKind,
+} from '../../tools/registry';
+import { useEngine } from '../EngineContext';
+
+const ROOT_KINDS = TOOL_KINDS.filter((kind) => TOOL_REGISTRY[kind].category === 'root');
+const SHAPE_KINDS = TOOL_KINDS.filter((kind) => TOOL_REGISTRY[kind].category === 'shape');
+
+function toolSearchHaystack(kind: ToolKind): string {
+  const d = TOOL_REGISTRY[kind];
+  return `${d.label} ${d.description} ${d.category === 'shape' ? '図形' : ''}`;
+}
 
 function ToolCatalogCard({ kind, path, onClick }: { kind: ToolKind; path?: string; onClick: () => void }) {
+  const d = TOOL_REGISTRY[kind];
   return (
     <ButtonBase className="tool-catalog-card" onClick={onClick}>
-      <Box className="tool-catalog-icon">{TOOL_ICONS[kind]}</Box>
+      <Box className="tool-catalog-icon">{d.icon}</Box>
       <Box sx={{ minWidth: 0, textAlign: 'left' }}>
         {path && <Typography variant="caption" color="text.secondary" noWrap>{path}</Typography>}
-        <Typography variant="body2" sx={{ fontWeight: 650 }}>{TOOL_KIND_LABELS[kind]}</Typography>
-        <Typography variant="caption" color="text.secondary" noWrap>{TOOL_DESCRIPTIONS[kind]}</Typography>
+        <Typography variant="body2" sx={{ fontWeight: 650 }}>{d.label}</Typography>
+        <Typography variant="caption" color="text.secondary" noWrap>{d.description}</Typography>
       </Box>
     </ButtonBase>
   );
@@ -98,7 +105,7 @@ export function AddToolDialog({ onClose }: { onClose: () => void }) {
           <Box className="tool-catalog-grid">
             {!normalized && !shapePage && (
               <ButtonBase className="tool-catalog-card" onClick={() => setShapePage(true)}>
-                <Box className="tool-catalog-icon">{TOOL_ICONS.rect}</Box>
+                <Box className="tool-catalog-icon">{getToolDescriptor('rect')?.icon}</Box>
                 <Box sx={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
                   <Typography variant="body2" sx={{ fontWeight: 650 }}>図形</Typography>
                   <Typography variant="caption" color="text.secondary">直線・四角形・楕円・多角形</Typography>

@@ -1,9 +1,10 @@
 import { useStore } from '../../state/store';
 import {
-  DEFAULT_ADJUST,
+  type LayerType,
   type ShapeParams,
   type TextParams,
 } from '../../model';
+import { getToolDescriptor } from '../../tools/registry';
 import {
   type LayerLocation,
   type LocatedLayerSnapshot,
@@ -12,6 +13,15 @@ import {
   type TileLayerMergeOp,
 } from '../history/historyTree';
 import { extractTiles } from '../history/tilePatch';
+import {
+  buildLayerSnapshot,
+  layerHandler,
+  layerTypeHandler,
+  layerTypeProps,
+  restoreLayerFrom,
+} from '../layer-types/registry';
+import { shapeLayerName } from '../layer-types/shape';
+import { textFrame } from '../layer-types/text';
 import {
   createAdjustLayer,
   createRasterLayer,
@@ -28,22 +38,23 @@ import type { PaintEngine } from '../PaintEngine';
 import { cloneShape, polygonFromWorldPoints, shapeCorners } from '../shapes';
 import { layerParameterDescriptors, type LayerParameterValue } from '../layerParameters';
 
-function toBlobP(c: HTMLCanvasElement): Promise<Blob> {
-  return new Promise((resolve, reject) =>
-    c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png'),
-  );
-}
-
 /** Owns layer tree state and layer CRUD / tree mutation helpers. */
 export class LayerService {
   layers: Layer[] = [];
   rootLayerIds: string[] = [];
   activeLayerId = '';
   versions = new Map<string, number>();
-  layerCounter = 0;
-  adjustCounter = 0;
+  /** 種別ごとの自動命名カウンタ (`レイヤー 3` の連番) */
+  nameCounters = new Map<LayerType, number>();
 
   constructor(private engine: PaintEngine) {}
+
+  /** 種別ごとの連番を進めて既定のレイヤー名を作る */
+  nextLayerName(type: LayerType): string {
+    const index = (this.nameCounters.get(type) ?? 0) + 1;
+    this.nameCounters.set(type, index);
+    return layerTypeHandler(type).defaultName(index);
+  }
 
   byId(id: string): Layer | null {
     return this.layers.find((l) => l.id === id) ?? null;
@@ -105,65 +116,17 @@ export class LayerService {
   }
 
   snapshotLayer(l: Layer, withContent: boolean, keepCanvas = false): LayerSnapshot {
-    const snap: LayerSnapshot = {
-      id: l.id,
-      type: l.type,
-      name: l.name,
-      opacity: l.opacity,
-      blend: l.blend,
-      visible: l.visible,
-      parentId: l.parentId,
-      childIds: [...l.childIds],
-    };
-    if (l.type === 'adjust') {
-      snap.params = { ...l.params };
-      snap.maskLayerIds = [...l.maskLayerIds];
-    } else if (l.type === 'shape') {
-      snap.shape = cloneShape(l.shape);
-    } else if (l.type === 'text') {
-      snap.text = structuredClone(l.text);
-    } else if (withContent) {
-      const copy = makeCanvas(this.engine.artboard.w, this.engine.artboard.h);
-      copy.getContext('2d')!.drawImage(l.canvas, 0, 0);
-      snap.canvas = copy;
-      if (!keepCanvas) {
-        void toBlobP(copy).then((b) => {
-          snap.blob = b;
-          snap.canvas = undefined;
-          this.engine.scheduleStorageRefresh();
-        });
-      }
-    }
-    return snap;
+    return buildLayerSnapshot(l, {
+      artboard: this.engine.artboard,
+      withContent,
+      keepCanvas,
+      onEncoded: () => this.engine.scheduleStorageRefresh(),
+    });
   }
 
   async restoreLayer(snap: LayerSnapshot, location?: LayerLocation): Promise<void> {
-    let layer: Layer;
-    if (snap.type === 'raster') {
-      const l = createRasterLayer(snap.name, this.engine.artboard.w, this.engine.artboard.h, snap.id);
-      if (snap.canvas) {
-        l.ctx.drawImage(snap.canvas, 0, 0);
-      } else if (snap.blob) {
-        const bmp = await createImageBitmap(snap.blob);
-        l.ctx.drawImage(bmp, 0, 0);
-        bmp.close();
-      }
-      layer = l;
-    } else if (snap.type === 'adjust') {
-      const l = createAdjustLayer(snap.name, snap.id);
-      l.params = { ...(snap.params ?? DEFAULT_ADJUST) };
-      l.maskLayerIds = [...(snap.maskLayerIds ?? [])];
-      layer = l;
-    } else if (snap.type === 'text') {
-      layer = createTextLayer(snap.name, snap.text!, snap.id);
-    } else {
-      layer = createShapeLayer(snap.name, cloneShape(snap.shape!), snap.id);
-    }
-    layer.opacity = snap.opacity;
-    layer.blend = snap.blend;
-    layer.visible = snap.visible;
-    layer.parentId = snap.parentId;
-    layer.childIds = [...snap.childIds];
+    const layer = await restoreLayerFrom(snap, { artboard: this.engine.artboard });
+    if (!layer) return;
     this.layers.push(layer);
     if (location) this.insertAt(layer.id, location);
     this.bumpLayer(layer.id);
@@ -201,19 +164,25 @@ export class LayerService {
     if (p.opacity !== undefined) l.opacity = p.opacity;
     if (p.blend !== undefined) l.blend = p.blend;
     if (p.visible !== undefined) l.visible = p.visible;
-    if (p.params !== undefined && l.type === 'adjust') l.params = { ...p.params };
-    if (p.maskLayerIds !== undefined && l.type === 'adjust') l.maskLayerIds = [...p.maskLayerIds];
-    if (p.shape !== undefined && l.type === 'shape') l.shape = cloneShape(p.shape);
-    if (p.text !== undefined && l.type === 'text') l.text = structuredClone(p.text);
+    layerHandler(l).applyProps(l, p);
+  }
+
+  /** 削除されるレイヤーを参照しているマスク設定を外す */
+  maskReferenceOps(removedIds: Set<string>): { layerId: string; before: string[]; after: string[] }[] {
+    return this.layers.flatMap(layer => {
+      const before = layerTypeProps(layer).maskLayerIds;
+      if (!before || removedIds.has(layer.id) || !before.some(id => removedIds.has(id))) return [];
+      return [{ layerId: layer.id, before, after: before.filter(id => !removedIds.has(id)) }];
+    });
   }
 
   detachMaskReferences(removedIds: Set<string>): { layerId: string; before: string[]; after: string[] }[] {
-    return this.layers.flatMap(layer => {
-      if (layer.type !== 'adjust' || removedIds.has(layer.id) || !layer.maskLayerIds.some(id => removedIds.has(id))) return [];
-      const before = [...layer.maskLayerIds], after = before.filter(id => !removedIds.has(id));
-      layer.maskLayerIds = after;
-      return [{ layerId: layer.id, before, after }];
-    });
+    const changes = this.maskReferenceOps(removedIds);
+    for (const change of changes) {
+      const layer = this.byId(change.layerId);
+      if (layer) this.assignProps(layer, { maskLayerIds: change.after });
+    }
+    return changes;
   }
 
   mergeTarget(layer: Layer): RasterLayer | null {
@@ -251,7 +220,7 @@ export class LayerService {
 
   getLayerCanvas(id: string): HTMLCanvasElement | null {
     const l = this.byId(id);
-    return l?.type === 'text' ? this.engine.compositor.textRenderer.get(id) : l?.type === 'raster' ? l.canvas : null;
+    return l ? layerHandler(l).contentCanvas(l, this.engine.compositor.measureEnv()) : null;
   }
 
   getShape(id: string): ShapeParams | null {
@@ -277,7 +246,7 @@ export class LayerService {
 
   hasSelectedObjects(): boolean {
     const ids = new Set(useStore.getState().selectedLayerIds);
-    return this.layers.some(layer => ids.has(layer.id) && (layer.type === 'shape' || layer.type === 'text'));
+    return this.layers.some(layer => ids.has(layer.id) && !!layerHandler(layer).objectTransform);
   }
 
   finishFloating(): void {
@@ -338,14 +307,12 @@ export class LayerService {
         const child = walk(layer.childIds);
         if (child) return child;
         if (layer.type !== 'text' || !layer.visible) continue;
-        const canvas = this.engine.compositor.textRenderer.get(id);
-        const w = layer.text.width ?? Math.max(24, Number(canvas?.dataset.textWidth ?? 100));
-        const h = layer.text.height ?? Math.max(24, Number(canvas?.dataset.textHeight ?? 60));
-        const cx = layer.text.x + w / 2, cy = layer.text.y + h / 2, angle = -(layer.text.rotation ?? 0);
+        const frame = textFrame(layer, this.engine.compositor.textRenderer);
+        const cx = frame.x + frame.w / 2, cy = frame.y + frame.h / 2, angle = -(layer.text.rotation ?? 0);
         const dx = x - cx, dy = y - cy;
         const localX = dx * Math.cos(angle) - dy * Math.sin(angle) + cx;
         const localY = dx * Math.sin(angle) + dy * Math.cos(angle) + cy;
-        if (localX >= layer.text.x && localY >= layer.text.y && localX <= layer.text.x + w && localY <= layer.text.y + h) return id;
+        if (localX >= frame.x && localY >= frame.y && localX <= frame.x + frame.w && localY <= frame.y + frame.h) return id;
       }
       return null;
     };
@@ -365,7 +332,7 @@ export class LayerService {
     const location = activeLocation
       ? { ...activeLocation, index: activeLocation.index + 1 }
       : { parentId: null, index: this.rootLayerIds.length };
-    const layer = createRasterLayer(`レイヤー ${++this.layerCounter}`, this.engine.artboard.w, this.engine.artboard.h);
+    const layer = createRasterLayer(this.nextLayerName('raster'), this.engine.artboard.w, this.engine.artboard.h);
     this.layers.push(layer);
     this.insertAt(layer.id, location);
     this.activeLayerId = layer.id;
@@ -383,7 +350,7 @@ export class LayerService {
     const location = activeLocation
       ? { ...activeLocation, index: activeLocation.index + 1 }
       : { parentId: null, index: this.rootLayerIds.length };
-    const layer = createAdjustLayer(`色調補正 ${++this.adjustCounter}`);
+    const layer = createAdjustLayer(this.nextLayerName('adjust'));
     this.layers.push(layer);
     this.insertAt(layer.id, location);
     this.activeLayerId = layer.id;
@@ -399,8 +366,7 @@ export class LayerService {
     const parentId = closestRasterOrRoot(this.layers, this.activeLayerId);
     const siblings = this.siblingIds(parentId);
     const location: LayerLocation = { parentId, index: siblings.length };
-    const names = { line: '直線', rect: '四角形', ellipse: '楕円', polygon: '多角形' } as const;
-    const layer = createShapeLayer(names[shape.kind], shape);
+    const layer = createShapeLayer(shapeLayerName(shape), shape);
     this.layers.push(layer);
     this.insertAt(layer.id, location);
     this.activeLayerId = layer.id;
@@ -432,13 +398,12 @@ export class LayerService {
     const removedRasterCount = this.layers.filter((l) => removeIds.has(l.id) && l.type === 'raster').length;
     if (rasterCount - removedRasterCount < 1) return;
     const snapshots = ids.map((layerId) => this.snapshotLayer(this.byId(layerId)!, true));
-    const maskOps = this.layers.flatMap(layer => {
-      if (layer.type !== 'adjust' || removeIds.has(layer.id) || !layer.maskLayerIds.some(maskId => removeIds.has(maskId))) return [];
-      const after = layer.maskLayerIds.filter(maskId => !removeIds.has(maskId));
-      const op = { kind: 'layerProps' as const, layerId: layer.id, before: { maskLayerIds: [...layer.maskLayerIds] }, after: { maskLayerIds: after } };
-      layer.maskLayerIds = after;
-      return [op];
-    });
+    const maskOps = this.detachMaskReferences(removeIds).map(change => ({
+      kind: 'layerProps' as const,
+      layerId: change.layerId,
+      before: { maskLayerIds: change.before },
+      after: { maskLayerIds: change.after },
+    }));
     this.removeLayerInternal(id);
     const removeOp = { kind: 'layerRemove' as const, location, snapshots };
     this.engine.history.push(maskOps.length ? { kind: 'batch', ops: [removeOp, ...maskOps] } : removeOp, 'レイヤー削除');
@@ -603,7 +568,7 @@ export class LayerService {
     const selected = new Set(st.selectedLayerIds.length ? st.selectedLayerIds : [this.activeLayerId]);
     selected.add(id);
     this.activeLayerId = id;
-    if (st.tool !== 'lasso' && st.tool !== 'fill' && st.tool !== 'polygonSplit') st.deactivateTool();
+    if (!getToolDescriptor(st.tool ?? '')?.capabilities.multiSelect) st.deactivateTool();
     st.set({ multiSelectMode: true, selectedLayerIds: [...selected] });
     this.engine.syncStore();
   }
@@ -622,9 +587,7 @@ export class LayerService {
       if (!layer) return [];
       const current: LayerProps = {
         opacity: layer.opacity, visible: layer.visible, blend: layer.blend,
-        ...(layer.type === 'adjust' ? { params: { ...layer.params }, maskLayerIds: [...layer.maskLayerIds] } : {}),
-        ...(layer.type === 'shape' ? { shape: cloneShape(layer.shape) } : {}),
-        ...(layer.type === 'text' ? { text: structuredClone(layer.text) } : {}),
+        ...layerTypeProps(layer),
       };
       const op = { kind: 'layerProps' as const, layerId: id, before: { ...current, ...before }, after };
       this.assignProps(layer, after);
@@ -673,9 +636,7 @@ export class LayerService {
       if (!descriptor) return [];
       const before: LayerProps = {
         opacity: layer.opacity, visible: layer.visible, blend: layer.blend,
-        ...(layer.type === 'adjust' ? { params: { ...layer.params } } : {}),
-        ...(layer.type === 'shape' ? { shape: cloneShape(layer.shape) } : {}),
-        ...(layer.type === 'text' ? { text: structuredClone(layer.text) } : {}),
+        ...layerTypeProps(layer),
       };
       const after = descriptor.write(layer, value);
       this.assignProps(layer, after);
@@ -700,8 +661,10 @@ export class LayerService {
   }
 
   resetCountersFromLayers(): void {
-    this.layerCounter = this.layers.filter(layer => layer.type === 'raster').length;
-    this.adjustCounter = this.layers.filter(layer => layer.type === 'adjust').length;
+    this.nameCounters = new Map();
+    for (const layer of this.layers) {
+      this.nameCounters.set(layer.type, (this.nameCounters.get(layer.type) ?? 0) + 1);
+    }
   }
 
   replaceTree(layers: Layer[], rootLayerIds: string[], activeLayerId: string): void {

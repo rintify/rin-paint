@@ -1,5 +1,6 @@
 import { useStore } from '../../state/store';
 import type { ShapeParams, ShapePoint, StrokePoint } from '../../model';
+import { normalizePolygonSplitToolSettings } from '../../tools/polygonSplit/settings';
 import type { Pair, Polygon } from 'polygon-clipping';
 import type {
   LayerReplaceOp,
@@ -12,8 +13,8 @@ import {
   cloneShape,
   polygonArea,
   polygonFromWorldPoints,
-  shapeCorners,
-  shapeWorldPoints,
+  shapePaintMode,
+  shapePoints,
 } from '../shapes';
 import type { PaintEngine } from '../PaintEngine';
 
@@ -29,10 +30,6 @@ function selectionSnapshot(engine: PaintEngine): LayerSelectionSnapshot {
     selectedLayerIds: [...state.selectedLayerIds],
     multiSelectMode: state.multiSelectMode,
   };
-}
-
-function shapePoints(shape: TargetShape): ShapePoint[] {
-  return shape.kind === 'rect' ? shapeCorners(shape) : shapeWorldPoints(shape);
 }
 
 function cleanRing(ring: number[][]): ShapePoint[] {
@@ -105,7 +102,7 @@ export class PolygonSplitService {
     const dx = b.x - a.x, dy = b.y - a.y, length = Math.hypot(dx, dy);
     if (length < .01) return;
     const activeTool = state.tools.find(tool => tool.id === state.activeToolId);
-    const width = Math.max(0, Math.min(128, activeTool?.polygonSplitSettings?.width ?? 0));
+    const width = Math.max(0, Math.min(128, normalizePolygonSplitToolSettings(activeTool?.settings).width));
     eng.setBusy(true);
     try {
       const clipping = await import('polygon-clipping');
@@ -179,7 +176,7 @@ export class PolygonSplitService {
         producedByOriginal.set(result.id, []);
         continue;
       }
-      const style = { color: layer.shape.color, strokeWidth: layer.shape.strokeWidth, paintMode: layer.shape.kind === 'line' ? 'stroke' as const : layer.shape.paintMode };
+      const style = { color: layer.shape.color, strokeWidth: layer.shape.strokeWidth, paintMode: shapePaintMode(layer.shape) };
       layer.shape = polygonFromWorldPoints(result.fragments[0], style);
       ls.bumpLayer(layer.id);
       newRootIds.push(layer.id);

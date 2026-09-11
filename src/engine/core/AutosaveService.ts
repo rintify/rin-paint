@@ -1,14 +1,9 @@
 import { useStore } from '../../state/store';
-import { makeCanvas } from '../layers';
+import { savedLayerFrom } from '../layer-types/registry';
+import { canvasToBlob } from '../layers';
 import { getPersistenceUsage, savePage, saveProjectMeta, type SavedLayer } from '../persistence/db';
 import { PROJECT_VERSION } from '../persistence/version';
 import type { PaintEngine } from '../PaintEngine';
-
-function toBlobP(c: HTMLCanvasElement): Promise<Blob> {
-  return new Promise((resolve, reject) =>
-    c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png'),
-  );
-}
 
 /** Debounced project persistence and storage usage refresh. */
 export class AutosaveService {
@@ -72,49 +67,8 @@ export class AutosaveService {
     const ls = eng.layerService;
     const pages = eng.pages;
     const st = useStore.getState();
-    const layerSources = ls.layers.map((l) => {
-      if (l.type === 'text') return { ...ls.snapshotLayer(l, false), type: 'text' as const };
-      if (l.type === 'adjust') {
-        return {
-          id: l.id,
-          type: l.type,
-          name: l.name,
-          opacity: l.opacity,
-          blend: l.blend,
-          visible: l.visible,
-          params: { ...l.params },
-          maskLayerIds: [...l.maskLayerIds],
-          parentId: l.parentId,
-          childIds: [...l.childIds],
-        };
-      }
-      if (l.type === 'shape') {
-        return {
-          id: l.id,
-          type: l.type,
-          name: l.name,
-          opacity: l.opacity,
-          blend: l.blend,
-          visible: l.visible,
-          parentId: l.parentId,
-          childIds: [...l.childIds],
-          shape: structuredClone(l.shape),
-        };
-      }
-      const canvas = makeCanvas(eng.artboard.w, eng.artboard.h);
-      canvas.getContext('2d')!.drawImage(l.canvas, 0, 0);
-      return {
-        id: l.id,
-        type: l.type,
-        name: l.name,
-        opacity: l.opacity,
-        blend: l.blend,
-        visible: l.visible,
-        parentId: l.parentId,
-        childIds: [...l.childIds],
-        canvas,
-      };
-    });
+    // レイヤー内容は同期でコピーされ、PNG 化だけが非同期に進む。
+    const layerSources = ls.layers.map((l) => savedLayerFrom(l, { artboard: eng.artboard }));
     const activeLayerId = ls.activeLayerId;
     const view = eng.view.snapshot();
     const canvasSpec = { ...eng.getCanvasSpec() };
@@ -125,19 +79,13 @@ export class AutosaveService {
     const colorHistory = [...st.colorHistory];
     const tools = st.tools.map((tool) => ({
       ...tool,
-      penSettings: tool.penSettings ? { ...tool.penSettings } : undefined,
+      settings: tool.settings !== undefined ? structuredClone(tool.settings) : undefined,
     }));
     const activeToolId = st.activeToolId;
     const toolLayout = structuredClone(st.toolLayout);
     const toolStacks = structuredClone(st.toolStacks);
-    const historyPromise = eng.history.serialize(toBlobP);
-    const layers: SavedLayer[] = await Promise.all(
-      layerSources.map(async (l) => {
-        if (l.type !== 'raster') return l;
-        const { canvas, ...meta } = l;
-        return { ...meta, blob: await toBlobP(canvas) };
-      }),
-    );
+    const historyPromise = eng.history.serialize(canvasToBlob);
+    const layers: SavedLayer[] = await Promise.all(layerSources);
     let thumbnail: Blob | undefined;
     if (eng.compositor.main) {
       eng.ensureComposited();

@@ -34,7 +34,7 @@ describe('v5 to v6 migration', () => {
       tools: [{ id: 'r', kind: 'rect', name: '四角', size: 4, color: '#000' }],
     });
     expect(meta.version).toBe(6);
-    expect(meta.tools[0].shapeSettings?.paintMode).toBe('stroke');
+    expect((meta.tools[0].settings as { paintMode?: string })?.paintMode).toBe('stroke');
     const clipboard = migrateClipboard({
       version: 1, sourcePageId: 'p', sourcePpi: 300, rootIds: ['l'],
       layers: [{ id: 'l', type: 'shape', name: '四角形', opacity: 1, blend: 'source-over', visible: true, parentId: null, childIds: [], shape: rect() }],

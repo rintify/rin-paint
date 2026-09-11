@@ -15,6 +15,7 @@ import { useMemo, useState } from 'react';
 import { useEngine } from '../EngineContext';
 import { useStore } from '../../state/store';
 import type { LayerMeta } from '../../model';
+import { maskSourceLabel } from '../../engine/layer-types/registry';
 import { maskCandidateRows } from './maskCandidates';
 import { Thumb } from './Thumb';
 
@@ -32,8 +33,6 @@ export function MaskControls({ meta }: { meta: LayerMeta }) {
     setQuery('');
     setOpen(true);
   };
-  const typeLabel = (layer: LayerMeta) =>
-    layer.type === 'raster' ? 'ラスター' : layer.type === 'shape' ? '図形' : '文字';
   return (
     <>
       <Stack spacing={1} className="mask-controls">
@@ -127,7 +126,7 @@ export function MaskControls({ meta }: { meta: LayerMeta }) {
                   <Box sx={{ minWidth: 0, flex: 1 }}>
                     <Typography variant="body2" noWrap>{layer.name}</Typography>
                     <Typography variant="caption" color="text.secondary">
-                      {typeLabel(layer)}・{layer.visible ? '表示' : '非表示'}
+                      {maskSourceLabel(layer.type)}・{layer.visible ? '表示' : '非表示'}
                     </Typography>
                   </Box>
                 </Box>

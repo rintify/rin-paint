@@ -1,6 +1,7 @@
 import { Box, Button, Chip, LinearProgress, Paper, Snackbar, Typography } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import { useEngine } from './EngineContext';
+import { canTransformObjectType } from '../engine/layer-types/registry';
 import { useStore } from '../state/store';
 import { appAlert } from './AppDialogs';
 import { TextEditor } from './TextEditor';
@@ -45,7 +46,7 @@ export function CanvasView() {
   const [dropActive, setDropActive] = useState(false);
   const selectionActive = useStore((s) => s.selectionActive);
   const freeTransform = useStore((s) => s.freeTransform);
-  const objectSelected = useStore((s) => s.selectedLayerIds.some(id => { const layer = s.layers.find(item => item.id === id); return layer?.type === 'shape' || layer?.type === 'text'; }));
+  const objectSelected = useStore((s) => s.selectedLayerIds.some(id => { const layer = s.layers.find(item => item.id === id); return !!layer && canTransformObjectType(layer.type); }));
   const canvasW = useStore((s) => s.canvasW);
   const canvasH = useStore((s) => s.canvasH);
   const polygonDraftActive = useStore((s) => s.polygonDraftActive);

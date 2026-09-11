@@ -1,6 +1,6 @@
-import { TRANSPARENT } from '../../model';
-import { buildFilter, makeCanvas, type Layer, type RasterLayer, type ShapeLayer } from '../layers';
-import { drawShape } from '../shapes';
+import { layerHandler } from '../layer-types/registry';
+import type { LayerDrawEnv, LayerMeasureEnv } from '../layer-types/types';
+import { makeCanvas, type Layer, type RasterLayer } from '../layers';
 import { TextRenderer } from '../text/render';
 import type { PaintEngine } from '../PaintEngine';
 
@@ -13,16 +13,11 @@ export class Compositor {
   /** ストローク開始時のレイヤー内容 (履歴パッチの before 側) */
   scratch = makeCanvas(1600, 1200);
   scratchCtx = this.scratch.getContext('2d', { willReadFrequently: true })!;
-  /** 調整レイヤー適用用の作業キャンバス */
-  tmp = makeCanvas(1600, 1200);
-  tmpCtx = this.tmp.getContext('2d')!;
-  /** 透明図形を直親ラスターだけへ非破壊で反映する作業キャンバス */
-  shapeTmp = makeCanvas(1600, 1200);
-  shapeTmpCtx = this.shapeTmp.getContext('2d')!;
-  maskTmp = makeCanvas(1600, 1200);
-  maskTmpCtx = this.maskTmp.getContext('2d')!;
   fillReference = makeCanvas(1600, 1200);
   fillReferenceCtx = this.fillReference.getContext('2d', { willReadFrequently: true })!;
+
+  /** レイヤー種別ハンドラへ貸し出す作業キャンバス。用途ごとに使い回す。 */
+  private work = new Map<string, HTMLCanvasElement>();
 
   textRenderer = new TextRenderer();
   dirty = true;
@@ -40,12 +35,46 @@ export class Compositor {
 
   syncWorkCanvases(): void {
     const { w, h } = this.engine.artboard;
-    for (const c of [this.scratch, this.tmp, this.shapeTmp, this.maskTmp, this.fillReference]) {
+    for (const c of [this.scratch, this.fillReference]) {
       if (c.width !== w || c.height !== h) {
         c.width = w;
         c.height = h;
       }
     }
+  }
+
+  /** 名前ごとに使い回す作業キャンバス。常にアートボードサイズへ揃える。 */
+  workCtx(name: string): CanvasRenderingContext2D {
+    const { w, h } = this.engine.artboard;
+    let canvas = this.work.get(name);
+    if (!canvas) {
+      canvas = makeCanvas(w, h);
+      this.work.set(name, canvas);
+    } else if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    return canvas.getContext('2d')!;
+  }
+
+  measureEnv(): LayerMeasureEnv {
+    return { artboard: this.engine.artboard, textRenderer: this.textRenderer };
+  }
+
+  /** レイヤー種別ハンドラが描画に使う依存一式 */
+  drawEnv(backdrop: HTMLCanvasElement | null, withToolOverlay: boolean): LayerDrawEnv {
+    const eng = this.engine;
+    const tool = withToolOverlay ? eng.activeTool() : null;
+    const drawAboveLayer = tool?.drawAboveLayer?.bind(tool);
+    return {
+      artboard: eng.artboard,
+      textRenderer: this.textRenderer,
+      layerById: (id) => eng.layerById(id),
+      handlerFor: layerHandler,
+      workCtx: (name) => this.workCtx(name),
+      backdrop,
+      drawAboveLayer,
+    };
   }
 
   syncTextRenders(): void {
@@ -124,71 +153,12 @@ export class Compositor {
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, w, h);
-    const tool = eng.activeTool();
+    const env = this.drawEnv(surface, drawToolOverlay);
     const render = (id: string) => {
       const l = eng.layerById(id);
       if (!l) return;
-      const selected = included === null || included.has(id);
-      if (selected && l.visible && l.type === 'raster') {
-        let source: HTMLCanvasElement = l.canvas;
-        const erasers = l.childIds
-          .map((childId) => eng.shapeLayerById(childId))
-          .filter((child): child is ShapeLayer => !!child && child.visible && child.shape.color === TRANSPARENT);
-        if (erasers.length) {
-          this.shapeTmpCtx.save();
-          this.shapeTmpCtx.clearRect(0, 0, w, h);
-          this.shapeTmpCtx.globalAlpha = 1;
-          this.shapeTmpCtx.globalCompositeOperation = 'source-over';
-          this.shapeTmpCtx.drawImage(l.canvas, 0, 0);
-          for (const eraser of erasers) {
-            this.shapeTmpCtx.globalAlpha = eraser.opacity;
-            drawShape(this.shapeTmpCtx, eraser.shape, undefined, eng.artboard);
-          }
-          this.shapeTmpCtx.restore();
-          source = this.shapeTmp;
-        }
-        ctx.globalAlpha = l.opacity;
-        ctx.globalCompositeOperation = l.blend;
-        ctx.drawImage(source, 0, 0);
-        if (drawToolOverlay && tool.drawAboveLayer) tool.drawAboveLayer(ctx, l.id);
-      } else if (selected && l.visible && l.type === 'shape' && l.shape.color !== TRANSPARENT) {
-        ctx.globalAlpha = l.opacity;
-        ctx.globalCompositeOperation = l.blend;
-        drawShape(ctx, l.shape, undefined, eng.artboard);
-      } else if (selected && l.visible && l.type === 'text') {
-        ctx.globalAlpha = l.opacity;
-        ctx.globalCompositeOperation = l.blend;
-        this.textRenderer.draw(ctx, l.id, l.text);
-      } else if (selected && l.visible && l.type === 'adjust') {
-        this.tmpCtx.save();
-        this.tmpCtx.clearRect(0, 0, w, h);
-        this.tmpCtx.filter = buildFilter(l.params);
-        this.tmpCtx.drawImage(surface, 0, 0);
-        this.tmpCtx.restore();
-        if (l.maskLayerIds.length) {
-          this.maskTmpCtx.save();
-          this.maskTmpCtx.clearRect(0, 0, w, h);
-          this.maskTmpCtx.globalCompositeOperation = 'source-over';
-          for (const sourceId of l.maskLayerIds) {
-            const source = eng.layerById(sourceId);
-            if (!source?.visible || source.type === 'adjust') continue;
-            this.maskTmpCtx.globalAlpha = source.opacity;
-            if (source.type === 'raster') this.maskTmpCtx.drawImage(source.canvas, 0, 0);
-            else if (source.type === 'shape' && source.shape.color !== TRANSPARENT) {
-              const shape = source.shape.kind === 'line' ? { ...source.shape, color: '#fff' } : { ...source.shape, color: '#fff' };
-              drawShape(this.maskTmpCtx, shape, false, eng.artboard);
-            } else if (source.type === 'text') this.textRenderer.draw(this.maskTmpCtx, source.id, source.text);
-          }
-          this.maskTmpCtx.restore();
-          this.tmpCtx.save();
-          this.tmpCtx.globalCompositeOperation = 'destination-in';
-          this.tmpCtx.globalAlpha = 1;
-          this.tmpCtx.drawImage(this.maskTmp, 0, 0);
-          this.tmpCtx.restore();
-        }
-        ctx.globalAlpha = l.opacity;
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.drawImage(this.tmp, 0, 0);
+      if (l.visible && (included === null || included.has(id))) {
+        layerHandler(l).draw(ctx, l, env);
       }
       for (const childId of l.childIds) render(childId);
     };
@@ -220,26 +190,6 @@ export class Compositor {
   }
 
   bakeLayerOnto(target: RasterLayer, source: Layer): void {
-    const { w, h } = this.engine.artboard;
-    if (source.type === 'adjust') {
-      this.tmpCtx.save();
-      this.tmpCtx.clearRect(0, 0, w, h);
-      this.tmpCtx.filter = buildFilter(source.params);
-      this.tmpCtx.drawImage(target.canvas, 0, 0);
-      this.tmpCtx.restore();
-      target.ctx.save();
-      target.ctx.globalAlpha = source.opacity;
-      target.ctx.globalCompositeOperation = 'source-over';
-      target.ctx.drawImage(this.tmp, 0, 0);
-      target.ctx.restore();
-    } else {
-      target.ctx.save();
-      target.ctx.globalAlpha = source.opacity;
-      target.ctx.globalCompositeOperation = source.blend;
-      if (source.type === 'raster') target.ctx.drawImage(source.canvas, 0, 0);
-      else if (source.type === 'text') this.textRenderer.draw(target.ctx, source.id, source.text);
-      else drawShape(target.ctx, source.shape, undefined, this.engine.artboard);
-      target.ctx.restore();
-    }
+    layerHandler(source).bakeOnto(target, source, this.drawEnv(target.canvas, false));
   }
 }

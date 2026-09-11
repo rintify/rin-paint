@@ -1,19 +1,23 @@
 import { createContext, useContext, type ReactNode } from 'react';
 import type { PaintEngine } from '../engine/PaintEngine';
-import { engine as defaultEngine } from '../engine/instance';
+import { getEngine } from '../engine/instance';
 
-const EngineContext = createContext<PaintEngine>(defaultEngine);
+const EngineContext = createContext<PaintEngine | null>(null);
 
 export function EngineProvider({
-  engine = defaultEngine,
+  engine,
   children,
 }: {
   engine?: PaintEngine;
   children: ReactNode;
 }) {
-  return <EngineContext.Provider value={engine}>{children}</EngineContext.Provider>;
+  return (
+    <EngineContext.Provider value={engine ?? getEngine()}>
+      {children}
+    </EngineContext.Provider>
+  );
 }
 
 export function useEngine(): PaintEngine {
-  return useContext(EngineContext);
+  return useContext(EngineContext) ?? getEngine();
 }

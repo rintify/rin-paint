@@ -1,1 +1,1 @@
-export { ToolPicker, TOOL_ICONS } from './tool-picker/ToolPicker';
+export { ToolPicker } from './tool-picker/ToolPicker';

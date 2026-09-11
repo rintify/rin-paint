@@ -1,8 +1,6 @@
 import { useStore } from '../../state/store';
 import { type Op, type LayerSnapshot } from '../history/historyTree';
-import { makeCanvas } from '../layers';
-import { scaleShape } from '../canvasSpec';
-import { cloneShape } from '../shapes';
+import { savedLayerFrom, scaleStoredLayer } from '../layer-types/registry';
 import {
   loadClipboard,
   saveClipboard,
@@ -10,12 +8,6 @@ import {
   type SavedLayer,
 } from '../persistence/db';
 import type { PaintEngine } from '../PaintEngine';
-
-function toBlobP(c: HTMLCanvasElement): Promise<Blob> {
-  return new Promise((resolve, reject) =>
-    c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png'),
-  );
-}
 
 export class ClipboardService {
   constructor(private engine: PaintEngine) {}
@@ -35,12 +27,11 @@ export class ClipboardService {
       return true;
     });
     const allIds = new Set(roots.flatMap(id => ls.descendantIds(id)));
-    const layers: SavedLayer[] = await Promise.all(ls.layers.filter(layer => allIds.has(layer.id)).map(async layer => {
-      const snap = ls.snapshotLayer(layer, false);
-      const saved: SavedLayer = { ...snap };
-      if (layer.type === 'raster') saved.blob = await toBlobP(layer.canvas);
-      return saved;
-    }));
+    const layers: SavedLayer[] = await Promise.all(
+      ls.layers
+        .filter(layer => allIds.has(layer.id))
+        .map(layer => savedLayerFrom(layer, { artboard: eng.artboard })),
+    );
     const clipboard: LayerClipboard = { version: 1, sourcePageId: eng.pages.activePageId, sourcePpi: eng.getCanvasSpec().ppi, rootIds: roots, layers };
     await saveClipboard(clipboard);
     useStore.getState().set({ clipboardAvailable: true });
@@ -59,18 +50,13 @@ export class ClipboardService {
     for (const source of clipboard.layers) {
       const snapshot: LayerSnapshot = {
         ...structuredClone({ ...source, blob: undefined }),
+        blob: source.blob,
         id: ids.get(source.id)!, parentId: remap(source.parentId),
         childIds: source.childIds.map(id => ids.get(id)).filter((id): id is string => typeof id === 'string'),
         maskLayerIds: source.maskLayerIds?.map(id => ids.get(id)).filter((id): id is string => typeof id === 'string'),
       };
-      if (source.shape) snapshot.shape = factor === 1 ? cloneShape(source.shape) : scaleShape(source.shape, factor);
-      if (source.text) snapshot.text = { ...structuredClone(source.text), x: source.text.x * factor, y: source.text.y * factor, width: source.text.width === null ? null : source.text.width * factor, height: source.text.height === null ? null : source.text.height * factor };
-      if (source.blob) {
-        const bmp = await createImageBitmap(source.blob);
-        const canvas = makeCanvas(eng.artboard.w, eng.artboard.h);
-        canvas.getContext('2d')!.drawImage(bmp, 0, 0, bmp.width * factor, bmp.height * factor); bmp.close();
-        snapshot.canvas = canvas;
-      }
+      // ページ間で解像度が違う場合に合わせ、ラスターは canvas へ展開する。
+      await scaleStoredLayer(snapshot, { artboard: eng.artboard, factor });
       snapshots.push(snapshot);
     }
     const primaryLocation = ls.locationOf(ls.activeLayerId) ?? { parentId: null, index: ls.rootLayerIds.length - 1 };

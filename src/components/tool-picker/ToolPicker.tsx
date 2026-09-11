@@ -9,12 +9,12 @@ import {
   Typography,
 } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
+import { getToolDescriptor } from '../../tools/registry';
 import { useStore } from '../../state/store';
 import type { ToolInstance } from '../../types';
 import { useEngine } from '../EngineContext';
 import { useOutsideClick } from '../hooks/useOutsideClick';
 import { ManageToolsDialog } from './ManageToolsDialog';
-import { TOOL_ICONS } from './toolCatalog';
 
 export function ToolPicker() {
   const engine = useEngine();
@@ -103,7 +103,7 @@ export function ToolPicker() {
                 <Box className="tool-stack-icons">
                   {members.slice(0, 4).map((tool, index) => (
                     <Box key={tool.id} sx={{ transform: `translate(${index * 3}px, ${index * -2}px)` }}>
-                      {TOOL_ICONS[tool.kind]}
+                      {getToolDescriptor(tool.kind)?.icon}
                     </Box>
                   ))}
                 </Box>
@@ -114,17 +114,18 @@ export function ToolPicker() {
           const tool = tools.find(value => value.id === item.toolId);
           if (!tool) return null;
           const active = activeId === tool.id;
+          const descriptor = getToolDescriptor(tool.kind);
           return (
             <Button
               key={tool.id}
-              disabled={multi && !['lasso', 'fill', 'polygonSplit'].includes(tool.kind)}
+              disabled={multi && !descriptor?.capabilities.multiSelect}
               onClick={() => engine.selectToolInstance(tool.id)}
               title={tool.name}
               variant={active ? 'contained' : 'text'}
               color={active ? 'primary' : 'inherit'}
               className="tool-rail-button"
             >
-              {!['lasso', 'blur', 'polygonSplit'].includes(tool.kind) && (
+              {descriptor?.capabilities.color && (
                 <Box
                   className="tool-color-dot"
                   sx={{
@@ -134,7 +135,7 @@ export function ToolPicker() {
                   }}
                 />
               )}
-              {TOOL_ICONS[tool.kind]}
+              {descriptor?.icon}
               <Typography variant="caption" noWrap>{tool.name}</Typography>
             </Button>
           );
@@ -159,10 +160,11 @@ export function ToolPicker() {
               const tool = tools.find(value => value.id === id);
               if (!tool) return null;
               const active = activeId === id;
+              const descriptor = getToolDescriptor(tool.kind);
               return (
                 <Button
                   key={id}
-                  disabled={multi && !['lasso', 'fill', 'polygonSplit'].includes(tool.kind)}
+                  disabled={multi && !descriptor?.capabilities.multiSelect}
                   variant={active ? 'contained' : 'text'}
                   color={active ? 'primary' : 'inherit'}
                   className="tool-rail-button tool-stack-popover-tool"
@@ -171,7 +173,7 @@ export function ToolPicker() {
                     setStackOpen(null);
                   }}
                 >
-                  {!['lasso', 'blur', 'polygonSplit'].includes(tool.kind) && (
+                  {descriptor?.capabilities.color && (
                     <Box
                       className="tool-color-dot"
                       sx={{
@@ -181,7 +183,7 @@ export function ToolPicker() {
                       }}
                     />
                   )}
-                  {TOOL_ICONS[tool.kind]}
+                  {descriptor?.icon}
                   <Typography variant="caption" noWrap>{tool.name}</Typography>
                 </Button>
               );
@@ -193,5 +195,3 @@ export function ToolPicker() {
     </Box>
   );
 }
-
-export { TOOL_ICONS } from './toolCatalog';

@@ -70,6 +70,12 @@ export function newLayerId(): string {
   return `L${Date.now().toString(36)}-${(idCounter++).toString(36)}`;
 }
 
+export function canvasToBlob(c: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) =>
+    c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png'),
+  );
+}
+
 export function makeCanvas(w: number, h: number): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = w;

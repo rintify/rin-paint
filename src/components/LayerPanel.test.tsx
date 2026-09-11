@@ -20,7 +20,10 @@ const mockEngine = vi.hoisted(() => ({
   renameLayer: actions.rename,
 })) as unknown as PaintEngine;
 
-vi.mock('../engine/shapes', () => ({ drawShape() {} }));
+vi.mock('../engine/shapes', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../engine/shapes')>();
+  return { ...actual, drawShape() {} };
+});
 
 const caps = { canMergeDown: false, canRemove: false, canTransferShape: false };
 const base = {

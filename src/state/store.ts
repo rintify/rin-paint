@@ -1,27 +1,16 @@
 import { create } from 'zustand';
+import { DEFAULT_CANVAS, type CanvasSpec } from '../model/canvas';
+import { type LayerMeta } from '../model/layer';
+import { type ProjectFont } from '../model/text';
 import {
-  DEFAULT_PEN_DETAIL_SETTINGS,
-  DEFAULT_FILL_TOOL_SETTINGS,
-  DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS,
-  DEFAULT_SHAPE_TOOL_SETTINGS,
-  DEFAULT_TEXT_TOOL_SETTINGS,
-  DEFAULT_CANVAS,
   newToolInstanceId,
   newToolStackId,
-  TOOL_KIND_LABELS,
-  type LayerMeta,
-  type PenDetailSettings,
-  type FillToolSettings,
-  type PolygonSplitToolSettings,
-  type ShapePaintMode,
   type ToolInstance,
-  type ToolKind,
   type ToolLayoutItem,
   type ToolStack,
-  type CanvasSpec,
-  type ProjectFont,
-  type TextToolSettings,
-} from '../types';
+} from '../model/tool';
+import { DEFAULT_PEN_DETAIL_SETTINGS } from '../tools/pen/settings';
+import { getToolDescriptor, isToolKind, type ToolKind } from '../tools/registry';
 import { normalizeToolLayout } from './toolLayout';
 
 export interface RedoBranch {
@@ -45,21 +34,18 @@ export function defaultTools(): ToolInstance[] {
       name: 'ペン',
       size: 14,
       color: '#222222',
-      penSettings: { ...DEFAULT_PEN_DETAIL_SETTINGS },
+      settings: { ...DEFAULT_PEN_DETAIL_SETTINGS },
     },
     { id: newToolInstanceId(), kind: 'lasso', name: '選択', size: 14, color: '#222222' },
   ];
 }
 
 export interface PaintState {
-  /** ツールエリアに並ぶツールインスタンス */
   tools: ToolInstance[];
   toolLayout: ToolLayoutItem[];
   toolStacks: ToolStack[];
   activeToolId: string | null;
-  /** アクティブインスタンスの形 (エンジンが参照する) */
   tool: ToolKind | null;
-  /** アクティブインスタンスの太さ・色のミラー */
   penSize: number;
   penColor: string;
   colorHistory: string[];
@@ -75,7 +61,6 @@ export interface PaintState {
   activePageId: string;
   pageBusy: boolean;
 
-  /** アートボードのピクセルサイズ (エンジンと同期) */
   canvasW: number;
   canvasH: number;
   canvasSpec: CanvasSpec;
@@ -85,7 +70,6 @@ export interface PaintState {
 
   canUndo: boolean;
   canRedo: boolean;
-  /** 現在の履歴ノードの子 (2つ以上あるとき進む時に分岐選択UIを出す) */
   redoBranches: RedoBranch[];
   historyCount: number;
   historyPrunableCount: number;
@@ -94,7 +78,6 @@ export interface PaintState {
   storageUsage: StorageUsage;
 
   selectionActive: boolean;
-  /** 浮動選択の自由変形モード */
   freeTransform: boolean;
   polygonDraftActive: boolean;
   polygonDraftPointCount: number;
@@ -102,27 +85,17 @@ export interface PaintState {
   polygonVertexCanDelete: boolean;
   fillProgress: number | null;
   toolNotice: string | null;
-  /** 0..1 で進捗、null なら書き出し中でない */
   exportProgress: number | null;
 
-  /** 表示倍率 (1 = フィット) と表示回転 (ラジアン) */
   viewScale: number;
   viewRot: number;
 
   set: (p: Partial<PaintState>) => void;
   pushColor: (c: string) => void;
-  /** アクティブインスタンスの太さを変更 (インスタンスにも保存) */
   setPenSize: (n: number) => void;
-  /** アクティブインスタンスの色を変更 (インスタンスにも保存) */
   setPenColor: (c: string) => void;
-  /** アクティブなペンインスタンスの詳細設定を変更 */
-  setPenDetail: (key: keyof PenDetailSettings, value: number) => void;
-  setFillSettings: (patch: Partial<FillToolSettings>) => void;
-  setShapePaintMode: (paintMode: ShapePaintMode) => void;
-  setPolygonSplitWidth: (width: number) => void;
-  /** 文字ツールで新しく作る文字の初期書式を変更 */
-  setTextToolSettings: (patch: Partial<TextToolSettings>) => void;
-  /** インスタンスを切り替え、記憶された色・太さを反映する */
+  /** アクティブツールの settings を部分更新 (descriptor.normalize でクランプ) */
+  updateActiveToolSettings: (patch: Record<string, unknown>) => void;
   activateTool: (id: string) => void;
   deactivateTool: () => void;
   addTool: (kind: ToolKind) => void;
@@ -146,7 +119,7 @@ export const useStore = create<PaintState>((set) => ({
   toolLayout: initialLayout,
   toolStacks: [],
   activeToolId: initialTools[0].id,
-  tool: initialTools[0].kind,
+  tool: initialTools[0].kind as ToolKind,
   penSize: initialTools[0].size,
   penColor: initialTools[0].color,
   colorHistory: ['#222222', '#e74c3c', '#e67e22', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#ffffff'],
@@ -194,7 +167,6 @@ export const useStore = create<PaintState>((set) => ({
   set: (p) => set(p),
   pushColor: (c) =>
     set((s) =>
-      // 透明は専用ボタンがあるので履歴パレットには積まない
       c === 'transparent'
         ? s
         : { colorHistory: [c, ...s.colorHistory.filter((x) => x !== c)].slice(0, 24) },
@@ -212,74 +184,23 @@ export const useStore = create<PaintState>((set) => ({
       tools: s.tools.map((t) => (t.id === s.activeToolId ? { ...t, color: c } : t)),
     })),
 
-  setPenDetail: (key, value) =>
-    set((s) => ({
-      tools: s.tools.map((t) =>
-        t.id === s.activeToolId && t.kind === 'pen'
-          ? {
-              ...t,
-              penSettings: {
-                ...DEFAULT_PEN_DETAIL_SETTINGS,
-                ...t.penSettings,
-                [key]: Math.max(0, Math.min(100, Math.round(value))),
-              },
-            }
-          : t,
-      ),
-    })),
-
-  setFillSettings: (patch) =>
-    set((s) => ({
-      tools: s.tools.map((tool) =>
-        tool.id === s.activeToolId && tool.kind === 'fill'
-          ? {
-              ...tool,
-              fillSettings: {
-                ...DEFAULT_FILL_TOOL_SETTINGS,
-                ...tool.fillSettings,
-                ...patch,
-              },
-            }
-          : tool,
-      ),
-    })),
-
-  setShapePaintMode: (paintMode) =>
-    set((s) => ({
-      tools: s.tools.map((tool) =>
-        tool.id === s.activeToolId && ['rect', 'ellipse', 'polygon'].includes(tool.kind)
-          ? { ...tool, shapeSettings: { paintMode } }
-          : tool,
-      ),
-    })),
-
-  setPolygonSplitWidth: (width) =>
-    set((s) => ({
-      tools: s.tools.map((tool) =>
-        tool.id === s.activeToolId && tool.kind === 'polygonSplit'
-          ? {
-              ...tool,
-              polygonSplitSettings: {
-                width: Math.max(0, Math.min(128, width)),
-              } satisfies PolygonSplitToolSettings,
-            }
-          : tool,
-      ),
-    })),
-
-  setTextToolSettings: (patch) =>
-    set((s) => ({
-      tools: s.tools.map((tool) =>
-        tool.id === s.activeToolId && tool.kind === 'text'
-          ? { ...tool, textSettings: { ...DEFAULT_TEXT_TOOL_SETTINGS, ...tool.textSettings, ...patch } }
-          : tool,
-      ),
-    })),
+  updateActiveToolSettings: (patch) =>
+    set((s) => {
+      if (!s.activeToolId || !s.tool) return s;
+      const descriptor = getToolDescriptor(s.tool);
+      if (!descriptor?.settings) return s;
+      const inst = s.tools.find((t) => t.id === s.activeToolId);
+      const current = descriptor.settings.normalize(inst?.settings) as Record<string, unknown>;
+      const next = descriptor.settings.normalize({ ...current, ...patch });
+      return {
+        tools: s.tools.map((t) => (t.id === s.activeToolId ? { ...t, settings: next } : t)),
+      };
+    }),
 
   activateTool: (id) =>
     set((s) => {
       const inst = s.tools.find((t) => t.id === id);
-      if (!inst) return s;
+      if (!inst || !isToolKind(inst.kind)) return s;
       return {
         activeToolId: inst.id,
         tool: inst.kind,
@@ -292,31 +213,23 @@ export const useStore = create<PaintState>((set) => ({
 
   addTool: (kind) =>
     set((s) => {
+      const descriptor = getToolDescriptor(kind);
+      if (!descriptor) return s;
       const count = s.tools.filter((t) => t.kind === kind).length;
-      const base = TOOL_KIND_LABELS[kind];
+      const base = descriptor.label;
       const inst: ToolInstance = {
         id: newToolInstanceId(),
         kind,
         name: count === 0 ? base : `${base} ${count + 1}`,
         size: s.penSize,
         color: s.penColor,
-        ...(kind === 'pen'
-          ? { penSettings: { ...DEFAULT_PEN_DETAIL_SETTINGS } }
-          : kind === 'text'
-            ? { textSettings: { ...DEFAULT_TEXT_TOOL_SETTINGS } }
-            : kind === 'fill'
-              ? { fillSettings: { ...DEFAULT_FILL_TOOL_SETTINGS } }
-              : kind === 'polygonSplit'
-                ? { polygonSplitSettings: { ...DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS } }
-                : kind === 'rect' || kind === 'ellipse' || kind === 'polygon'
-                  ? { shapeSettings: { ...DEFAULT_SHAPE_TOOL_SETTINGS } }
-            : {}),
+        ...(descriptor.settings ? { settings: descriptor.settings.default() } : {}),
       };
       return {
         tools: [...s.tools, inst],
         toolLayout: [...s.toolLayout, { type: 'tool', toolId: inst.id }],
         activeToolId: inst.id,
-        tool: inst.kind,
+        tool: kind,
         penSize: inst.size,
         penColor: inst.color,
       };

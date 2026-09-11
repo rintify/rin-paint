@@ -1,5 +1,6 @@
 import { useStore } from '../../state/store';
-import { normalizeFillToolSettings, TRANSPARENT, type StrokePoint } from '../../model';
+import { TRANSPARENT, type StrokePoint } from '../../model';
+import { normalizeFillToolSettings } from '../../tools/fill/settings';
 import { analyzeFill, type FillAnalysisResult } from '../fillAlgorithm';
 import { makeCanvas } from '../layers';
 import type { PaintEngine } from '../PaintEngine';
@@ -36,7 +37,7 @@ export class FillService {
     }
     const state = useStore.getState();
     const active = state.tools.find(tool => tool.id === state.activeToolId);
-    const settings = normalizeFillToolSettings(active?.fillSettings);
+    const settings = normalizeFillToolSettings(active?.settings);
     const selected = new Set(state.multiSelectMode ? state.selectedLayerIds : [ls.activeLayerId]);
     const color = state.penColor;
     const token = ++this.token;

@@ -1,4 +1,5 @@
 import type { LayerMeta } from '../../model';
+import { canMaskLayerType } from '../../engine/layer-types/registry';
 
 export function maskCandidateRows(
   roots: string[],
@@ -12,7 +13,7 @@ export function maskCandidateRows(
     layers
       .filter(layer =>
         layer.id !== excludedId
-        && layer.type !== 'adjust'
+        && canMaskLayerType(layer.type)
         && (!normalized || layer.name.toLocaleLowerCase().includes(normalized)))
       .map(layer => layer.id),
   );
@@ -22,7 +23,7 @@ export function maskCandidateRows(
       let parent = byId.get(id)?.parentId ?? null;
       while (parent) {
         const layer = byId.get(parent);
-        if (layer?.type !== 'adjust') shown.add(parent);
+        if (layer && canMaskLayerType(layer.type)) shown.add(parent);
         parent = layer?.parentId ?? null;
       }
     }
@@ -32,7 +33,7 @@ export function maskCandidateRows(
     for (const id of [...ids].reverse()) {
       const layer = byId.get(id);
       if (!layer) continue;
-      if (layer.id !== excludedId && layer.type !== 'adjust' && shown.has(layer.id)) {
+      if (layer.id !== excludedId && canMaskLayerType(layer.type) && shown.has(layer.id)) {
         result.push({ layer, depth });
       }
       visit(layer.childIds, depth + 1);

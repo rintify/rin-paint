@@ -18,6 +18,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { hasLayerControls } from './layerControls';
 import { selectedLayerRows } from '../../engine/layerTree';
 import { useStore } from '../../state/store';
 import type { LayerMeta } from '../../model';
@@ -55,7 +56,7 @@ export function LayerPanel() {
   const active = byId.get(activeId);
   const [palette, setPalette] = useState<{ id: string; open: boolean }>(() => ({
     id: activeId,
-    open: !!active && active.type !== 'raster',
+    open: !!active && hasLayerControls(active.type),
   }));
   const [menu, setMenu] = useState<{ id: string; anchor: HTMLElement } | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -194,7 +195,7 @@ export function LayerPanel() {
     previousActiveId.current = activeId;
     setPalette(current => ({
       id: activeId,
-      open: multi ? current.open : !!active && active.type !== 'raster',
+      open: multi ? current.open : !!active && hasLayerControls(active.type),
     }));
   }, [activeId, active, multi]);
 

@@ -5,15 +5,13 @@ import {
   Typography,
 } from '@mui/material';
 import { useStore } from '../state/store';
-import { ColorControls } from './ColorControls';
 import { HistoryControls } from './HistoryControls';
 import { LayerPanel } from './LayerPanel';
 import { MainMenu } from './MainMenu';
 import { PageManagerButton, PageStepper } from './PageControls';
-import { PenSettings } from './PenSettings';
 import { StorageUsage } from './StorageUsage';
 import { ToolPicker } from './ToolPicker';
-import { TextToolSettings } from './TextToolSettings';
+import { ToolSettingsHost } from './ToolSettingsHost';
 
 function ExportProgress() {
   const progress = useStore((s) => s.exportProgress);
@@ -73,9 +71,7 @@ export function LeftPanel() {
               </Typography>
             </Box>
             <Box className="pane-scroll">
-              <TextToolSettings />
-              <PenSettings />
-              <ColorControls />
+              <ToolSettingsHost />
             </Box>
           </Box>
           <Box className="layers-pane">

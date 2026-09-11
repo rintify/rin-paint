@@ -1,25 +1,19 @@
 import { useStore } from '../../state/store';
 import {
-  DEFAULT_ADJUST,
   DEFAULT_CANVAS,
-  normalizePenDetailSettings,
-  normalizeFillToolSettings,
-  normalizePolygonSplitToolSettings,
-  normalizeShapeToolSettings,
-  normalizeTextToolSettings,
+  type LayerType,
   type ToolInstance,
   type CanvasSpec,
   type ProjectFont,
 } from '../../model';
+import { normalizeToolInstance } from '../../tools/registry';
 import { HistoryTree, type CanvasSnapshot } from '../history/historyTree';
 import { isPersistedHistory } from '../persistence/schema';
 import { PROJECT_VERSION } from '../persistence/version';
+import { restoreLayerFrom, savedLayerFrom, scaleLayer } from '../layer-types/registry';
 import {
-  createAdjustLayer,
+  canvasToBlob,
   createRasterLayer,
-  createShapeLayer,
-  createTextLayer,
-  makeCanvas,
   type Layer,
 } from '../layers';
 import { validateLayerTree } from '../layerTree';
@@ -42,16 +36,8 @@ import {
 } from '../persistence/projectFile';
 import { downloadBlob } from '../timelapse/exporter';
 import { loadFonts } from '../text/render';
-import { canvasPixels, validateCanvasSpec, scaleShape, pngWithPpi } from '../canvasSpec';
-import { TOOL_KINDS } from '../tools/registry';
-import { cloneShape } from '../shapes';
+import { canvasPixels, validateCanvasSpec, pngWithPpi } from '../canvasSpec';
 import type { PaintEngine } from '../PaintEngine';
-
-function toBlobP(c: HTMLCanvasElement): Promise<Blob> {
-  return new Promise((resolve, reject) =>
-    c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png'),
-  );
-}
 
 /** Project lifecycle: init, import/export, resize, fonts. */
 export class ProjectService {
@@ -62,27 +48,9 @@ export class ProjectService {
 
   restoreTools(tools: unknown, activeToolId: unknown, toolLayout?: unknown, toolStacks?: unknown): void {
     if (!Array.isArray(tools)) return;
-    const kinds = TOOL_KINDS;
-    const valid = tools.filter(
-      (t): t is ToolInstance =>
-        !!t &&
-        typeof t.id === 'string' &&
-        kinds.includes(t.kind) &&
-        typeof t.name === 'string' &&
-        typeof t.size === 'number' &&
-        typeof t.color === 'string',
-    ).map((tool) => {
-      if (tool.kind === 'pen') return { ...tool, penSettings: normalizePenDetailSettings(tool.penSettings) };
-      if (tool.kind === 'text') return { ...tool, textSettings: normalizeTextToolSettings(tool.textSettings) };
-      if (tool.kind === 'fill') return { ...tool, fillSettings: normalizeFillToolSettings(tool.fillSettings) };
-      if (tool.kind === 'rect' || tool.kind === 'ellipse' || tool.kind === 'polygon') {
-        return { ...tool, shapeSettings: normalizeShapeToolSettings(tool.shapeSettings) };
-      }
-      if (tool.kind === 'polygonSplit') {
-        return { ...tool, polygonSplitSettings: normalizePolygonSplitToolSettings(tool.polygonSplitSettings) };
-      }
-      return tool;
-    });
+    const valid = tools
+      .map((t) => normalizeToolInstance(t))
+      .filter((t): t is ToolInstance => !!t);
     const st = useStore.getState();
     const validIds = new Set(valid.map(tool => tool.id));
     const stacks = Array.isArray(toolStacks) ? toolStacks.filter(stack => stack && typeof stack.id === 'string' && typeof stack.name === 'string' && Array.isArray(stack.toolIds)).map(stack => ({ ...stack, toolIds: stack.toolIds.filter((id: unknown): id is string => typeof id === 'string' && validIds.has(id)) })).filter(stack => stack.toolIds.length >= 2) : [];
@@ -105,24 +73,8 @@ export class ProjectService {
     eng.artboard.resize(pixels.width, pixels.height);
     eng.compositor.syncWorkCanvases();
     for (const sl of page.layers) {
-      let layer: Layer;
-      if (sl.type === 'raster') {
-        const raster = createRasterLayer(sl.name, eng.artboard.w, eng.artboard.h, sl.id);
-        if (sl.blob) { const bmp = await createImageBitmap(sl.blob); raster.ctx.drawImage(bmp, 0, 0); bmp.close(); }
-        layer = raster;
-      } else if (sl.type === 'adjust') {
-        const adjust = createAdjustLayer(sl.name, sl.id);
-        adjust.params = { ...(sl.params ?? DEFAULT_ADJUST) };
-        adjust.maskLayerIds = [...(sl.maskLayerIds ?? [])];
-        layer = adjust;
-      } else if (sl.type === 'text' && sl.text) {
-        layer = createTextLayer(sl.name, { ...structuredClone(sl.text), rotation: sl.text.rotation ?? 0 }, sl.id);
-      } else if (sl.shape) {
-        const shape = cloneShape(sl.shape);
-        layer = createShapeLayer(sl.name, shape.kind === 'line' ? shape : { ...shape, rotation: shape.rotation ?? 0 }, sl.id);
-      } else continue;
-      Object.assign(layer, { opacity: sl.opacity, blend: sl.blend, visible: sl.visible, parentId: sl.parentId, childIds: [...sl.childIds] });
-      ls.layers.push(layer);
+      const layer = await restoreLayerFrom(sl, { artboard: eng.artboard });
+      if (layer) ls.layers.push(layer);
     }
     if (!validateLayerTree(ls.rootLayerIds, ls.layers)) throw new Error('invalid layer tree');
     ls.activeLayerId = page.activeLayerId;
@@ -185,7 +137,7 @@ export class ProjectService {
       ls.layers.push(l);
       ls.rootLayerIds = [l.id];
       ls.activeLayerId = l.id;
-      ls.layerCounter = 1;
+      ls.resetCountersFromLayers();
       pages.activePageId = pages.newPageId();
       pages.pageOrder = [pages.activePageId];
       setPersistencePageId(pages.activePageId);
@@ -248,20 +200,8 @@ export class ProjectService {
     try {
       const { width, height } = canvasPixels(spec);
       const factor = spec.ppi / this.canvasSpec.ppi;
-      const rasters = new Map<string, HTMLCanvasElement>();
-      for (const layer of ls.layers) if (layer.type === 'raster') {
-        const canvas = makeCanvas(width, height);
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        if (!ctx) throw new Error('キャンバス用のメモリを確保できませんでした');
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(layer.canvas, 0, 0, layer.canvas.width * factor, layer.canvas.height * factor);
-        rasters.set(layer.id, canvas);
-      }
       for (const layer of ls.layers) {
-        if (layer.type === 'raster') { layer.canvas = rasters.get(layer.id)!; layer.ctx = layer.canvas.getContext('2d', { willReadFrequently: true })!; }
-        else if (layer.type === 'shape') layer.shape = scaleShape(layer.shape, factor);
-        else if (layer.type === 'text') layer.text = { ...layer.text, x: layer.text.x * factor, y: layer.text.y * factor, width: layer.text.width === null ? null : layer.text.width * factor, height: layer.text.height === null ? null : layer.text.height * factor };
+        scaleLayer(layer, factor, { width, height });
         ls.bumpLayer(layer.id);
       }
       this.canvasSpec = { ...spec };
@@ -271,7 +211,7 @@ export class ProjectService {
       const node = eng.history.push({ kind: 'canvasChange', before, after }, 'キャンバスサイズ・解像度');
       node.ready = Promise.all([...before.layers, ...after.layers].map(async snapshot => {
         if (snapshot.canvas) {
-          try { snapshot.blob = await toBlobP(snapshot.canvas); snapshot.canvas = undefined; }
+          try { snapshot.blob = await canvasToBlob(snapshot.canvas); snapshot.canvas = undefined; }
           catch { /* Keep the original canvas so undo remains lossless; persistence can retry. */ }
         }
       })).then(() => undefined);
@@ -323,8 +263,8 @@ export class ProjectService {
         canvasSpec: { ...this.canvasSpec },
         rootLayerIds: [layer.id],
         activeLayerId: layer.id,
-        layers: [{ ...ls.snapshotLayer(layer, false), blob: await toBlobP(layer.canvas) }],
-        history: await history.serialize(toBlobP),
+        layers: [await savedLayerFrom(layer, { artboard: eng.artboard })],
+        history: await history.serialize(canvasToBlob),
         view: { x: 0, y: 0, scale: 1, rot: 0 },
         thumbnailVersion: 0,
       };
@@ -332,7 +272,7 @@ export class ProjectService {
       pages.activePageId = pageId; pages.pageOrder = [pageId]; pages.thumbnailVersion = 0;
       setPersistencePageId(pageId);
       ls.layers = [layer]; ls.rootLayerIds = [layer.id]; ls.activeLayerId = layer.id;
-      ls.layerCounter = 1; ls.adjustCounter = 0; eng.history = history; ls.clearVersions();
+      ls.resetCountersFromLayers(); eng.history = history; ls.clearVersions();
       eng.compositor.textRenderer.clear();
       await loadFonts([]);
       eng.autosave.persistedRevision = eng.autosave.saveRevision;
@@ -369,7 +309,7 @@ export class ProjectService {
     if (!eng.compositor.main) return;
     eng.finishTextEditing();
     await eng.readyToRender();
-    downloadBlob(await pngWithPpi(await toBlobP(eng.compositor.main), this.canvasSpec.ppi), 'rin-paint.png');
+    downloadBlob(await pngWithPpi(await canvasToBlob(eng.compositor.main), this.canvasSpec.ppi), 'rin-paint.png');
   }
 
   async exportProject(): Promise<void> {
@@ -418,45 +358,12 @@ export class ProjectService {
       eng.compositor.textRenderer.clear();
       eng.compositor.syncWorkCanvases();
       const layers: Layer[] = [];
-      let rasterCount = 0;
-      let adjustCount = 0;
+      const counters = new Map<LayerType, number>();
       for (const pl of proj.layers) {
-        if (pl.type === 'adjust') {
-          const l = createAdjustLayer(pl.name ?? `色調補正 ${++adjustCount}`, pl.id);
-          l.params = { ...DEFAULT_ADJUST, ...(pl.params ?? {}) };
-          l.maskLayerIds = [...(pl.maskLayerIds ?? [])];
-          l.opacity = pl.opacity ?? 1;
-          l.blend = pl.blend ?? 'source-over';
-          l.visible = pl.visible ?? true;
-          l.parentId = pl.parentId;
-          l.childIds = [...pl.childIds];
-          layers.push(l);
-        } else if (pl.type === 'raster') {
-          const l = createRasterLayer(pl.name ?? `レイヤー ${++rasterCount}`, eng.artboard.w, eng.artboard.h, pl.id);
-          l.opacity = pl.opacity ?? 1;
-          l.blend = pl.blend ?? 'source-over';
-          l.visible = pl.visible ?? true;
-          l.parentId = pl.parentId;
-          l.childIds = [...pl.childIds];
-          if (pl.blob) {
-            const bmp = await createImageBitmap(pl.blob);
-            l.ctx.drawImage(bmp, 0, 0);
-            bmp.close();
-          }
-          layers.push(l);
-        } else if (pl.type === 'text' && pl.text) {
-          const l = createTextLayer(pl.name, pl.text, pl.id);
-          Object.assign(l, { opacity: pl.opacity, blend: pl.blend, visible: pl.visible, parentId: pl.parentId, childIds: [...pl.childIds] });
-          layers.push(l);
-        } else if (pl.shape) {
-          const l = createShapeLayer(pl.name, cloneShape(pl.shape), pl.id);
-          l.opacity = pl.opacity;
-          l.blend = pl.blend;
-          l.visible = pl.visible;
-          l.parentId = pl.parentId;
-          l.childIds = [...pl.childIds];
-          layers.push(l);
-        }
+        const index = (counters.get(pl.type) ?? 0) + 1;
+        counters.set(pl.type, index);
+        const layer = await restoreLayerFrom(pl, { artboard: eng.artboard }, index);
+        if (layer) layers.push(layer);
       }
       if (!layers.some((l) => l.type === 'raster')) {
         const fallback = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
@@ -467,8 +374,7 @@ export class ProjectService {
       ls.layers = layers;
       ls.rootLayerIds = [...proj.rootLayerIds];
       ls.activeLayerId = proj.activeLayerId ?? '';
-      ls.layerCounter = layers.filter((l) => l.type === 'raster').length;
-      ls.adjustCounter = layers.filter((l) => l.type === 'adjust').length;
+      ls.resetCountersFromLayers();
       eng.history = new HistoryTree();
       if (isPersistedHistory(proj.history)) eng.history.restore(proj.history);
       for (const l of layers) ls.bumpLayer(l.id);

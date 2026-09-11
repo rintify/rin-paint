@@ -2,14 +2,13 @@ import { rectValid, type DirtyRect } from '../brush';
 import { HISTORY_PRUNE_DEFAULT } from '../history/constants';
 import {
   HistoryTree,
-  type LayerProps,
   type Op,
 } from '../history/historyTree';
 import { applyTiles, extractTiles } from '../history/tilePatch';
+import { objectTransformProps } from '../layer-types/registry';
 import type { RasterLayer } from '../layers';
 import type { PaintEngine, SelectedObjectTransform } from '../PaintEngine';
 import { useStore } from '../../state/store';
-import { cloneShape } from '../shapes';
 
 /** Owns HistoryTree and undo/redo / raster commit helpers. */
 export class HistoryService {
@@ -131,7 +130,7 @@ export class HistoryService {
         });
         for (const change of op.maskChanges ?? []) {
           const layer = ls.byId(change.layerId);
-          if (layer?.type === 'adjust') layer.maskLayerIds = [...(dir === 'undo' ? change.before : change.after)];
+          if (layer) ls.assignProps(layer, { maskLayerIds: [...(dir === 'undo' ? change.before : change.after)] });
         }
         break;
       }
@@ -139,7 +138,7 @@ export class HistoryService {
         const applyMaskChanges = () => {
           for (const change of op.maskChanges ?? []) {
             const layer = ls.byId(change.layerId);
-            if (layer?.type === 'adjust') layer.maskLayerIds = [...(dir === 'undo' ? change.before : change.after)];
+            if (layer) ls.assignProps(layer, { maskLayerIds: [...(dir === 'undo' ? change.before : change.after)] });
           }
         };
         const target = ls.rasterById(op.targetLayerId);
@@ -184,8 +183,7 @@ export class HistoryService {
     for (const entry of objects) {
       const layer = eng.layerService.byId(entry.id);
       if (!layer) continue;
-      const after: LayerProps = layer.type === 'shape' ? { shape: cloneShape(layer.shape) } : layer.type === 'text' ? { text: structuredClone(layer.text) } : {};
-      operations.push({ kind: 'layerProps', layerId: entry.id, before: entry.before, after });
+      operations.push({ kind: 'layerProps', layerId: entry.id, before: entry.before, after: objectTransformProps(layer) });
     }
     if (!operations.length) return;
     const node = this.history.push(operations.length === 1 ? operations[0] : { kind: 'batch', ops: operations }, label);

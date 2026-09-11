@@ -17,23 +17,18 @@ import {
 } from '@mui/material';
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { getToolDescriptor } from '../../tools/registry';
 import { useStore } from '../../state/store';
-import { normalizeTextToolSettings, TOOL_KIND_LABELS, type ToolInstance } from '../../types';
+import type { ToolInstance } from '../../types';
 import { useEngine } from '../EngineContext';
 import { useFlipAnimation } from '../hooks/useFlipAnimation';
 import { useOutsideClick } from '../hooks/useOutsideClick';
 import { NameEditor } from '../NameEditor';
 import { AddToolDialog } from './AddToolDialog';
-import { TOOL_ICONS } from './toolCatalog';
 
 function toolSummary(tool: ToolInstance): string {
-  if (tool.kind === 'text') {
-    const settings = normalizeTextToolSettings(tool.textSettings);
-    return `${settings.sizePt}pt・${settings.direction === 'vertical' ? '縦書き' : '横書き'}`;
-  }
-  if (tool.kind === 'lasso') return '選択・変形';
-  if (tool.kind === 'blur') return `${tool.size}px`;
-  return `${tool.size}px・${tool.color === 'transparent' ? '透明' : tool.color}`;
+  return getToolDescriptor(tool.kind)?.summary?.(tool)
+    ?? `${tool.size}px・${tool.color === 'transparent' ? '透明' : tool.color}`;
 }
 
 export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
@@ -156,10 +151,11 @@ export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
       height: rect.height,
       name: tool?.name ?? stack?.name ?? '',
       icons: tool
-        ? [TOOL_ICONS[tool.kind]]
+        ? [getToolDescriptor(tool.kind)?.icon].filter(Boolean)
         : (stack?.toolIds ?? []).slice(0, 4).flatMap(id => {
             const member = tools.find(t => t.id === id);
-            return member ? [TOOL_ICONS[member.kind]] : [];
+            const icon = member ? getToolDescriptor(member.kind)?.icon : undefined;
+            return icon ? [icon] : [];
           }),
     };
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -316,6 +312,7 @@ export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
                 const tool = tools.find(value => value.id === item.toolId);
                 if (!tool) return null;
                 const isEditing = editing?.type === 'tool' && editing.id === tool.id;
+                const descriptor = getToolDescriptor(tool.kind);
                 return (
                   <Box
                     key={tool.id}
@@ -333,7 +330,7 @@ export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
                     }}
                   >
                     <Box className="manage-tool-card-top">
-                      <Box className="manage-tool-icon">{TOOL_ICONS[tool.kind]}</Box>
+                      <Box className="manage-tool-icon">{descriptor?.icon}</Box>
                       <Box sx={{ flex: 1, minWidth: 0 }}>
                         {!isEditing && (
                           <Typography variant="body2" noWrap sx={{ fontWeight: 650 }}>{tool.name}</Typography>
@@ -357,7 +354,7 @@ export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
                     </Box>
                     <Box className="manage-tool-card-actions">
                       <Typography variant="caption" color="text.secondary">
-                        {TOOL_KIND_LABELS[tool.kind]}
+                        {descriptor?.label ?? tool.kind}
                       </Typography>
                       <IconButton
                         size="small"
@@ -405,7 +402,9 @@ export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
                   >
                     <Box className="manage-tool-card-top">
                       <Box className="manage-stack-preview">
-                        {members.slice(0, 4).map(tool => <Box key={tool.id}>{TOOL_ICONS[tool.kind]}</Box>)}
+                        {members.slice(0, 4).map(tool => (
+                          <Box key={tool.id}>{getToolDescriptor(tool.kind)?.icon}</Box>
+                        ))}
                       </Box>
                       <Box sx={{ flex: 1, minWidth: 0 }}>
                         {!isEditing && (
@@ -479,7 +478,7 @@ export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
                               }}
                             >
                               <Box className="manage-tool-card-top">
-                                <Box className="manage-tool-icon">{TOOL_ICONS[tool.kind]}</Box>
+                                <Box className="manage-tool-icon">{getToolDescriptor(tool.kind)?.icon}</Box>
                                 <Box sx={{ minWidth: 0, flex: 1 }}>
                                   {!memberEditing && (
                                     <Typography variant="body2" noWrap>{tool.name}</Typography>
