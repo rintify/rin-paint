@@ -1,5 +1,8 @@
 import type {
   PenDetailSettings,
+  FillToolSettings,
+  PolygonSplitToolSettings,
+  ShapeToolSettings,
   ShapeParams,
   StrokePoint,
   TextParams,
@@ -17,6 +20,9 @@ export interface ActiveToolSettings {
   size: number;
   penSettings?: PenDetailSettings;
   textSettings?: TextToolSettings;
+  fillSettings?: FillToolSettings;
+  shapeSettings?: ShapeToolSettings;
+  polygonSplitSettings?: PolygonSplitToolSettings;
 }
 
 export interface ToolContext {
@@ -53,6 +59,10 @@ export interface ToolContext {
   commitObjectGroup(entries: SelectedObjectTransform[]): void;
   restoreObjectGroup(entries: SelectedObjectTransform[]): void;
   setSelectionState(state: { active: boolean; freeTransform: boolean }): void;
+  setPolygonDraftState(state: { active: boolean; pointCount: number }): void;
+  notify(message: string): void;
+  fillAt(point: StrokePoint): void;
+  splitPolygons(a: StrokePoint, b: StrokePoint): void;
 }
 
 export interface ToolSession {

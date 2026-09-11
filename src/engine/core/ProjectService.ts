@@ -3,6 +3,9 @@ import {
   DEFAULT_ADJUST,
   DEFAULT_CANVAS,
   normalizePenDetailSettings,
+  normalizeFillToolSettings,
+  normalizePolygonSplitToolSettings,
+  normalizeShapeToolSettings,
   normalizeTextToolSettings,
   type ToolInstance,
   type CanvasSpec,
@@ -26,6 +29,8 @@ import {
   loadProjectMeta,
   loadTimelapseEnabled,
   replaceProject,
+  savePage,
+  saveProjectMeta,
   setPersistencePageId,
   type SavedPage,
   type SavedProjectMeta,
@@ -39,6 +44,7 @@ import { downloadBlob } from '../timelapse/exporter';
 import { loadFonts } from '../text/render';
 import { canvasPixels, validateCanvasSpec, scaleShape, pngWithPpi } from '../canvasSpec';
 import { TOOL_KINDS } from '../tools/registry';
+import { cloneShape } from '../shapes';
 import type { PaintEngine } from '../PaintEngine';
 
 function toBlobP(c: HTMLCanvasElement): Promise<Blob> {
@@ -68,6 +74,13 @@ export class ProjectService {
     ).map((tool) => {
       if (tool.kind === 'pen') return { ...tool, penSettings: normalizePenDetailSettings(tool.penSettings) };
       if (tool.kind === 'text') return { ...tool, textSettings: normalizeTextToolSettings(tool.textSettings) };
+      if (tool.kind === 'fill') return { ...tool, fillSettings: normalizeFillToolSettings(tool.fillSettings) };
+      if (tool.kind === 'rect' || tool.kind === 'ellipse' || tool.kind === 'polygon') {
+        return { ...tool, shapeSettings: normalizeShapeToolSettings(tool.shapeSettings) };
+      }
+      if (tool.kind === 'polygonSplit') {
+        return { ...tool, polygonSplitSettings: normalizePolygonSplitToolSettings(tool.polygonSplitSettings) };
+      }
       return tool;
     });
     const st = useStore.getState();
@@ -105,7 +118,8 @@ export class ProjectService {
       } else if (sl.type === 'text' && sl.text) {
         layer = createTextLayer(sl.name, { ...structuredClone(sl.text), rotation: sl.text.rotation ?? 0 }, sl.id);
       } else if (sl.shape) {
-        layer = createShapeLayer(sl.name, { ...sl.shape, ...(sl.shape.kind === 'line' ? {} : { rotation: sl.shape.rotation ?? 0 }) }, sl.id);
+        const shape = cloneShape(sl.shape);
+        layer = createShapeLayer(sl.name, shape.kind === 'line' ? shape : { ...shape, rotation: shape.rotation ?? 0 }, sl.id);
       } else continue;
       Object.assign(layer, { opacity: sl.opacity, blend: sl.blend, visible: sl.visible, parentId: sl.parentId, childIds: [...sl.childIds] });
       ls.layers.push(layer);
@@ -132,10 +146,15 @@ export class ProjectService {
     } catch {
       // 設定を読めない場合も、既定値のオンでプロジェクト復元を続ける。
     }
+    let persistedDataFound = false;
+    let restoreFailed = false;
     try {
       const meta = await loadProjectMeta();
+      persistedDataFound = !!meta;
       if (meta?.version === PROJECT_VERSION && meta.pageOrder.length) {
-        const page = await loadPage(meta.activePageId);
+        const restoredPages = await Promise.all(meta.pageOrder.map(loadPage));
+        if (restoredPages.some(page => !page)) throw new Error('一部のページを読み込めませんでした');
+        const page = restoredPages.find(value => value?.id === meta.activePageId);
         if (page && page.layers.length > 0 && !validateCanvasSpec(page.canvasSpec)) {
           pages.pageOrder = [...meta.pageOrder];
           pages.activePageId = meta.activePageId;
@@ -149,12 +168,18 @@ export class ProjectService {
           });
           this.restoreTools(meta.tools, meta.activeToolId, meta.toolLayout, meta.toolStacks);
           await this.restoreSavedPage(page);
+          await Promise.all([
+            saveProjectMeta(meta),
+            ...(restoredPages as SavedPage[]).map(saved => savePage(saved)),
+          ]);
           useStore.getState().set({ canvasW: eng.artboard.w, canvasH: eng.artboard.h, canvasSpec: { ...this.canvasSpec } });
         }
       }
     } catch {
+      restoreFailed = true;
       ls.layers = [];
     }
+    if (persistedDataFound && ls.layers.length === 0) restoreFailed = true;
     if (ls.layers.length === 0) {
       const l = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
       ls.layers.push(l);
@@ -167,7 +192,7 @@ export class ProjectService {
     }
     ls.fixActive();
     eng.setLastViewState(eng.view.snapshot());
-    eng.autosave.initialized = true;
+    eng.autosave.initialized = !restoreFailed;
     useStore.getState().set({
       pages: pages.pageOrder.map(id => ({ id, thumbnailVersion: id === pages.activePageId ? pages.thumbnailVersion : 0 })),
       activePageId: pages.activePageId,
@@ -175,7 +200,11 @@ export class ProjectService {
     });
     eng.compositor.syncTextRenders();
     eng.scheduleStorageRefresh();
-    eng.scheduleSave();
+    if (restoreFailed) {
+      useStore.getState().set({ toolNotice: '保存データを復元できなかったため、自動保存を停止しました。新規作成または読込を選んでください。' });
+    } else {
+      eng.scheduleSave();
+    }
   }
 
   canvasSnapshot(): CanvasSnapshot {
@@ -420,7 +449,7 @@ export class ProjectService {
           Object.assign(l, { opacity: pl.opacity, blend: pl.blend, visible: pl.visible, parentId: pl.parentId, childIds: [...pl.childIds] });
           layers.push(l);
         } else if (pl.shape) {
-          const l = createShapeLayer(pl.name, { ...pl.shape }, pl.id);
+          const l = createShapeLayer(pl.name, cloneShape(pl.shape), pl.id);
           l.opacity = pl.opacity;
           l.blend = pl.blend;
           l.visible = pl.visible;

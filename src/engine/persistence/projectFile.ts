@@ -1,6 +1,6 @@
 import type { SavedPage, SavedProjectMeta } from './db';
-import { isSavedPage, isSavedProjectMeta } from './schema';
-import { PROJECT_MAGIC, PROJECT_VERSION } from './version';
+import { migrateProjectMeta, migrateSavedPage } from './migrate';
+import { LEGACY_PROJECT_MAGIC, PROJECT_MAGIC, PROJECT_VERSION } from './version';
 
 export interface ProjectFile {
   app: 'rin-paint';
@@ -75,8 +75,10 @@ export async function packProjectFile(project: ProjectFile): Promise<Blob> {
 
 export async function unpackProjectFile(file: Blob): Promise<ProjectFile> {
   const header = new Uint8Array(await file.slice(0, MAGIC.length + 4).arrayBuffer());
-  if (header.length < MAGIC.length + 4 || !MAGIC.every((byte, index) => header[index] === byte)) {
-    throw new Error('rin-paint v5 のプロジェクトファイルではありません');
+  const legacyMagic = new TextEncoder().encode(LEGACY_PROJECT_MAGIC);
+  const matches = (magic: Uint8Array) => magic.every((byte, index) => header[index] === byte);
+  if (header.length < MAGIC.length + 4 || (!matches(MAGIC) && !matches(legacyMagic))) {
+    throw new Error('rin-paint v5/v6 のプロジェクトファイルではありません');
   }
   const manifestLength = new DataView(header.buffer, header.byteOffset + MAGIC.length, 4).getUint32(0, true);
   const start = MAGIC.length + 4;
@@ -89,16 +91,14 @@ export async function unpackProjectFile(file: Blob): Promise<ProjectFile> {
     offset += size;
     return blob;
   });
-  const project = (await decodeValue(manifest.data, blobs)) as ProjectFile;
-  if (
-    project?.app !== 'rin-paint' ||
-    project.version !== PROJECT_VERSION ||
-    !isSavedProjectMeta(project.meta) ||
-    !Array.isArray(project.pages) ||
-    !project.pages.length ||
-    !project.pages.every(isSavedPage)
-  ) {
-    throw new Error('rin-paint v5 のプロジェクトファイルではありません');
+  const raw = (await decodeValue(manifest.data, blobs)) as Record<string, unknown>;
+  if (raw?.app !== 'rin-paint' || (raw.version !== 5 && raw.version !== PROJECT_VERSION) || !Array.isArray(raw.pages) || !raw.pages.length) {
+    throw new Error('rin-paint v5/v6 のプロジェクトファイルではありません');
   }
-  return project;
+  return {
+    app: 'rin-paint',
+    version: PROJECT_VERSION,
+    meta: migrateProjectMeta(raw.meta),
+    pages: raw.pages.map(migrateSavedPage),
+  };
 }

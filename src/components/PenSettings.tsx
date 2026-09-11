@@ -5,6 +5,9 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControl,
+  MenuItem,
+  Select,
   Slider,
   Stack,
   Typography,
@@ -14,8 +17,12 @@ import { useEngine } from './EngineContext';
 import { useStore } from '../state/store';
 import {
   normalizePenDetailSettings,
+  normalizeFillToolSettings,
+  normalizePolygonSplitToolSettings,
+  normalizeShapeToolSettings,
   TRANSPARENT,
   type PenDetailSettings,
+  type ShapePaintMode,
 } from '../model';
 
 export function PenSettings() {
@@ -27,6 +34,7 @@ export function PenSettings() {
     s.tools.find((tool) => tool.id === s.activeToolId),
   );
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const activeLayer = useStore((s) => s.layers.find(layer => layer.id === s.activeLayerId));
 
   useEffect(() => {
     if (!detailsOpen) return;
@@ -38,6 +46,30 @@ export function PenSettings() {
   }, [detailsOpen]);
 
   if (kind === 'lasso' || kind === 'text') return null;
+  if (kind === 'fill') {
+    const settings = normalizeFillToolSettings(activeTool?.fillSettings);
+    return (
+      <Box className="section">
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1, letterSpacing: 1 }}>
+          塗りつぶし設定
+        </Typography>
+        <DetailSlider label="隙間閉じ (px)" value={settings.gapClosePx} max={64} onChange={value => engine.setFillSettings({ gapClosePx: value })} />
+        <DetailSlider label="色の誤差許容" value={settings.colorTolerance} onChange={value => engine.setFillSettings({ colorTolerance: value })} />
+        {(!activeLayer || activeLayer.type !== 'raster' || !activeLayer.visible) && (
+          <Typography variant="caption" color="error">表示中のラスターレイヤーを主選択してください。</Typography>
+        )}
+      </Box>
+    );
+  }
+  if (kind === 'polygonSplit') {
+    const settings = normalizePolygonSplitToolSettings(activeTool?.polygonSplitSettings);
+    return (
+      <Box className="section">
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1, letterSpacing: 1 }}>分断幅</Typography>
+        <DetailSlider label="帯全体 (px)" value={settings.width} max={128} onChange={engine.setPolygonSplitWidth.bind(engine)} />
+      </Box>
+    );
+  }
   const d = Math.min(penSize, 32);
   const transparent = penColor === TRANSPARENT;
   const penDetails = normalizePenDetailSettings(activeTool?.penSettings);
@@ -47,7 +79,7 @@ export function PenSettings() {
   const title =
     kind === 'blur'
       ? 'ぼかしの太さ'
-      : kind === 'line' || kind === 'rect' || kind === 'ellipse'
+      : kind === 'line' || kind === 'rect' || kind === 'ellipse' || kind === 'polygon'
         ? '線の太さ'
         : 'ペンの太さ';
 
@@ -106,6 +138,21 @@ export function PenSettings() {
             {penSize}
           </Typography>
         </Stack>
+        {(kind === 'rect' || kind === 'ellipse' || kind === 'polygon') && (
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mt: 1.25 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>描画方式</Typography>
+            <FormControl size="small" fullWidth>
+              <Select
+                value={normalizeShapeToolSettings(activeTool?.shapeSettings).paintMode}
+                onChange={event => engine.setShapePaintMode(event.target.value as ShapePaintMode)}
+              >
+                <MenuItem value="stroke">輪郭</MenuItem>
+                <MenuItem value="fill-inside">内側塗りつぶし</MenuItem>
+                <MenuItem value="fill-outside">外側塗りつぶし</MenuItem>
+              </Select>
+            </FormControl>
+          </Stack>
+        )}
       </Box>
       <Dialog open={detailsOpen && kind === 'pen'} onClose={() => setDetailsOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>ペンの詳細設定</DialogTitle>
@@ -146,10 +193,12 @@ function DetailSlider({
   label,
   value,
   onChange,
+  max = 100,
 }: {
   label: string;
   value: number;
   onChange: (value: number) => void;
+  max?: number;
 }) {
   return (
     <Box
@@ -164,7 +213,7 @@ function DetailSlider({
       <Typography variant="body2">{label}</Typography>
       <Slider
         min={0}
-        max={100}
+        max={max}
         value={value}
         onChange={(_, v) => onChange(Array.isArray(v) ? v[0] : v)}
       />

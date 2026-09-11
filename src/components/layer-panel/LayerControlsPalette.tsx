@@ -9,7 +9,6 @@ import {
   Select,
   Slider,
   Stack,
-  Switch,
   Typography,
 } from '@mui/material';
 import { useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
@@ -18,7 +17,8 @@ import { TextControls } from '../TextControls';
 import { useStore } from '../../state/store';
 import { BLEND_OPTIONS, type AdjustParams, type BlendMode, type LayerMeta } from '../../model';
 import { MaskControls } from './MaskControls';
-import { MultiShapeControls, ShapeControls } from './ShapeControlsPanel';
+import { ShapeControls } from './ShapeControlsPanel';
+import { MultiParameterControls } from './MultiParameterControls';
 
 function CommitSlider({
   value,
@@ -170,75 +170,15 @@ function LayerControls({ meta }: { meta: LayerMeta }) {
 }
 
 function MultiLayerControls() {
-  const engine = useEngine();
   const layers = useStore(s => s.layers);
   const ids = useStore(s => s.selectedLayerIds);
   const selected = layers.filter(layer => ids.includes(layer.id));
-  const common = <T,>(read: (layer: LayerMeta) => T): T | null => {
-    if (!selected.length) return null;
-    const first = read(selected[0]);
-    return selected.every(layer => Object.is(read(layer), first)) ? first : null;
-  };
-  const opacity = common(layer => Math.round(layer.opacity * 100));
-  const visible = common(layer => layer.visible);
-  const blend = common(layer => layer.blend);
-  const opacityBefore = useRef<Record<string, number> | null>(null);
   return (
     <Stack spacing={1.25}>
       <Typography variant="caption" color="text.secondary">
         {selected.length}レイヤーの共通設定。異なる値は「—」で表示します。
       </Typography>
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-        <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>表示</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-          {visible === null ? '—' : visible ? '表示' : '非表示'}
-        </Typography>
-        <Switch
-          checked={visible ?? false}
-          onChange={event =>
-            engine.commitSelectedLayerProps({}, { visible: event.target.checked }, '複数レイヤーの表示')}
-        />
-      </Stack>
-      <OpacityControl
-        value={opacity}
-        onPreview={value => {
-          if (!opacityBefore.current) {
-            opacityBefore.current = Object.fromEntries(selected.map(layer => [layer.id, layer.opacity]));
-          }
-          engine.previewSelectedLayerProps({ opacity: value / 100 });
-        }}
-        onCommit={(_, value) => {
-          engine.commitSelectedLayerOpacity(
-            opacityBefore.current
-              ?? Object.fromEntries(selected.map(layer => [layer.id, layer.opacity])),
-            value / 100,
-          );
-          opacityBefore.current = null;
-        }}
-      />
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-        <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>合成</Typography>
-        <FormControl size="small" fullWidth>
-          <Select
-            displayEmpty
-            value={blend ?? ''}
-            onChange={event =>
-              engine.commitSelectedLayerProps(
-                {},
-                { blend: event.target.value as BlendMode },
-                '複数レイヤーの合成モード',
-              )}
-          >
-            {!blend && <MenuItem value="" disabled>—</MenuItem>}
-            {BLEND_OPTIONS.map(option => (
-              <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-      </Stack>
-      {selected.length > 0
-        && selected.every(layer => layer.type === 'shape' && layer.shape)
-        && <MultiShapeControls shapes={selected.map(layer => layer.shape!)} />}
+      <MultiParameterControls layers={selected} />
     </Stack>
   );
 }

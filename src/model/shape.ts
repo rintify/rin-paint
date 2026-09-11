@@ -1,4 +1,11 @@
-export type ShapeKind = 'line' | 'rect' | 'ellipse';
+export type ShapeKind = 'line' | 'rect' | 'ellipse' | 'polygon';
+
+export type ShapePaintMode = 'stroke' | 'fill-inside' | 'fill-outside';
+
+export interface ShapePoint {
+  x: number;
+  y: number;
+}
 
 export interface LineShapeParams {
   kind: 'line';
@@ -7,7 +14,7 @@ export interface LineShapeParams {
   x2: number;
   y2: number;
   color: string;
-  width: number;
+  strokeWidth: number;
 }
 
 export interface RectShapeParams {
@@ -18,6 +25,7 @@ export interface RectShapeParams {
   height: number;
   color: string;
   strokeWidth: number;
+  paintMode: ShapePaintMode;
   /** 中心基準の回転角（ラジアン） */
   rotation?: number;
 }
@@ -30,8 +38,30 @@ export interface EllipseShapeParams {
   ry: number;
   color: string;
   strokeWidth: number;
+  paintMode: ShapePaintMode;
   /** 中心基準の回転角（ラジアン） */
   rotation?: number;
 }
 
-export type ShapeParams = LineShapeParams | RectShapeParams | EllipseShapeParams;
+export interface PolygonShapeParams {
+  kind: 'polygon';
+  cx: number;
+  cy: number;
+  /** 中心座標からの相対頂点。3点以上、自己交差なし。 */
+  points: ShapePoint[];
+  color: string;
+  strokeWidth: number;
+  paintMode: ShapePaintMode;
+  /** 中心基準の回転角（ラジアン） */
+  rotation?: number;
+}
+
+export type ShapeParams =
+  | LineShapeParams
+  | RectShapeParams
+  | EllipseShapeParams
+  | PolygonShapeParams;
+
+export function normalizeShapePaintMode(value: unknown): ShapePaintMode {
+  return value === 'fill-inside' || value === 'fill-outside' ? value : 'stroke';
+}

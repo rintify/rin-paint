@@ -1,6 +1,6 @@
 import { useStore } from '../../state/store';
 import type { LayerProps } from '../history/historyTree';
-import { shapeBounds } from '../shapes';
+import { cloneShape, shapeBounds } from '../shapes';
 import type { DirtyRect } from '../brush';
 import type { PaintEngine, SelectedObjectTransform } from '../PaintEngine';
 
@@ -40,7 +40,7 @@ export class ObjectTransform {
         bounds = { x: layer.text.x, y: layer.text.y, w: width, h: height };
       }
       if (bounds.x > rect.maxX || bounds.y > rect.maxY || bounds.x + bounds.w < rect.minX || bounds.y + bounds.h < rect.minY || !intersectsPolygon(bounds)) return [];
-      return [{ id: layer.id, before: layer.type === 'shape' ? { shape: { ...layer.shape } } : { text: structuredClone(layer.text) }, width, height }];
+      return [{ id: layer.id, before: layer.type === 'shape' ? { shape: cloneShape(layer.shape) } : { text: structuredClone(layer.text) }, width, height }];
     });
   }
 
@@ -58,9 +58,10 @@ export class ObjectTransform {
       const layer = eng.layerService.byId(entry.id);
       if (layer?.type === 'shape' && entry.before.shape) {
         const shape = entry.before.shape;
-        if (shape.kind === 'line') { const a = transform(shape.x1, shape.y1), b = transform(shape.x2, shape.y2); layer.shape = { ...shape, x1: a.x, y1: a.y, x2: b.x, y2: b.y, width: shape.width * scale }; }
+        if (shape.kind === 'line') { const a = transform(shape.x1, shape.y1), b = transform(shape.x2, shape.y2); layer.shape = { ...shape, x1: a.x, y1: a.y, x2: b.x, y2: b.y, strokeWidth: shape.strokeWidth * scale }; }
         else if (shape.kind === 'rect') { const c = transform(shape.x + shape.width / 2, shape.y + shape.height / 2), w = shape.width * scale, h = shape.height * scale; layer.shape = { ...shape, x: c.x - w / 2, y: c.y - h / 2, width: w, height: h, strokeWidth: shape.strokeWidth * scale, rotation: (shape.rotation ?? 0) + angle }; }
-        else { const c = transform(shape.cx, shape.cy); layer.shape = { ...shape, cx: c.x, cy: c.y, rx: shape.rx * scale, ry: shape.ry * scale, strokeWidth: shape.strokeWidth * scale, rotation: (shape.rotation ?? 0) + angle }; }
+        else if (shape.kind === 'ellipse') { const c = transform(shape.cx, shape.cy); layer.shape = { ...shape, cx: c.x, cy: c.y, rx: shape.rx * scale, ry: shape.ry * scale, strokeWidth: shape.strokeWidth * scale, rotation: (shape.rotation ?? 0) + angle }; }
+        else { const c = transform(shape.cx, shape.cy); layer.shape = { ...shape, cx: c.x, cy: c.y, points: shape.points.map(point => ({ x: point.x * scale, y: point.y * scale })), strokeWidth: shape.strokeWidth * scale, rotation: (shape.rotation ?? 0) + angle }; }
       } else if (layer?.type === 'text' && entry.before.text) {
         const text = entry.before.text, width = entry.width ?? text.width ?? 100, height = entry.height ?? text.height ?? 60;
         const center = transform(text.x + width / 2, text.y + height / 2), nextWidth = width * scale, nextHeight = height * scale;
@@ -76,7 +77,7 @@ export class ObjectTransform {
     const ops = entries.flatMap(entry => {
       const layer = eng.layerService.byId(entry.id);
       if (!layer) return [];
-      const after: LayerProps = layer.type === 'shape' ? { shape: { ...layer.shape } } : layer.type === 'text' ? { text: structuredClone(layer.text) } : {};
+      const after: LayerProps = layer.type === 'shape' ? { shape: cloneShape(layer.shape) } : layer.type === 'text' ? { text: structuredClone(layer.text) } : {};
       return [{ kind: 'layerProps' as const, layerId: entry.id, before: entry.before, after }];
     });
     if (!ops.length) return;

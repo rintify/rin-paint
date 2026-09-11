@@ -43,6 +43,25 @@ export interface LocatedLayerSnapshot {
   snapshot: LayerSnapshot;
 }
 
+export interface LayerSelectionSnapshot {
+  activeLayerId: string;
+  selectedLayerIds: string[];
+  multiSelectMode: boolean;
+}
+
+export interface LayerReplaceSide {
+  rootIds: string[];
+  entries: LocatedLayerSnapshot[];
+  selection: LayerSelectionSnapshot;
+}
+
+export interface LayerReplaceOp {
+  kind: 'layerReplace';
+  before: LayerReplaceSide;
+  after: LayerReplaceSide;
+  maskChanges?: { layerId: string; before: string[]; after: string[] }[];
+}
+
 export interface TileLayerMergeOp {
   kind: 'layerMerge';
   format: 'tiles-v1';
@@ -63,6 +82,7 @@ export type AtomicOp =
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: LayerSnapshot[] }
   | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
+  | LayerReplaceOp
   | LayerMergeOp;
 
 export type Op = AtomicOp | { kind: 'batch'; ops: AtomicOp[] };
@@ -104,6 +124,15 @@ export interface PersistedTileLayerMergeOp {
   maskChanges?: { layerId: string; before: string[]; after: string[] }[];
 }
 
+export interface PersistedLayerReplaceSide extends Omit<LayerReplaceSide, 'entries'> {
+  entries: { location: LayerLocation; snapshot: PersistedLayerSnapshot }[];
+}
+
+export interface PersistedLayerReplaceOp extends Omit<LayerReplaceOp, 'before' | 'after'> {
+  before: PersistedLayerReplaceSide;
+  after: PersistedLayerReplaceSide;
+}
+
 export type PersistedAtomicOp =
   | { kind: 'canvasChange'; before: PersistedCanvasSnapshot; after: PersistedCanvasSnapshot }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
@@ -111,6 +140,7 @@ export type PersistedAtomicOp =
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: PersistedLayerSnapshot[] }
   | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
+  | PersistedLayerReplaceOp
   | PersistedTileLayerMergeOp;
 
 export type PersistedOp = PersistedAtomicOp | { kind: 'batch'; ops: PersistedAtomicOp[] };
@@ -196,6 +226,23 @@ export class HistoryTree {
           return { ...op };
         case 'layerProps':
           return { ...op, before: { ...op.before }, after: { ...op.after } };
+        case 'layerReplace': {
+          const side = async (value: LayerReplaceSide): Promise<PersistedLayerReplaceSide> => ({
+            ...value,
+            rootIds: [...value.rootIds],
+            selection: { ...value.selection, selectedLayerIds: [...value.selection.selectedLayerIds] },
+            entries: await Promise.all(value.entries.map(async entry => ({
+              location: { ...entry.location },
+              snapshot: await snapshot(entry.snapshot),
+            }))),
+          });
+          return {
+            ...op,
+            before: await side(op.before),
+            after: await side(op.after),
+            maskChanges: op.maskChanges?.map(change => ({ ...change, before: [...change.before], after: [...change.after] })),
+          };
+        }
         case 'layerMerge':
           return {
             ...op,

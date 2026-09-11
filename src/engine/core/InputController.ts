@@ -51,6 +51,11 @@ export class InputController {
 
   constructor(private engine: PaintEngine) {}
 
+  private beginEditableShape(point: StrokePoint, event: PointerEvent): boolean {
+    return useStore.getState().tool !== 'polygonSplit'
+      && this.engine.beginShapeEdit(point, event);
+  }
+
   attachListeners(area: HTMLElement): void {
     this.area = area;
     area.addEventListener('pointerdown', this.onPointerDown);
@@ -235,7 +240,7 @@ export class InputController {
       if (moved <= EYEDROPPER_MOVE_TOLERANCE_PX) return;
       clearTimeout(pending.timer);
       this.pendingPress = null;
-      if (!eng.beginShapeEdit(pending.start, e)) eng.activeTool().onDown(pending.start, e);
+      if (!this.beginEditableShape(pending.start, e)) eng.activeTool().onDown(pending.start, e);
     }
     if (eng.hasShapeEdit()) {
       eng.updateShapeEdit(this.toPoint(e), e);
@@ -277,7 +282,7 @@ export class InputController {
       clearTimeout(pending.timer);
       this.pendingPress = null;
       const tool = eng.activeTool();
-      if (eng.beginShapeEdit(pending.start, e)) eng.finishShapeEdit(this.toPoint(e));
+      if (this.beginEditableShape(pending.start, e)) eng.finishShapeEdit(this.toPoint(e));
       else {
         tool.onDown(pending.start, e);
         tool.onUp(this.toPoint(e), e);

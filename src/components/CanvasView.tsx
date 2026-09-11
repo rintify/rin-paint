@@ -1,4 +1,4 @@
-import { Box, Button, Chip, Paper } from '@mui/material';
+import { Box, Button, Chip, LinearProgress, Paper, Snackbar, Typography } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import { useEngine } from './EngineContext';
 import { useStore } from '../state/store';
@@ -48,6 +48,12 @@ export function CanvasView() {
   const objectSelected = useStore((s) => s.selectedLayerIds.some(id => { const layer = s.layers.find(item => item.id === id); return layer?.type === 'shape' || layer?.type === 'text'; }));
   const canvasW = useStore((s) => s.canvasW);
   const canvasH = useStore((s) => s.canvasH);
+  const polygonDraftActive = useStore((s) => s.polygonDraftActive);
+  const polygonDraftPointCount = useStore((s) => s.polygonDraftPointCount);
+  const polygonVertexSelected = useStore((s) => s.polygonVertexSelected);
+  const polygonVertexCanDelete = useStore((s) => s.polygonVertexCanDelete);
+  const fillProgress = useStore((s) => s.fillProgress);
+  const toolNotice = useStore((s) => s.toolNotice);
 
   useEffect(() => {
     const el = areaRef.current!;
@@ -144,9 +150,34 @@ export function CanvasView() {
           <Button onClick={() => engine.lassoCancel()}>キャンセル</Button>
         </Paper>
       )}
+      {polygonDraftActive && (
+        <Paper elevation={6} data-canvas-ui sx={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 1, p: 1, zIndex: 6 }}>
+          <Button disabled={polygonDraftPointCount === 0} onClick={() => engine.polygonUndoPoint()}>1点戻す</Button>
+          <Button variant="contained" disabled={polygonDraftPointCount < 3} onClick={() => engine.polygonCommit()}>確定</Button>
+          <Button onClick={() => engine.polygonCancel()}>キャンセル</Button>
+        </Paper>
+      )}
+      {!polygonDraftActive && polygonVertexSelected && (
+        <Paper elevation={6} data-canvas-ui sx={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 1, p: 1, zIndex: 6 }}>
+          <Button disabled={!polygonVertexCanDelete} onClick={() => engine.deleteSelectedPolygonVertex()}>頂点を削除</Button>
+        </Paper>
+      )}
+      {fillProgress !== null && (
+        <Paper elevation={6} data-canvas-ui sx={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', width: 260, p: 1.25, zIndex: 7 }}>
+          <Typography variant="caption">塗り範囲を計算中…</Typography>
+          <LinearProgress variant="determinate" value={fillProgress * 100} sx={{ my: .75 }} />
+          <Button size="small" onClick={() => engine.cancelFill()}>キャンセル</Button>
+        </Paper>
+      )}
       <ReferenceImageWindow areaRef={areaRef} />
       {dropActive && <Box className="image-drop-hint">画像を参照として開く</Box>}
       <ViewChip />
+      <Snackbar
+        open={!!toolNotice}
+        message={toolNotice ?? ''}
+        autoHideDuration={3500}
+        onClose={() => useStore.getState().set({ toolNotice: null })}
+      />
     </Box>
   );
 }

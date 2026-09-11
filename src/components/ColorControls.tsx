@@ -13,7 +13,7 @@ export function ColorControls() {
   const penColor = useStore((s) => s.penColor);
   const colorHistory = useStore((s) => s.colorHistory);
   const kind = useStore((s) => s.tool);
-  if (kind === 'lasso' || kind === 'blur') return null;
+  if (kind === 'lasso' || kind === 'blur' || kind === 'polygonSplit') return null;
   const transparent = penColor === TRANSPARENT;
   const set = (c: string) => engine.setPenColor(c);
 

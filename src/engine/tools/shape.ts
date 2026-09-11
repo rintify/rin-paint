@@ -1,5 +1,5 @@
-import type { ShapeKind, StrokePoint } from '../../model';
-import { drawShape, shapeFromDrag } from '../shapes';
+import type { StrokePoint } from '../../model';
+import { drawShape, shapeFromDrag, type DragShapeKind } from '../shapes';
 import type { Tool, ToolContext } from './types';
 
 export class ShapeTool implements Tool {
@@ -8,7 +8,7 @@ export class ShapeTool implements Tool {
 
   constructor(
     private ctx: ToolContext,
-    private kind: ShapeKind,
+    private kind: DragShapeKind,
   ) {}
 
   onDown(p: StrokePoint): void {
@@ -26,7 +26,7 @@ export class ShapeTool implements Tool {
     this.cur = null;
     if (!start) return;
     const settings = this.ctx.settings();
-    const shape = shapeFromDrag(this.kind, start, p, settings?.color ?? '#000', settings?.size ?? 14);
+    const shape = shapeFromDrag(this.kind, start, p, settings?.color ?? '#000', settings?.size ?? 14, settings?.shapeSettings?.paintMode);
     if (shape) this.ctx.addShapeLayer(shape);
   }
 
@@ -38,10 +38,10 @@ export class ShapeTool implements Tool {
   drawOverlay(ctx: CanvasRenderingContext2D): void {
     if (!this.start || !this.cur) return;
     const settings = this.ctx.settings();
-    const shape = shapeFromDrag(this.kind, this.start, this.cur, settings?.color ?? '#000', settings?.size ?? 14);
+    const shape = shapeFromDrag(this.kind, this.start, this.cur, settings?.color ?? '#000', settings?.size ?? 14, settings?.shapeSettings?.paintMode);
     if (!shape) return;
     if (shape.color === 'transparent') {
-      drawShape(ctx, { ...shape, color: '#aaaaaa' }, false);
-    } else drawShape(ctx, shape, false);
+      drawShape(ctx, { ...shape, color: '#aaaaaa' }, false, this.ctx.artboard);
+    } else drawShape(ctx, shape, false, this.ctx.artboard);
   }
 }

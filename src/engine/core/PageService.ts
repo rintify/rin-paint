@@ -72,8 +72,10 @@ export class PageService {
 
   async switchPage(id: string): Promise<void> {
     const eng = this.engine;
+    if (useStore.getState().fillProgress !== null) eng.cancelFill();
     if (eng.isBusy() || id === this.activePageId || !this.pageOrder.includes(id)) return;
     eng.layerService.finishFloating();
+    eng.cancelSessions();
     eng.layerService.exitMultiSelect();
     await eng.flushSavePublic();
     await eng.recorderPublic().reset();

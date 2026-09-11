@@ -1,10 +1,25 @@
-export type ToolKind = 'pen' | 'line' | 'rect' | 'ellipse' | 'lasso' | 'blur' | 'text';
+import type { ShapePaintMode } from './shape';
+
+export type ToolKind =
+  | 'pen'
+  | 'line'
+  | 'rect'
+  | 'ellipse'
+  | 'polygon'
+  | 'fill'
+  | 'polygonSplit'
+  | 'lasso'
+  | 'blur'
+  | 'text';
 
 export const TOOL_KIND_LABELS: Record<ToolKind, string> = {
   pen: 'ペン',
   line: '直線',
   rect: '四角',
   ellipse: '楕円',
+  polygon: '多角形',
+  fill: '塗りつぶし',
+  polygonSplit: '多角形分断',
   lasso: '選択',
   blur: 'ぼかし',
   text: '文字',
@@ -24,6 +39,9 @@ export interface ToolInstance {
   penSettings?: PenDetailSettings;
   /** 文字ツールで新しく作る文字の初期書式。 */
   textSettings?: TextToolSettings;
+  fillSettings?: FillToolSettings;
+  shapeSettings?: ShapeToolSettings;
+  polygonSplitSettings?: PolygonSplitToolSettings;
 }
 
 export interface ToolStack {
@@ -45,6 +63,66 @@ export interface TextToolSettings {
   sizePt: number;
   direction: 'horizontal' | 'vertical';
   lineHeight: number;
+}
+
+export interface FillToolSettings {
+  gapClosePx: number;
+  colorTolerance: number;
+}
+
+export interface ShapeToolSettings {
+  paintMode: ShapePaintMode;
+}
+
+export interface PolygonSplitToolSettings {
+  width: number;
+}
+
+export const DEFAULT_FILL_TOOL_SETTINGS: FillToolSettings = {
+  gapClosePx: 0,
+  colorTolerance: 0,
+};
+
+export const DEFAULT_SHAPE_TOOL_SETTINGS: ShapeToolSettings = {
+  paintMode: 'stroke',
+};
+
+export const DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS: PolygonSplitToolSettings = {
+  width: 0,
+};
+
+export function normalizeFillToolSettings(value: unknown): FillToolSettings {
+  const raw = value && typeof value === 'object' ? value as Partial<FillToolSettings> : {};
+  return {
+    gapClosePx: typeof raw.gapClosePx === 'number' && Number.isFinite(raw.gapClosePx)
+      ? Math.max(0, Math.min(64, Math.round(raw.gapClosePx)))
+      : DEFAULT_FILL_TOOL_SETTINGS.gapClosePx,
+    colorTolerance:
+      typeof raw.colorTolerance === 'number' && Number.isFinite(raw.colorTolerance)
+        ? Math.max(0, Math.min(100, Math.round(raw.colorTolerance)))
+        : DEFAULT_FILL_TOOL_SETTINGS.colorTolerance,
+  };
+}
+
+export function normalizeShapeToolSettings(value: unknown): ShapeToolSettings {
+  const raw = value && typeof value === 'object' ? value as Partial<ShapeToolSettings> : {};
+  return {
+    paintMode:
+      raw.paintMode === 'fill-inside' || raw.paintMode === 'fill-outside'
+        ? raw.paintMode
+        : 'stroke',
+  };
+}
+
+export function normalizePolygonSplitToolSettings(value: unknown): PolygonSplitToolSettings {
+  const raw = value && typeof value === 'object'
+    ? value as Partial<PolygonSplitToolSettings>
+    : {};
+  return {
+    width: typeof raw.width === 'number' && Number.isFinite(raw.width)
+      ? Math.max(0, Math.min(128, raw.width))
+      : DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS.width,
+  };
 }
 
 export const DEFAULT_TEXT_TOOL_SETTINGS: TextToolSettings = {

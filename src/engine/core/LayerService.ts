@@ -25,6 +25,8 @@ import {
 import { canReparent, closestRasterOrRoot, structuralLowerId } from '../layerTree';
 import { isEmptyText } from '../text/model';
 import type { PaintEngine } from '../PaintEngine';
+import { cloneShape, polygonFromWorldPoints, shapeCorners } from '../shapes';
+import { layerParameterDescriptors, type LayerParameterValue } from '../layerParameters';
 
 function toBlobP(c: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) =>
@@ -117,7 +119,7 @@ export class LayerService {
       snap.params = { ...l.params };
       snap.maskLayerIds = [...l.maskLayerIds];
     } else if (l.type === 'shape') {
-      snap.shape = { ...l.shape };
+      snap.shape = cloneShape(l.shape);
     } else if (l.type === 'text') {
       snap.text = structuredClone(l.text);
     } else if (withContent) {
@@ -155,7 +157,7 @@ export class LayerService {
     } else if (snap.type === 'text') {
       layer = createTextLayer(snap.name, snap.text!, snap.id);
     } else {
-      layer = createShapeLayer(snap.name, { ...snap.shape! }, snap.id);
+      layer = createShapeLayer(snap.name, cloneShape(snap.shape!), snap.id);
     }
     layer.opacity = snap.opacity;
     layer.blend = snap.blend;
@@ -201,7 +203,7 @@ export class LayerService {
     if (p.visible !== undefined) l.visible = p.visible;
     if (p.params !== undefined && l.type === 'adjust') l.params = { ...p.params };
     if (p.maskLayerIds !== undefined && l.type === 'adjust') l.maskLayerIds = [...p.maskLayerIds];
-    if (p.shape !== undefined && l.type === 'shape') l.shape = { ...p.shape };
+    if (p.shape !== undefined && l.type === 'shape') l.shape = cloneShape(p.shape);
     if (p.text !== undefined && l.type === 'text') l.text = structuredClone(p.text);
   }
 
@@ -254,7 +256,7 @@ export class LayerService {
 
   getShape(id: string): ShapeParams | null {
     const layer = this.shapeById(id);
-    return layer ? { ...layer.shape } : null;
+    return layer ? cloneShape(layer.shape) : null;
   }
 
   getText(id: string): TextParams | null {
@@ -397,7 +399,7 @@ export class LayerService {
     const parentId = closestRasterOrRoot(this.layers, this.activeLayerId);
     const siblings = this.siblingIds(parentId);
     const location: LayerLocation = { parentId, index: siblings.length };
-    const names = { line: '直線', rect: '四角形', ellipse: '楕円' } as const;
+    const names = { line: '直線', rect: '四角形', ellipse: '楕円', polygon: '多角形' } as const;
     const layer = createShapeLayer(names[shape.kind], shape);
     this.layers.push(layer);
     this.insertAt(layer.id, location);
@@ -565,6 +567,28 @@ export class LayerService {
     else this.commitLayerProps(id, { shape: before }, { shape: after }, '図形を編集');
   }
 
+  convertRectToPolygon(id = this.activeLayerId): void {
+    if (this.engine.isBusy()) return;
+    const layer = this.shapeById(id);
+    if (!layer || layer.shape.kind !== 'rect') return;
+    const beforeShape = cloneShape(layer.shape);
+    const beforeName = layer.name;
+    const center = { x: layer.shape.x + layer.shape.width / 2, y: layer.shape.y + layer.shape.height / 2 };
+    const world = shapeCorners(layer.shape);
+    const polygon = polygonFromWorldPoints(world, layer.shape);
+    polygon.cx = center.x; polygon.cy = center.y;
+    polygon.rotation = 0;
+    polygon.points = world.map(point => ({ x: point.x - center.x, y: point.y - center.y }));
+    layer.shape = polygon;
+    if (layer.name === '四角形') layer.name = '多角形';
+    this.engine.history.push({
+      kind: 'layerProps', layerId: layer.id,
+      before: { shape: beforeShape, name: beforeName },
+      after: { shape: cloneShape(layer.shape), name: layer.name },
+    }, '多角形に変換');
+    this.engine.committed();
+  }
+
   renameLayer(id: string, name: string): boolean {
     const layer = this.byId(id);
     if (!layer || !name.trim()) return false;
@@ -579,7 +603,7 @@ export class LayerService {
     const selected = new Set(st.selectedLayerIds.length ? st.selectedLayerIds : [this.activeLayerId]);
     selected.add(id);
     this.activeLayerId = id;
-    if (st.tool !== 'lasso') st.deactivateTool();
+    if (st.tool !== 'lasso' && st.tool !== 'fill' && st.tool !== 'polygonSplit') st.deactivateTool();
     st.set({ multiSelectMode: true, selectedLayerIds: [...selected] });
     this.engine.syncStore();
   }
@@ -599,7 +623,7 @@ export class LayerService {
       const current: LayerProps = {
         opacity: layer.opacity, visible: layer.visible, blend: layer.blend,
         ...(layer.type === 'adjust' ? { params: { ...layer.params }, maskLayerIds: [...layer.maskLayerIds] } : {}),
-        ...(layer.type === 'shape' ? { shape: { ...layer.shape } } : {}),
+        ...(layer.type === 'shape' ? { shape: cloneShape(layer.shape) } : {}),
         ...(layer.type === 'text' ? { text: structuredClone(layer.text) } : {}),
       };
       const op = { kind: 'layerProps' as const, layerId: id, before: { ...current, ...before }, after };
@@ -625,8 +649,8 @@ export class LayerService {
     const ops = useStore.getState().selectedLayerIds.flatMap(layerId => {
       const layer = this.byId(layerId);
       if (layer?.type !== 'shape') return [];
-      const before = { ...layer.shape };
-      const after = update({ ...before });
+      const before = cloneShape(layer.shape);
+      const after = update(cloneShape(before));
       if (JSON.stringify(before) === JSON.stringify(after)) return [];
       layer.shape = after;
       this.bumpLayer(layerId);
@@ -634,6 +658,32 @@ export class LayerService {
     });
     if (!ops.length) return;
     this.engine.history.push({ kind: 'batch', ops }, '図形の共通設定');
+    this.engine.committed();
+  }
+
+  updateSelectedParameter(key: string, value: LayerParameterValue): void {
+    if (this.engine.isBusy()) return;
+    this.engine.events.emit('textCommitRequest');
+    const state = useStore.getState();
+    const ids = state.multiSelectMode ? state.selectedLayerIds : [this.activeLayerId];
+    const ops = ids.flatMap(layerId => {
+      const layer = this.byId(layerId);
+      if (!layer) return [];
+      const descriptor = layerParameterDescriptors(layer).find(item => item.key === key);
+      if (!descriptor) return [];
+      const before: LayerProps = {
+        opacity: layer.opacity, visible: layer.visible, blend: layer.blend,
+        ...(layer.type === 'adjust' ? { params: { ...layer.params } } : {}),
+        ...(layer.type === 'shape' ? { shape: cloneShape(layer.shape) } : {}),
+        ...(layer.type === 'text' ? { text: structuredClone(layer.text) } : {}),
+      };
+      const after = descriptor.write(layer, value);
+      this.assignProps(layer, after);
+      this.bumpLayer(layer.id);
+      return [{ kind: 'layerProps' as const, layerId, before, after }];
+    });
+    if (!ops.length) return;
+    this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, '共通パラメータを変更');
     this.engine.committed();
   }
 

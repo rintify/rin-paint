@@ -23,6 +23,10 @@ export function atomicBytes(op: PersistedAtomicOp | Exclude<Op, { kind: 'batch' 
   if (op.kind === 'layerMerge') {
     return snapshotBytes(op.removed.snapshot) + op.tiles.reduce((n, t) => n + tileBytes(t), 0);
   }
+  if (op.kind === 'layerReplace') {
+    return [...op.before.entries, ...op.after.entries]
+      .reduce((n, entry) => n + snapshotBytes(entry.snapshot), 0);
+  }
   return 0;
 }
 

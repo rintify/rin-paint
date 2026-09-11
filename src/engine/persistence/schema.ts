@@ -58,6 +58,23 @@ function isAtomicOp(value: unknown): value is PersistedAtomicOp {
       return typeof op.layerId === 'string' && isLocation(op.from) && isLocation(op.to);
     case 'layerProps':
       return typeof op.layerId === 'string' && !!op.before && !!op.after;
+    case 'layerReplace': {
+      const side = (value: unknown) => {
+        if (!value || typeof value !== 'object') return false;
+        const s = value as Record<string, unknown>;
+        const selection = s.selection as Record<string, unknown> | undefined;
+        return Array.isArray(s.rootIds)
+          && Array.isArray(s.entries)
+          && s.entries.every(entry => !!entry && typeof entry === 'object'
+            && isLocation((entry as Record<string, unknown>).location)
+            && isLayerSnapshot((entry as Record<string, unknown>).snapshot))
+          && !!selection
+          && typeof selection.activeLayerId === 'string'
+          && Array.isArray(selection.selectedLayerIds)
+          && typeof selection.multiSelectMode === 'boolean';
+      };
+      return side(op.before) && side(op.after);
+    }
     case 'canvasChange':
       return !!op.before && !!op.after;
     case 'layerMerge':

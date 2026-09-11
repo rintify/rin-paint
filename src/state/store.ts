@@ -1,6 +1,9 @@
 import { create } from 'zustand';
 import {
   DEFAULT_PEN_DETAIL_SETTINGS,
+  DEFAULT_FILL_TOOL_SETTINGS,
+  DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS,
+  DEFAULT_SHAPE_TOOL_SETTINGS,
   DEFAULT_TEXT_TOOL_SETTINGS,
   DEFAULT_CANVAS,
   newToolInstanceId,
@@ -8,6 +11,9 @@ import {
   TOOL_KIND_LABELS,
   type LayerMeta,
   type PenDetailSettings,
+  type FillToolSettings,
+  type PolygonSplitToolSettings,
+  type ShapePaintMode,
   type ToolInstance,
   type ToolKind,
   type ToolLayoutItem,
@@ -90,6 +96,12 @@ export interface PaintState {
   selectionActive: boolean;
   /** 浮動選択の自由変形モード */
   freeTransform: boolean;
+  polygonDraftActive: boolean;
+  polygonDraftPointCount: number;
+  polygonVertexSelected: boolean;
+  polygonVertexCanDelete: boolean;
+  fillProgress: number | null;
+  toolNotice: string | null;
   /** 0..1 で進捗、null なら書き出し中でない */
   exportProgress: number | null;
 
@@ -105,6 +117,9 @@ export interface PaintState {
   setPenColor: (c: string) => void;
   /** アクティブなペンインスタンスの詳細設定を変更 */
   setPenDetail: (key: keyof PenDetailSettings, value: number) => void;
+  setFillSettings: (patch: Partial<FillToolSettings>) => void;
+  setShapePaintMode: (paintMode: ShapePaintMode) => void;
+  setPolygonSplitWidth: (width: number) => void;
   /** 文字ツールで新しく作る文字の初期書式を変更 */
   setTextToolSettings: (patch: Partial<TextToolSettings>) => void;
   /** インスタンスを切り替え、記憶された色・太さを反映する */
@@ -165,6 +180,12 @@ export const useStore = create<PaintState>((set) => ({
 
   selectionActive: false,
   freeTransform: false,
+  polygonDraftActive: false,
+  polygonDraftPointCount: 0,
+  polygonVertexSelected: false,
+  polygonVertexCanDelete: false,
+  fillProgress: null,
+  toolNotice: null,
   exportProgress: null,
 
   viewScale: 1,
@@ -207,6 +228,45 @@ export const useStore = create<PaintState>((set) => ({
       ),
     })),
 
+  setFillSettings: (patch) =>
+    set((s) => ({
+      tools: s.tools.map((tool) =>
+        tool.id === s.activeToolId && tool.kind === 'fill'
+          ? {
+              ...tool,
+              fillSettings: {
+                ...DEFAULT_FILL_TOOL_SETTINGS,
+                ...tool.fillSettings,
+                ...patch,
+              },
+            }
+          : tool,
+      ),
+    })),
+
+  setShapePaintMode: (paintMode) =>
+    set((s) => ({
+      tools: s.tools.map((tool) =>
+        tool.id === s.activeToolId && ['rect', 'ellipse', 'polygon'].includes(tool.kind)
+          ? { ...tool, shapeSettings: { paintMode } }
+          : tool,
+      ),
+    })),
+
+  setPolygonSplitWidth: (width) =>
+    set((s) => ({
+      tools: s.tools.map((tool) =>
+        tool.id === s.activeToolId && tool.kind === 'polygonSplit'
+          ? {
+              ...tool,
+              polygonSplitSettings: {
+                width: Math.max(0, Math.min(128, width)),
+              } satisfies PolygonSplitToolSettings,
+            }
+          : tool,
+      ),
+    })),
+
   setTextToolSettings: (patch) =>
     set((s) => ({
       tools: s.tools.map((tool) =>
@@ -244,6 +304,12 @@ export const useStore = create<PaintState>((set) => ({
           ? { penSettings: { ...DEFAULT_PEN_DETAIL_SETTINGS } }
           : kind === 'text'
             ? { textSettings: { ...DEFAULT_TEXT_TOOL_SETTINGS } }
+            : kind === 'fill'
+              ? { fillSettings: { ...DEFAULT_FILL_TOOL_SETTINGS } }
+              : kind === 'polygonSplit'
+                ? { polygonSplitSettings: { ...DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS } }
+                : kind === 'rect' || kind === 'ellipse' || kind === 'polygon'
+                  ? { shapeSettings: { ...DEFAULT_SHAPE_TOOL_SETTINGS } }
             : {}),
       };
       return {

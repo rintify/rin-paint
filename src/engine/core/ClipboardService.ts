@@ -2,6 +2,7 @@ import { useStore } from '../../state/store';
 import { type Op, type LayerSnapshot } from '../history/historyTree';
 import { makeCanvas } from '../layers';
 import { scaleShape } from '../canvasSpec';
+import { cloneShape } from '../shapes';
 import {
   loadClipboard,
   saveClipboard,
@@ -62,7 +63,7 @@ export class ClipboardService {
         childIds: source.childIds.map(id => ids.get(id)).filter((id): id is string => typeof id === 'string'),
         maskLayerIds: source.maskLayerIds?.map(id => ids.get(id)).filter((id): id is string => typeof id === 'string'),
       };
-      if (source.shape) snapshot.shape = factor === 1 ? { ...source.shape } : scaleShape(source.shape, factor);
+      if (source.shape) snapshot.shape = factor === 1 ? cloneShape(source.shape) : scaleShape(source.shape, factor);
       if (source.text) snapshot.text = { ...structuredClone(source.text), x: source.text.x * factor, y: source.text.y * factor, width: source.text.width === null ? null : source.text.width * factor, height: source.text.height === null ? null : source.text.height * factor };
       if (source.blob) {
         const bmp = await createImageBitmap(source.blob);

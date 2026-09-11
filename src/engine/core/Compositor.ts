@@ -21,6 +21,8 @@ export class Compositor {
   shapeTmpCtx = this.shapeTmp.getContext('2d')!;
   maskTmp = makeCanvas(1600, 1200);
   maskTmpCtx = this.maskTmp.getContext('2d')!;
+  fillReference = makeCanvas(1600, 1200);
+  fillReferenceCtx = this.fillReference.getContext('2d', { willReadFrequently: true })!;
 
   textRenderer = new TextRenderer();
   dirty = true;
@@ -38,7 +40,7 @@ export class Compositor {
 
   syncWorkCanvases(): void {
     const { w, h } = this.engine.artboard;
-    for (const c of [this.scratch, this.tmp, this.shapeTmp, this.maskTmp]) {
+    for (const c of [this.scratch, this.tmp, this.shapeTmp, this.maskTmp, this.fillReference]) {
       if (c.width !== w || c.height !== h) {
         c.width = w;
         c.height = h;
@@ -97,7 +99,24 @@ export class Compositor {
 
   composite(): void {
     const ctx = this.mainCtx;
-    if (!ctx) return;
+    const surface = this.main;
+    if (!ctx || !surface) return;
+    this.renderLayers(surface, ctx, null, true);
+    this.dirty = false;
+  }
+
+  compositeSelection(ids: Set<string>): HTMLCanvasElement {
+    this.syncWorkCanvases();
+    this.renderLayers(this.fillReference, this.fillReferenceCtx, ids, false);
+    return this.fillReference;
+  }
+
+  private renderLayers(
+    surface: HTMLCanvasElement,
+    ctx: CanvasRenderingContext2D,
+    included: Set<string> | null,
+    drawToolOverlay: boolean,
+  ): void {
     const eng = this.engine;
     const { w, h } = eng.artboard;
     ctx.save();
@@ -109,7 +128,8 @@ export class Compositor {
     const render = (id: string) => {
       const l = eng.layerById(id);
       if (!l) return;
-      if (l.visible && l.type === 'raster') {
+      const selected = included === null || included.has(id);
+      if (selected && l.visible && l.type === 'raster') {
         let source: HTMLCanvasElement = l.canvas;
         const erasers = l.childIds
           .map((childId) => eng.shapeLayerById(childId))
@@ -122,7 +142,7 @@ export class Compositor {
           this.shapeTmpCtx.drawImage(l.canvas, 0, 0);
           for (const eraser of erasers) {
             this.shapeTmpCtx.globalAlpha = eraser.opacity;
-            drawShape(this.shapeTmpCtx, eraser.shape);
+            drawShape(this.shapeTmpCtx, eraser.shape, undefined, eng.artboard);
           }
           this.shapeTmpCtx.restore();
           source = this.shapeTmp;
@@ -130,20 +150,20 @@ export class Compositor {
         ctx.globalAlpha = l.opacity;
         ctx.globalCompositeOperation = l.blend;
         ctx.drawImage(source, 0, 0);
-        if (tool.drawAboveLayer) tool.drawAboveLayer(ctx, l.id);
-      } else if (l.visible && l.type === 'shape' && l.shape.color !== TRANSPARENT) {
+        if (drawToolOverlay && tool.drawAboveLayer) tool.drawAboveLayer(ctx, l.id);
+      } else if (selected && l.visible && l.type === 'shape' && l.shape.color !== TRANSPARENT) {
         ctx.globalAlpha = l.opacity;
         ctx.globalCompositeOperation = l.blend;
-        drawShape(ctx, l.shape);
-      } else if (l.visible && l.type === 'text') {
+        drawShape(ctx, l.shape, undefined, eng.artboard);
+      } else if (selected && l.visible && l.type === 'text') {
         ctx.globalAlpha = l.opacity;
         ctx.globalCompositeOperation = l.blend;
         this.textRenderer.draw(ctx, l.id, l.text);
-      } else if (l.visible && l.type === 'adjust') {
+      } else if (selected && l.visible && l.type === 'adjust') {
         this.tmpCtx.save();
         this.tmpCtx.clearRect(0, 0, w, h);
         this.tmpCtx.filter = buildFilter(l.params);
-        this.tmpCtx.drawImage(this.main!, 0, 0);
+        this.tmpCtx.drawImage(surface, 0, 0);
         this.tmpCtx.restore();
         if (l.maskLayerIds.length) {
           this.maskTmpCtx.save();
@@ -156,7 +176,7 @@ export class Compositor {
             if (source.type === 'raster') this.maskTmpCtx.drawImage(source.canvas, 0, 0);
             else if (source.type === 'shape' && source.shape.color !== TRANSPARENT) {
               const shape = source.shape.kind === 'line' ? { ...source.shape, color: '#fff' } : { ...source.shape, color: '#fff' };
-              drawShape(this.maskTmpCtx, shape);
+              drawShape(this.maskTmpCtx, shape, false, eng.artboard);
             } else if (source.type === 'text') this.textRenderer.draw(this.maskTmpCtx, source.id, source.text);
           }
           this.maskTmpCtx.restore();
@@ -174,7 +194,6 @@ export class Compositor {
     };
     for (const id of eng.getRootLayerIds()) render(id);
     ctx.restore();
-    this.dirty = false;
   }
 
   drawOverlayFrame(): void {
@@ -219,7 +238,7 @@ export class Compositor {
       target.ctx.globalCompositeOperation = source.blend;
       if (source.type === 'raster') target.ctx.drawImage(source.canvas, 0, 0);
       else if (source.type === 'text') this.textRenderer.draw(target.ctx, source.id, source.text);
-      else drawShape(target.ctx, source.shape);
+      else drawShape(target.ctx, source.shape, undefined, this.engine.artboard);
       target.ctx.restore();
     }
   }

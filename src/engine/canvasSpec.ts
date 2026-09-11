@@ -11,9 +11,10 @@ export function validateCanvasSpec(spec: CanvasSpec): string | null {
 }
 export function scaleShape(shape: ShapeParams, factor: number): ShapeParams {
   switch (shape.kind) {
-    case 'line': return { ...shape, x1: shape.x1 * factor, y1: shape.y1 * factor, x2: shape.x2 * factor, y2: shape.y2 * factor, width: shape.width * factor };
+    case 'line': return { ...shape, x1: shape.x1 * factor, y1: shape.y1 * factor, x2: shape.x2 * factor, y2: shape.y2 * factor, strokeWidth: shape.strokeWidth * factor };
     case 'rect': return { ...shape, x: shape.x * factor, y: shape.y * factor, width: shape.width * factor, height: shape.height * factor, strokeWidth: shape.strokeWidth * factor };
     case 'ellipse': return { ...shape, cx: shape.cx * factor, cy: shape.cy * factor, rx: shape.rx * factor, ry: shape.ry * factor, strokeWidth: shape.strokeWidth * factor };
+    case 'polygon': return { ...shape, cx: shape.cx * factor, cy: shape.cy * factor, points: shape.points.map(point => ({ x: point.x * factor, y: point.y * factor })), strokeWidth: shape.strokeWidth * factor };
   }
 }
 

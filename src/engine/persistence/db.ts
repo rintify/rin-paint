@@ -1,4 +1,4 @@
-import { openDB, type IDBPDatabase } from 'idb';
+import { openDB, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import type {
   AdjustParams, BlendMode, LayerType, ShapeParams, ToolInstance, TextParams,
   CanvasSpec, ProjectFont, ToolLayoutItem, ToolStack,
@@ -7,6 +7,7 @@ import type { PersistedHistory } from '../history/historyTree';
 import { opBytes } from '../history/bytes';
 import type { ViewState } from '../view';
 import { DB_VERSION, PROJECT_VERSION } from './version';
+import { migrateClipboard, migrateProjectMeta, migrateSavedPage } from './migrate';
 
 export interface SavedLayer {
   id: string; type: LayerType; name: string; opacity: number; blend: BlendMode;
@@ -39,23 +40,22 @@ let referenceGeneration = 0;
 export function referenceEpoch(): number { return referenceGeneration; }
 export function setPersistencePageId(id: string): void { activePageId = id; referenceGeneration++; }
 
-function createAllStores(d: IDBPDatabase): void {
-  d.createObjectStore('kv');
-  d.createObjectStore('pages', { keyPath: 'id' });
-  d.createObjectStore('references');
-  const frames = d.createObjectStore('frames', { keyPath: 'key' });
-  frames.createIndex('pageId', 'pageId');
-  d.createObjectStore('clipboard');
-  d.createObjectStore('thumbnails');
+function ensureStores(d: IDBPDatabase, tx: IDBPTransaction<unknown, string[], 'versionchange'>): void {
+  if (!d.objectStoreNames.contains('kv')) d.createObjectStore('kv');
+  if (!d.objectStoreNames.contains('pages')) d.createObjectStore('pages', { keyPath: 'id' });
+  if (!d.objectStoreNames.contains('references')) d.createObjectStore('references');
+  const frames = d.objectStoreNames.contains('frames')
+    ? tx.objectStore('frames')
+    : d.createObjectStore('frames', { keyPath: 'key' });
+  if (!frames.indexNames.contains('pageId')) frames.createIndex('pageId', 'pageId');
+  if (!d.objectStoreNames.contains('clipboard')) d.createObjectStore('clipboard');
+  if (!d.objectStoreNames.contains('thumbnails')) d.createObjectStore('thumbnails');
 }
 
 function db(): Promise<IDBPDatabase> {
   dbPromise ??= openDB(DB_NAME, DB_VERSION, {
-    upgrade(d, oldVersion) {
-      if (oldVersion < 5) {
-        for (const name of [...d.objectStoreNames]) d.deleteObjectStore(name);
-        createAllStores(d);
-      }
+    upgrade(d, _oldVersion, _newVersion, transaction) {
+      ensureStores(d, transaction);
     },
   });
   return dbPromise;
@@ -81,7 +81,8 @@ export async function saveProjectMeta(meta: SavedProjectMeta): Promise<void> {
   void refreshProjectBytes();
 }
 export async function loadProjectMeta(): Promise<SavedProjectMeta | undefined> {
-  return await (await db()).get('kv', 'project-meta') as SavedProjectMeta | undefined;
+  const value = await (await db()).get('kv', 'project-meta') as unknown;
+  return value === undefined ? undefined : migrateProjectMeta(value);
 }
 export async function savePage(page: SavedPage): Promise<void> {
   const d = await db();
@@ -92,7 +93,8 @@ export async function savePage(page: SavedPage): Promise<void> {
   void refreshProjectBytes();
 }
 export async function loadPage(id: string): Promise<SavedPage | undefined> {
-  return await (await db()).get('pages', id) as SavedPage | undefined;
+  const value = await (await db()).get('pages', id) as unknown;
+  return value === undefined ? undefined : migrateSavedPage(value);
 }
 export async function loadPageThumbnail(id: string): Promise<Blob | undefined> {
   return await (await db()).get('thumbnails', id) as Blob | undefined;
@@ -138,7 +140,10 @@ export async function saveClipboard(value: LayerClipboard): Promise<void> {
   await (await db()).put('clipboard', value, 'layers');
 }
 export async function loadClipboard(): Promise<LayerClipboard | undefined> {
-  return await (await db()).get('clipboard', 'layers') as LayerClipboard | undefined;
+  const d = await db();
+  const value = migrateClipboard(await d.get('clipboard', 'layers'));
+  if (value) await d.put('clipboard', value, 'layers');
+  return value;
 }
 export async function hasClipboard(): Promise<boolean> {
   return (await (await db()).count('clipboard')) > 0;

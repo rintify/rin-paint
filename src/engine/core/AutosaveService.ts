@@ -98,7 +98,7 @@ export class AutosaveService {
           visible: l.visible,
           parentId: l.parentId,
           childIds: [...l.childIds],
-          shape: { ...l.shape },
+          shape: structuredClone(l.shape),
         };
       }
       const canvas = makeCanvas(eng.artboard.w, eng.artboard.h);

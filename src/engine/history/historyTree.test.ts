@@ -11,7 +11,7 @@ const shapeSnapshot: LayerSnapshot = {
   visible: true,
   parentId: 'raster-1',
   childIds: [],
-  shape: { kind: 'line', x1: 1, y1: 2, x2: 30, y2: 40, color: '#123456', width: 5 },
+  shape: { kind: 'line', x1: 1, y1: 2, x2: 30, y2: 40, color: '#123456', strokeWidth: 5 },
 };
 
 describe('shape history persistence', () => {

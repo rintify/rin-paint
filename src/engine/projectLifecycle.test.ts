@@ -3,7 +3,7 @@
 import 'fake-indexeddb/auto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createCanvas, loadImage, type Canvas } from '@napi-rs/canvas';
-import { type TextParams } from '../types';
+import { TRANSPARENT, type TextParams } from '../types';
 import { Blob as NodeBlob } from 'node:buffer';
 import { newText } from './text/model';
 import { useStore } from '../state/store';
@@ -66,11 +66,128 @@ function pixel(layerId: string, x: number, y: number): number[] {
 }
 
 describe('canvas history and new project', () => {
+  it('converts a rotated rectangle to an editable polygon without changing its identity or children', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({ kind: 'rect', x: 20, y: 30, width: 100, height: 60, rotation: Math.PI / 6, color: '#abcdef', strokeWidth: 7, paintMode: 'fill-outside' });
+    const id = useStore.getState().activeLayerId;
+    engine.addRasterLayer();
+    const childId = useStore.getState().activeLayerId;
+    engine.moveLayerAsTopChild(childId, id);
+    engine.setActiveLayer(id);
+    engine.convertRectToPolygon(id);
+    const converted = engine.getShape(id);
+    expect(converted).toMatchObject({ kind: 'polygon', color: '#abcdef', strokeWidth: 7, paintMode: 'fill-outside' });
+    expect(useStore.getState().layers.find(layer => layer.id === id)).toMatchObject({ name: '多角形', childIds: [childId] });
+    expect(converted?.kind === 'polygon' ? converted.points : []).toHaveLength(4);
+    await engine.undo();
+    expect(engine.getShape(id)).toMatchObject({ kind: 'rect', rotation: Math.PI / 6 });
+    expect(useStore.getState().layers.find(layer => layer.id === id)).toMatchObject({ name: '四角形', childIds: [childId] });
+    await engine.redo();
+    expect(engine.getShape(id)?.kind).toBe('polygon');
+  });
+
+  it('splits a rectangle and its child tree as one persistent structural history action', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({ kind: 'rect', x: 0, y: 0, width: 100, height: 100, rotation: 0, color: '#123456', strokeWidth: 3, paintMode: 'fill-inside' });
+    const sourceId = useStore.getState().activeLayerId;
+    engine.addRasterLayer();
+    const childId = useStore.getState().activeLayerId;
+    engine.moveLayerAsTopChild(childId, sourceId);
+    engine.setActiveLayer(sourceId);
+    await (engine as unknown as { polygonSplit: { split(a: { x: number; y: number; pressure: number }, b: { x: number; y: number; pressure: number }): Promise<void> } }).polygonSplit.split(
+      { x: 50, y: -20, pressure: 1 },
+      { x: 50, y: 120, pressure: 1 },
+    );
+    const shapes = useStore.getState().layers.filter(layer => layer.type === 'shape');
+    const rasters = useStore.getState().layers.filter(layer => layer.type === 'raster');
+    expect(shapes).toHaveLength(2);
+    expect(rasters).toHaveLength(3);
+    expect(shapes.map(layer => layer.shape)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'polygon', paintMode: 'fill-inside', color: '#123456' }),
+      expect.objectContaining({ kind: 'polygon', paintMode: 'fill-inside', color: '#123456' }),
+    ]));
+    expect(useStore.getState().selectedLayerIds).toHaveLength(2);
+    expect(internalHistory().current.op?.kind).toBe('layerReplace');
+    await engine.undo();
+    expect(useStore.getState().layers.filter(layer => layer.type === 'shape')).toHaveLength(1);
+    expect(useStore.getState().layers.filter(layer => layer.type === 'raster')).toHaveLength(2);
+    expect(engine.getShape(sourceId)?.kind).toBe('rect');
+    await engine.redo();
+    expect(useStore.getState().layers.filter(layer => layer.type === 'shape')).toHaveLength(2);
+    expect(useStore.getState().layers.filter(layer => layer.type === 'raster')).toHaveLength(3);
+    await (engine as unknown as { flushSave(): Promise<void> }).flushSave();
+    const { page } = await loadActivePersisted();
+    expect(page?.history.nodes.some(node => node.op?.kind === 'layerReplace')).toBe(true);
+  });
+
+  it('aborts the whole split when selected target polygons have an ancestor relationship', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({ kind: 'rect', x: 0, y: 0, width: 100, height: 100, color: '#000', strokeWidth: 2, paintMode: 'stroke' });
+    const parentId = useStore.getState().activeLayerId;
+    engine.addShapeLayer({ kind: 'rect', x: 20, y: 20, width: 40, height: 40, color: '#000', strokeWidth: 2, paintMode: 'stroke' });
+    const childId = useStore.getState().activeLayerId;
+    engine.moveLayerAsTopChild(childId, parentId);
+    engine.beginMultiSelect(parentId);
+    const historyBefore = useStore.getState().historyCount;
+    await (engine as unknown as { polygonSplit: { split(a: { x: number; y: number; pressure: number }, b: { x: number; y: number; pressure: number }): Promise<void> } }).polygonSplit.split(
+      { x: 50, y: -20, pressure: 1 },
+      { x: 50, y: 120, pressure: 1 },
+    );
+    expect(useStore.getState().layers.filter(layer => layer.type === 'shape')).toHaveLength(2);
+    expect(useStore.getState().historyCount).toBe(historyBefore);
+    expect(useStore.getState().toolNotice).toContain('親子関係');
+  });
+
+  it('fills only the primary raster using mixed selected layers as the visible boundary', async () => {
+    await engine.newProject();
+    const rasterId = useStore.getState().activeLayerId;
+    engine.addShapeLayer({ kind: 'rect', x: 10, y: 10, width: 40, height: 40, rotation: 0, color: '#000000', strokeWidth: 4, paintMode: 'stroke' });
+    const shapeId = useStore.getState().activeLayerId;
+    const originalShape = engine.getShape(shapeId);
+    engine.beginMultiSelect(rasterId);
+    engine.setPenColor('#ff0000');
+    await (engine as unknown as { fill: { start(point: { x: number; y: number; pressure: number }): Promise<void> } }).fill.start({ x: 30, y: 30, pressure: 1 });
+    await awaitHistoryReady();
+    expect(pixel(rasterId, 30, 30)).toEqual([255, 0, 0, 255]);
+    expect(pixel(rasterId, 2, 2)).toEqual([0, 0, 0, 0]);
+    expect(engine.getShape(shapeId)).toEqual(originalShape);
+    engine.setPenColor(TRANSPARENT);
+    await (engine as unknown as { fill: { start(point: { x: number; y: number; pressure: number }): Promise<void> } }).fill.start({ x: 30, y: 30, pressure: 1 });
+    await awaitHistoryReady();
+    expect(pixel(rasterId, 30, 30)).toEqual([0, 0, 0, 0]);
+    await engine.undo();
+    expect(pixel(rasterId, 30, 30)).toEqual([255, 0, 0, 255]);
+  });
+
+  it('discards a cancelled worker fill without pixels or history', async () => {
+    await engine.newProject();
+    const rasterId = useStore.getState().activeLayerId;
+    const historyBefore = useStore.getState().historyCount;
+    const previousWorker = globalThis.Worker;
+    class PendingWorker {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: ErrorEvent) => void) | null = null;
+      postMessage() {}
+      terminate() {}
+    }
+    vi.stubGlobal('Worker', PendingWorker as unknown as typeof Worker);
+    try {
+      const pending = (engine as unknown as { fill: { start(point: { x: number; y: number; pressure: number }): Promise<void> } }).fill.start({ x: 10, y: 10, pressure: 1 });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      engine.cancelFill();
+      await pending;
+      expect(pixel(rasterId, 10, 10)).toEqual([0, 0, 0, 0]);
+      expect(useStore.getState().historyCount).toBe(historyBefore);
+    } finally {
+      vi.stubGlobal('Worker', previousWorker);
+    }
+  });
+
   it('updates multiple rectangles without replacing their unrelated parameters, in one undo step', async () => {
     await engine.newProject();
-    engine.addShapeLayer({ kind: 'rect', x: 10, y: 20, width: 50, height: 60, strokeWidth: 2, color: '#112233', rotation: .2 });
+    engine.addShapeLayer({ kind: 'rect', x: 10, y: 20, width: 50, height: 60, strokeWidth: 2, color: '#112233', rotation: .2, paintMode: 'stroke' });
     const first = useStore.getState().activeLayerId;
-    engine.addShapeLayer({ kind: 'rect', x: 100, y: 200, width: 70, height: 80, strokeWidth: 5, color: '#445566', rotation: .8 });
+    engine.addShapeLayer({ kind: 'rect', x: 100, y: 200, width: 70, height: 80, strokeWidth: 5, color: '#445566', rotation: .8, paintMode: 'stroke' });
     const second = useStore.getState().activeLayerId;
     engine.beginMultiSelect(first);
     engine.updateSelectedShapes(shape => shape.kind === 'rect' ? { ...shape, width: 120 } : shape);
@@ -82,6 +199,26 @@ describe('canvas history and new project', () => {
     await engine.redo();
     expect(engine.getShape(first)).toMatchObject({ width: 120 });
     expect(engine.getShape(second)).toMatchObject({ width: 120 });
+    engine.exitMultiSelect();
+    await engine.newProject();
+  });
+  it('updates semantic color across shape and complete rich text in one history step', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({ kind: 'rect', x: 10, y: 10, width: 50, height: 30, strokeWidth: 2, color: '#111111', rotation: .2, paintMode: 'stroke' });
+    const shapeId = useStore.getState().activeLayerId;
+    const text = { ...newText(20, 20, '#222222'), content: 'ab', ranges: [{ start: 0, end: 1, fontId: 'serif', color: '#333333', sizePt: 8 }] };
+    engine.addTextLayer(text);
+    const textId = useStore.getState().activeLayerId;
+    engine.finishTextEditing();
+    engine.beginMultiSelect(shapeId);
+    const count = useStore.getState().historyCount;
+    engine.updateSelectedParameter('color', '#abcdef');
+    expect(engine.getShape(shapeId)?.color).toBe('#abcdef');
+    expect(engine.getText(textId)).toMatchObject({ style: { color: '#abcdef' }, ranges: [{ color: '#abcdef' }] });
+    expect(useStore.getState().historyCount).toBe(count + 1);
+    await engine.undo();
+    expect(engine.getShape(shapeId)?.color).toBe('#111111');
+    expect(engine.getText(textId)).toMatchObject({ style: { color: '#222222' }, ranges: [{ color: '#333333' }] });
     engine.exitMultiSelect();
     await engine.newProject();
   });
@@ -118,7 +255,7 @@ describe('canvas history and new project', () => {
     const raster = useStore.getState().activeLayerId;
     const ctx = engine.getLayerCanvas(raster)!.getContext('2d')!;
     ctx.fillStyle = '#00ff00'; ctx.fillRect(10, 10, 20, 20);
-    engine.addShapeLayer({ kind: 'line', x1: 10, y1: 20, x2: 100, y2: 120, color: '#000000', width: 3 });
+    engine.addShapeLayer({ kind: 'line', x1: 10, y1: 20, x2: 100, y2: 120, color: '#000000', strokeWidth: 3 });
     const shapeId = useStore.getState().activeLayerId;
     const text: TextParams = { ...newText(30, 40, '#000000', 200, 100), content: '文字' };
     engine.addTextLayer(text);
@@ -126,7 +263,7 @@ describe('canvas history and new project', () => {
     await engine.resizeCanvas({ ...useStore.getState().canvasSpec, ppi: 600 });
     expect(engine.getLayerCanvas(raster)!.width).toBe(1600);
     expect([...engine.getLayerCanvas(raster)!.getContext('2d')!.getImageData(30, 30, 1, 1).data]).toEqual([0, 255, 0, 255]);
-    expect(engine.getShape(shapeId)).toMatchObject({ x1: 20, y1: 40, width: 6 });
+    expect(engine.getShape(shapeId)).toMatchObject({ x1: 20, y1: 40, strokeWidth: 6 });
     expect(engine.getText(textId)).toMatchObject({ x: 60, y: 80, width: 400, height: 200, style: { sizePt: 12 } });
     await engine.undo();
     expect(engine.getText(textId)).toEqual(text);
@@ -260,7 +397,7 @@ describe('canvas history and new project', () => {
       expect(useStore.getState().layers.some(layer => layer.id === upperId)).toBe(false);
     };
 
-    await verify('shape', () => engine.addShapeLayer({ kind: 'line', x1: 10, y1: 10, x2: 70, y2: 40, color: '#123456', width: 6 }));
+    await verify('shape', () => engine.addShapeLayer({ kind: 'line', x1: 10, y1: 10, x2: 70, y2: 40, color: '#123456', strokeWidth: 6 }));
     await verify('text', () => engine.addTextLayer({ ...newText(20, 30, '#222222'), content: '統合' }));
     await verify('adjust', () => engine.addAdjustLayer());
   });

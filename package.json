@@ -16,6 +16,7 @@
     "@mui/material": "^9.4.0",
     "html-to-image": "^1.11.13",
     "idb": "^8.0.3",
+    "polygon-clipping": "0.15.7",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "zustand": "^5.0.14"

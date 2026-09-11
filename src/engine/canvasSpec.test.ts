@@ -9,7 +9,7 @@ describe('physical canvas dimensions', () => {
     expect(validateCanvasSpec({ widthMm: 210, heightMm: 297, ppi: 0 })).not.toBeNull();
   });
   it('scales both shape coordinates and stroke widths for ppi changes', () => {
-    expect(scaleShape({ kind: 'line', x1: 2, y1: 3, x2: 20, y2: 30, width: 4, color: '#000' }, 2)).toEqual({ kind: 'line', x1: 4, y1: 6, x2: 40, y2: 60, width: 8, color: '#000' });
+    expect(scaleShape({ kind: 'line', x1: 2, y1: 3, x2: 20, y2: 30, strokeWidth: 4, color: '#000' }, 2)).toEqual({ kind: 'line', x1: 4, y1: 6, x2: 40, y2: 60, strokeWidth: 8, color: '#000' });
   });
   it('writes one pHYs chunk containing the requested resolution', async () => {
     const blob = new Blob([new Uint8Array(await createCanvas(4, 4).encode('png'))]);

@@ -16,7 +16,7 @@ export function Thumb({ meta }: { meta: LayerMeta }) {
     else if (meta.shape) {
       ctx.save();
       ctx.scale(c.width / engine.artboard.w, c.height / engine.artboard.h);
-      drawShape(ctx, meta.shape, false);
+      drawShape(ctx, meta.shape, false, engine.artboard);
       ctx.restore();
     }
   }, [engine, meta.id, meta.version, meta.shape]);

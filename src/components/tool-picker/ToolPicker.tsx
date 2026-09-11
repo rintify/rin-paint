@@ -117,14 +117,14 @@ export function ToolPicker() {
           return (
             <Button
               key={tool.id}
-              disabled={multi && tool.kind !== 'lasso'}
+              disabled={multi && !['lasso', 'fill', 'polygonSplit'].includes(tool.kind)}
               onClick={() => engine.selectToolInstance(tool.id)}
               title={tool.name}
               variant={active ? 'contained' : 'text'}
               color={active ? 'primary' : 'inherit'}
               className="tool-rail-button"
             >
-              {tool.kind !== 'lasso' && tool.kind !== 'blur' && (
+              {!['lasso', 'blur', 'polygonSplit'].includes(tool.kind) && (
                 <Box
                   className="tool-color-dot"
                   sx={{
@@ -162,7 +162,7 @@ export function ToolPicker() {
               return (
                 <Button
                   key={id}
-                  disabled={multi && tool.kind !== 'lasso'}
+                  disabled={multi && !['lasso', 'fill', 'polygonSplit'].includes(tool.kind)}
                   variant={active ? 'contained' : 'text'}
                   color={active ? 'primary' : 'inherit'}
                   className="tool-rail-button tool-stack-popover-tool"
@@ -171,7 +171,7 @@ export function ToolPicker() {
                     setStackOpen(null);
                   }}
                 >
-                  {tool.kind !== 'lasso' && tool.kind !== 'blur' && (
+                  {!['lasso', 'blur', 'polygonSplit'].includes(tool.kind) && (
                     <Box
                       className="tool-color-dot"
                       sx={{

@@ -10,6 +10,8 @@ import {
   type CanvasSpec,
   type ProjectFont,
   type PenDetailSettings,
+  type FillToolSettings,
+  type ShapePaintMode,
 } from '../model';
 import { type DirtyRect } from './brush';
 import {
@@ -34,7 +36,11 @@ import { AutosaveService } from './core/AutosaveService';
 import { PageService } from './core/PageService';
 import { ProjectService } from './core/ProjectService';
 import { ClipboardService } from './core/ClipboardService';
+import { FillService } from './core/FillService';
+import { PolygonSplitService } from './core/PolygonSplitService';
+import { PolygonTool } from './tools/polygon';
 import type { RasterLayer } from './layers';
+import type { LayerParameterValue } from './layerParameters';
 
 export interface SelectedObjectTransform { id: string; before: LayerProps; width?: number; height?: number }
 
@@ -52,12 +58,15 @@ export class PaintEngine {
   /** @internal */ readonly pages = new PageService(this);
   /** @internal */ readonly project = new ProjectService(this);
   /** @internal */ readonly clipboard = new ClipboardService(this);
+  /** @internal */ readonly fill = new FillService(this);
+  /** @internal */ readonly polygonSplit = new PolygonSplitService(this);
 
   private recorder = new TimelapseRecorder(this, () => this.scheduleStorageRefresh());
 
   private readonly toolCtx: ToolContext = this.createToolContext();
   private tools: Record<ToolKind, Tool> = createTools(this.toolCtx);
   readonly lasso = this.tools.lasso as LassoTool;
+  readonly polygon = this.tools.polygon as PolygonTool;
 
   private busy = false;
   readonly view = new ViewController(this.artboard);
@@ -89,6 +98,9 @@ export class PaintEngine {
           size: st.penSize,
           penSettings: inst?.penSettings,
           textSettings: inst?.textSettings,
+          fillSettings: inst?.fillSettings,
+          shapeSettings: inst?.shapeSettings,
+          polygonSplitSettings: inst?.polygonSplitSettings,
         };
       },
       pushColor: (color) => useStore.getState().pushColor(color),
@@ -118,6 +130,15 @@ export class PaintEngine {
           freeTransform: state.freeTransform,
         });
       },
+      setPolygonDraftState: (state) => {
+        useStore.getState().set({
+          polygonDraftActive: state.active,
+          polygonDraftPointCount: state.pointCount,
+        });
+      },
+      notify: (message) => useStore.getState().set({ toolNotice: message }),
+      fillAt: (point) => { void eng.fill.start(point); },
+      splitPolygons: (a, b) => { void eng.polygonSplit.split(a, b); },
     };
   }
 
@@ -207,6 +228,7 @@ export class PaintEngine {
   }
 
   detach(): void {
+    if (useStore.getState().fillProgress !== null) this.fill.cancel();
     this.input.detachListeners();
     this.compositor.detachCanvases();
     this.view.detach();
@@ -298,6 +320,7 @@ export class PaintEngine {
   canTransferShape(id = this.layerService.activeLayerId): boolean { return this.layerService.canTransferShape(id); }
   async mergeLayerDown(id = this.layerService.activeLayerId): Promise<void> { return this.layerService.mergeLayerDown(id); }
   transferShapeLayer(): void { this.layerService.transferShapeLayer(); }
+  convertRectToPolygon(id?: string): void { this.layerService.convertRectToPolygon(id); }
   setActiveLayer(id: string): void { this.layerService.setActiveLayer(id); }
   previewLayerProps(id: string, props: LayerProps): void { this.layerService.previewLayerProps(id, props); }
   commitLayerProps(id: string, before: LayerProps, after: LayerProps, label: string): void {
@@ -330,14 +353,37 @@ export class PaintEngine {
     this.scheduleSave();
   }
 
+  setFillSettings(patch: Partial<FillToolSettings>): void {
+    useStore.getState().setFillSettings(patch);
+    this.scheduleSave();
+  }
+
+  setShapePaintMode(paintMode: ShapePaintMode): void {
+    useStore.getState().setShapePaintMode(paintMode);
+    this.scheduleSave();
+  }
+
+  setPolygonSplitWidth(width: number): void {
+    useStore.getState().setPolygonSplitWidth(width);
+    this.scheduleSave();
+  }
+
+  polygonCommit(): void { this.polygon.commit(); }
+  polygonCancel(): void { this.polygon.cancel(); }
+  polygonUndoPoint(): void { this.polygon.undoPoint(); }
+  cancelFill(): void { this.fill.cancel(); }
+  deleteSelectedPolygonVertex(): void { this.shapeEdit.deleteSelectedVertex(); }
+  notify(message: string): void { useStore.getState().set({ toolNotice: message }); }
+
   selectToolInstance(id: string): void {
+    if (this.busy && useStore.getState().fillProgress !== null) this.fill.cancel();
     if (this.busy) return;
     const st = useStore.getState();
     const inst = st.tools.find((t) => t.id === id);
     if (!inst) return;
     if (id === st.activeToolId) {
       this.layerService.finishFloating();
-      this.lasso.cancel();
+      this.activeTool().cancel?.();
       st.deactivateTool();
       this.requestRender();
       this.scheduleSave();
@@ -345,7 +391,7 @@ export class PaintEngine {
     }
     if (inst.kind !== st.tool) {
       this.layerService.finishFloating();
-      this.lasso.cancel();
+      this.activeTool().cancel?.();
     }
     st.activateTool(id);
     this.requestRender();
@@ -353,11 +399,12 @@ export class PaintEngine {
   }
 
   addToolInstance(kind: ToolKind): void {
+    if (this.busy && useStore.getState().fillProgress !== null) this.fill.cancel();
     if (this.busy) return;
     const st = useStore.getState();
     if (kind !== st.tool) {
       this.layerService.finishFloating();
-      this.lasso.cancel();
+      this.activeTool().cancel?.();
     }
     st.addTool(kind);
     this.requestRender();
@@ -369,7 +416,7 @@ export class PaintEngine {
     const st = useStore.getState();
     if (id === st.activeToolId) {
       this.layerService.finishFloating();
-      this.lasso.cancel();
+      this.activeTool().cancel?.();
     }
     st.removeTool(id);
     this.requestRender();
@@ -434,6 +481,9 @@ export class PaintEngine {
   previewSelectedLayerProps(props: LayerProps): void { this.layerService.previewSelectedLayerProps(props); }
   updateSelectedShapes(update: (shape: ShapeParams) => ShapeParams): void {
     this.layerService.updateSelectedShapes(update);
+  }
+  updateSelectedParameter(key: string, value: LayerParameterValue): void {
+    this.layerService.updateSelectedParameter(key, value);
   }
   commitSelectedLayerOpacity(beforeById: Record<string, number>, opacity: number): void {
     this.layerService.commitSelectedLayerOpacity(beforeById, opacity);
@@ -521,7 +571,7 @@ export class PaintEngine {
       childIds: [...l.childIds],
       params: l.type === 'adjust' ? { ...l.params } : undefined,
       maskLayerIds: l.type === 'adjust' ? [...l.maskLayerIds] : undefined,
-      shape: l.type === 'shape' ? { ...l.shape } : undefined,
+      shape: l.type === 'shape' ? structuredClone(l.shape) : undefined,
       text: l.type === 'text' ? structuredClone(l.text) : undefined,
       version: ls.versions.get(l.id) ?? 0,
       canMergeDown: ls.canMergeLayerDown(l.id),

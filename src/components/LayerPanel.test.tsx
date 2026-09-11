@@ -42,7 +42,7 @@ const layers: LayerMeta[] = [
     type: 'shape',
     canRemove: true,
     canMergeDown: true,
-    shape: { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 10, width: 1, color: '#123456' },
+    shape: { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 1, color: '#123456' },
   },
 ];
 let container: HTMLDivElement;

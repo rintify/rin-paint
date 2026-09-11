@@ -101,7 +101,7 @@ export function AddToolDialog({ onClose }: { onClose: () => void }) {
                 <Box className="tool-catalog-icon">{TOOL_ICONS.rect}</Box>
                 <Box sx={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
                   <Typography variant="body2" sx={{ fontWeight: 650 }}>図形</Typography>
-                  <Typography variant="caption" color="text.secondary">直線・四角形・楕円</Typography>
+                  <Typography variant="caption" color="text.secondary">直線・四角形・楕円・多角形</Typography>
                 </Box>
                 <ChevronRightIcon color="action" />
               </ButtonBase>
