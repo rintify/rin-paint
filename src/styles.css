@@ -180,8 +180,28 @@
   padding: 0 4px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--panel-2); cursor: grab; box-sizing: border-box;
 }
-.layer-flat-row.active { border-color: #80bfff; background: #243f5c; }
+.layer-flat-row.selected { border-color: #3d5a73; background: #1b2c3d; }
+.layer-flat-row.active {
+  border-color: #80bfff;
+  background: #243f5c;
+  box-shadow: inset 3px 0 0 #4f8cff;
+}
 .layer-flat-row.is-dragging { filter: opacity(.45); }
+.primary-badge {
+  flex: none;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: #4f8cff;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
 .layer-insertion-guide { position: absolute; right: 0; height: 2px; background: #80bfff; border-radius: 2px; pointer-events: none; z-index: 2; }
 .layer-insertion-guide::before { content: ''; position: absolute; left: -2px; top: -2px; width: 6px; height: 6px; border-radius: 50%; background: #80bfff; }
 

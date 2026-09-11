@@ -70,3 +70,21 @@ export function polygonArea(points: ShapePoint[]): number {
   for (let i = 0; i < points.length; i++) { const a = points[i], b = points[(i + 1) % points.length]; sum += a.x * b.y - b.x * a.y; }
   return sum / 2;
 }
+
+/** 多角形の面積重心。面積が潰れているときは外接矩形の中心へ戻す */
+export function polygonCentroid(points: ShapePoint[]): ShapePoint {
+  const area = polygonArea(points);
+  if (Math.abs(area) < 1e-8) {
+    const bounds = pointsBounds(points);
+    return { x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h / 2 };
+  }
+  let cx = 0, cy = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i], b = points[(i + 1) % points.length];
+    const cross = a.x * b.y - b.x * a.y;
+    cx += (a.x + b.x) * cross;
+    cy += (a.y + b.y) * cross;
+  }
+  const factor = 1 / (6 * area);
+  return { x: cx * factor, y: cy * factor };
+}

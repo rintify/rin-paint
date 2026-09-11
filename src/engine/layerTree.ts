@@ -15,7 +15,7 @@ export function selectedLayerRows(roots: string[], layers: TreeLayerLike[], acti
   }
   const rows: { id: string; depth: number }[] = [];
   const visit = (ids: string[], depth: number) => {
-    for (const id of [...ids].reverse()) {
+    for (const id of ids) {
       const layer = byId.get(id);
       if (!layer) continue;
       rows.push({ id, depth });

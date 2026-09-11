@@ -199,6 +199,15 @@ export class ShapeEditController {
     }
     ctx.beginPath(); ctx.moveTo(center.x, bounds.y); ctx.lineTo(rotateHandle.x, rotateHandle.y); ctx.stroke();
     ctx.beginPath(); ctx.arc(rotateHandle.x, rotateHandle.y, 5 * scale, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    const arm = 8 * scale;
+    const drawCenter = () => {
+      ctx.beginPath();
+      ctx.moveTo(center.x - arm, center.y); ctx.lineTo(center.x + arm, center.y);
+      ctx.moveTo(center.x, center.y - arm); ctx.lineTo(center.x, center.y + arm);
+      ctx.stroke();
+    };
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 3 * scale; drawCenter();
+    ctx.strokeStyle = invalid ? '#e53935' : '#4f8cff'; ctx.lineWidth = 1.5 * scale; drawCenter();
     ctx.restore();
   }
 }

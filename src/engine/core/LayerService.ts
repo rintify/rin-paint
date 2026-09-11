@@ -495,8 +495,14 @@ export class LayerService {
       const removing = selected.has(id);
       if (removing) selected.delete(id); else selected.add(id);
       if (selected.size === 0) selected.add(id);
-      this.activeLayerId = removing ? [...selected].at(-1)! : id;
-      state.set({ selectedLayerIds: [...selected] });
+      const selectedLayerIds = [...selected];
+      if (selectedLayerIds.length <= 1) {
+        this.activeLayerId = selectedLayerIds[0]!;
+        state.set({ multiSelectMode: false, selectedLayerIds });
+      } else {
+        this.activeLayerId = removing ? selectedLayerIds.at(-1)! : id;
+        state.set({ selectedLayerIds });
+      }
       this.engine.syncStore();
       return;
     }
@@ -565,11 +571,11 @@ export class LayerService {
   beginMultiSelect(id: string): void {
     if (!this.byId(id)) return;
     const st = useStore.getState();
-    const selected = new Set(st.selectedLayerIds.length ? st.selectedLayerIds : [this.activeLayerId]);
-    selected.add(id);
+    const previous = st.selectedLayerIds.length ? st.selectedLayerIds : [this.activeLayerId];
+    const selected = [id, ...previous.filter(existing => existing !== id && !!this.byId(existing))];
     this.activeLayerId = id;
     if (!getToolDescriptor(st.tool ?? '')?.capabilities.multiSelect) st.deactivateTool();
-    st.set({ multiSelectMode: true, selectedLayerIds: [...selected] });
+    st.set({ multiSelectMode: true, selectedLayerIds: selected });
     this.engine.syncStore();
   }
 

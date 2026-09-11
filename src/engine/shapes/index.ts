@@ -7,7 +7,7 @@ import {
   type ShapePoint,
   type StrokePoint,
 } from '../../model';
-import { pointsBounds, type ShapeBounds } from './geometry';
+import { polygonCentroid, type ShapeBounds } from './geometry';
 import { shapeKindHandler, shapeKindHandlerOf } from './kinds/registry';
 import type {
   ShapeControlField,
@@ -20,6 +20,7 @@ export {
   cloneShape,
   pointInPolygon,
   polygonArea,
+  polygonCentroid,
   polygonSelfIntersects,
   segmentsIntersect,
 } from './geometry';
@@ -167,7 +168,6 @@ export function shapePanelActions(shape: ShapeParams): ShapePanelAction[] {
 }
 
 export function polygonFromWorldPoints(points: ShapePoint[], style: Pick<PolygonShapeParams, 'color' | 'strokeWidth' | 'paintMode'>): PolygonShapeParams {
-  const bounds = pointsBounds(points);
-  const cx = bounds.x + bounds.w / 2, cy = bounds.y + bounds.h / 2;
+  const { x: cx, y: cy } = polygonCentroid(points);
   return { kind: 'polygon', cx, cy, points: points.map((point) => ({ x: point.x - cx, y: point.y - cy })), rotation: 0, color: style.color, strokeWidth: style.strokeWidth, paintMode: normalizeShapePaintMode(style.paintMode) };
 }

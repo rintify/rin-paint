@@ -30,7 +30,7 @@ export function maskCandidateRows(
   }
   const result: { layer: LayerMeta; depth: number }[] = [];
   const visit = (ids: string[], depth: number) => {
-    for (const id of [...ids].reverse()) {
+    for (const id of ids) {
       const layer = byId.get(id);
       if (!layer) continue;
       if (layer.id !== excludedId && canMaskLayerType(layer.type) && shown.has(layer.id)) {

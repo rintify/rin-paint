@@ -19,6 +19,7 @@ import {
 } from '@mui/material';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { hasLayerControls } from './layerControls';
+import { liftListOriginIfTooLow } from './layerListLayout';
 import { selectedLayerRows } from '../../engine/layerTree';
 import { useStore } from '../../state/store';
 import type { LayerMeta } from '../../model';
@@ -70,9 +71,11 @@ export function LayerPanel() {
   const renameSubmit = useRef<(() => boolean) | null>(null);
   const pendingRename = useRef<{ id: string; value: string } | null>(null);
   const longPressTarget = useRef<string | null>(null);
+  const ignoreClick = useRef(false);
   const longPress = useLongPress(() => {
     const id = longPressTarget.current;
     if (!id) return;
+    ignoreClick.current = true;
     engine.beginMultiSelect(id);
     setPalette({ id, open: true });
   });
@@ -141,6 +144,11 @@ export function LayerPanel() {
         }
       }
     }
+    if (!frozen.current) {
+      const lifted = liftListOriginIfTooLow(top, scroll, el.clientHeight);
+      top = lifted.top;
+      scroll = lifted.scroll;
+    }
     const height = Math.max(top + visible.length * ROW_HEIGHT + 8, scroll + el.clientHeight);
     const body = el.firstElementChild as HTMLElement;
     body.style.height = height + 'px';
@@ -199,9 +207,14 @@ export function LayerPanel() {
     }));
   }, [activeId, active, multi]);
 
-  const select = (id: string) => {
+  const select = (id: string, additive = false) => {
+    if (ignoreClick.current) {
+      ignoreClick.current = false;
+      return;
+    }
     oldRects.current = new Map([...elements.current].map(([key, node]) => [key, node.getBoundingClientRect()]));
-    engine.setActiveLayer(id);
+    if (additive) engine.beginMultiSelect(id);
+    else engine.setActiveLayer(id);
   };
   const finishDrag = () => {
     frozen.current = null;
@@ -277,7 +290,7 @@ export function LayerPanel() {
                 const siblings = anchor.parentId ? byId.get(anchor.parentId)!.childIds : rootLayerIds;
                 setDrop({
                   parentId: anchor.parentId,
-                  index: siblings.indexOf(anchor.id),
+                  index: siblings.indexOf(anchor.id) + 1,
                   anchorId: hovered.id,
                   edge: 'after',
                   depth,
@@ -302,7 +315,8 @@ export function LayerPanel() {
           {rows.map(row => {
             const meta = byId.get(row.id) ?? metadata.current.get(row.id);
             if (!meta) return null;
-            const isActive = selectedIds.includes(meta.id);
+            const isPrimary = selectedIds[0] === meta.id;
+            const isSelected = selectedIds.includes(meta.id);
             const guide = drop?.anchorId === meta.id ? drop : null;
             return (
               <Box
@@ -313,10 +327,12 @@ export function LayerPanel() {
                 }}
                 className={
                   'layer-row layer-flat-row'
-                  + (isActive ? ' active' : '')
+                  + (isPrimary ? ' active' : '')
+                  + (multi && isSelected && !isPrimary ? ' selected' : '')
                   + (dragId === meta.id ? ' is-dragging' : '')
                   + (guide?.edge === 'inside' ? ' drop-inside' : '')
                 }
+                aria-current={isPrimary ? 'true' : undefined}
                 style={{
                   top: spacing.top + row.index * ROW_HEIGHT,
                   left: row.depth * 16,
@@ -325,7 +341,10 @@ export function LayerPanel() {
                   opacity: row.exiting ? 0 : undefined,
                 }}
                 draggable={!row.exiting}
-                onClick={() => select(meta.id)}
+                onClick={event => {
+                  if (event.shiftKey) event.preventDefault();
+                  select(meta.id, event.shiftKey);
+                }}
                 onPointerDown={event => {
                   if ((event.target as HTMLElement).closest('button')) return;
                   longPressTarget.current = meta.id;
@@ -371,7 +390,7 @@ export function LayerPanel() {
                       }
                     : {
                         parentId: anchor.parentId,
-                        index: siblings.indexOf(anchor.id) + (ratio < 0.5 ? 1 : 0),
+                        index: siblings.indexOf(anchor.id) + (ratio < 0.5 ? 0 : 1),
                         anchorId: meta.id,
                         edge: ratio < 0.5 ? 'before' : 'after',
                         depth,
@@ -413,6 +432,7 @@ export function LayerPanel() {
                 <Typography variant="body2" noWrap sx={{ flex: 1, opacity: meta.visible ? 1 : 0.5 }}>
                   {meta.name}
                 </Typography>
+                {multi && isPrimary && <Box className="primary-badge">主</Box>}
                 <IconButton
                   draggable={false}
                   size="small"
@@ -443,7 +463,7 @@ export function LayerPanel() {
             onDragOver={event => {
               if (!dragId) return;
               event.preventDefault();
-              setDrop({ parentId: null, index: 0, anchorId: 'end', edge: 'after', depth: 0 });
+              setDrop({ parentId: null, index: rootLayerIds.length, anchorId: 'end', edge: 'after', depth: 0 });
             }}
             onDrop={event => {
               event.preventDefault();

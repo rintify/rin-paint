@@ -299,12 +299,13 @@ describe('canvas history and new project', () => {
     expect(useStore.getState().layers.some(layer => layer.id === id)).toBe(false);
   });
 
-  it('keeps explicit multi-select mode with one layer and batches opacity preview history', async () => {
+  it('exits multi-select when the selection shrinks to one layer and batches opacity preview history', async () => {
     await engine.newProject();
     const first = useStore.getState().activeLayerId;
     engine.addRasterLayer();
     const second = useStore.getState().activeLayerId;
     engine.beginMultiSelect(first);
+    expect(useStore.getState().selectedLayerIds[0]).toBe(first);
     const before = Object.fromEntries(useStore.getState().selectedLayerIds.map(id => [id, useStore.getState().layers.find(layer => layer.id === id)!.opacity]));
     engine.previewSelectedLayerProps({ opacity: .35 });
     engine.commitSelectedLayerOpacity(before, .35);
@@ -312,9 +313,17 @@ describe('canvas history and new project', () => {
     await engine.undo();
     expect(useStore.getState().layers.filter(layer => [first, second].includes(layer.id)).map(layer => layer.opacity)).toEqual([1, 1]);
     engine.setActiveLayer(second);
-    expect(useStore.getState().multiSelectMode).toBe(true);
+    expect(useStore.getState().multiSelectMode).toBe(false);
     expect(useStore.getState().selectedLayerIds).toEqual([first]);
     expect(useStore.getState().activeLayerId).toBe(first);
+  });
+
+  it('keeps multi-select when entering with a single layer', async () => {
+    await engine.newProject();
+    const id = useStore.getState().activeLayerId;
+    engine.beginMultiSelect(id);
+    expect(useStore.getState().multiSelectMode).toBe(true);
+    expect(useStore.getState().selectedLayerIds).toEqual([id]);
   });
 
   it('stores raster merges as tiles-v1 across undo, redo and reload', async () => {

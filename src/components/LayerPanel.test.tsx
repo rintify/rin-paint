@@ -8,11 +8,23 @@ import type { PaintEngine } from '../engine/PaintEngine';
 import { EngineProvider } from './EngineContext';
 import { LayerPanel, maskCandidateRows } from './LayerPanel';
 
-const actions = vi.hoisted(() => ({ remove: vi.fn(), merge: vi.fn(async () => undefined), rename: vi.fn(() => true) }));
+const actions = vi.hoisted(() => ({
+  remove: vi.fn(),
+  merge: vi.fn(async () => undefined),
+  rename: vi.fn(() => true),
+  setActiveLayer: vi.fn((id: string) => useStore.getState().set({ activeLayerId: id })),
+  beginMultiSelect: vi.fn((id: string) => {
+    const state = useStore.getState();
+    const previous = state.selectedLayerIds.length ? state.selectedLayerIds : [state.activeLayerId];
+    const selected = [id, ...previous.filter(existing => existing !== id)];
+    state.set({ multiSelectMode: true, selectedLayerIds: selected, activeLayerId: id });
+  }),
+}));
 const mockEngine = vi.hoisted(() => ({
   artboard: { w: 1600, h: 1200 },
   getLayerCanvas: () => null,
-  setActiveLayer: (id: string) => useStore.getState().set({ activeLayerId: id }),
+  setActiveLayer: actions.setActiveLayer,
+  beginMultiSelect: actions.beginMultiSelect,
   canMoveLayer: () => true,
   getShape: () => null,
   removeLayer: actions.remove,
@@ -62,13 +74,20 @@ beforeEach(() => {
     configurable: true,
     value: () => ({ cancel() {} }),
   });
-  useStore.getState().set({ layers, rootLayerIds: ['raster', 'shape'], activeLayerId: 'raster' });
+  useStore.getState().set({
+    layers,
+    rootLayerIds: ['raster', 'shape'],
+    activeLayerId: 'raster',
+    selectedLayerIds: ['raster'],
+    multiSelectMode: false,
+  });
   container = document.body.appendChild(document.createElement('div'));
   root = createRoot(container);
 });
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 async function click(element: Element | null) {
@@ -89,6 +108,23 @@ function renderPanel() {
     ));
 }
 describe('layer settings entry points', () => {
+  it('lists lower layers first and marks the first selected layer as primary in multi-select', async () => {
+    useStore.getState().set({
+      selectedLayerIds: ['raster', 'shape'],
+      multiSelectMode: true,
+      activeLayerId: 'shape',
+    });
+    await renderPanel();
+    const rows = [...container.querySelectorAll('.layer-row')];
+    expect(rows.map(row => row.textContent)).toEqual([
+      expect.stringContaining('ラスター'),
+      expect.stringContaining('直線'),
+    ]);
+    expect(rows[0].classList.contains('active')).toBe(true);
+    expect(rows[0].querySelector('.primary-badge')?.textContent).toBe('主');
+    expect(rows[1].classList.contains('selected')).toBe(true);
+    expect(rows[1].classList.contains('active')).toBe(false);
+  });
   it('opens rename from the layer menu and keeps focus until the edited name is committed', async () => {
     actions.rename.mockClear();
     await renderPanel();
@@ -131,6 +167,37 @@ describe('layer settings entry points', () => {
     await click(menuItem('下と統合'));
     expect(actions.merge).toHaveBeenCalledWith('shape');
     expect(useStore.getState().activeLayerId).toBe('raster');
+  });
+  it('does not toggle the long-pressed layer off via the following click', async () => {
+    vi.useFakeTimers();
+    actions.setActiveLayer.mockClear();
+    actions.beginMultiSelect.mockClear();
+    await renderPanel();
+    const row = [...container.querySelectorAll('.layer-row')].find(el => el.textContent?.includes('直線'))!;
+    await act(async () => {
+      row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
+      await vi.advanceTimersByTimeAsync(500);
+      row.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 10, clientY: 10 }));
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(actions.beginMultiSelect).toHaveBeenCalledWith('shape');
+    expect(actions.setActiveLayer).not.toHaveBeenCalled();
+    expect(useStore.getState().multiSelectMode).toBe(true);
+    expect(useStore.getState().selectedLayerIds).toEqual(['shape', 'raster']);
+    vi.useRealTimers();
+  });
+  it('enters multi-select with the shift-clicked layer as primary', async () => {
+    actions.setActiveLayer.mockClear();
+    actions.beginMultiSelect.mockClear();
+    await renderPanel();
+    const row = [...container.querySelectorAll('.layer-row')].find(el => el.textContent?.includes('直線'))!;
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+    });
+    expect(actions.beginMultiSelect).toHaveBeenCalledWith('shape');
+    expect(actions.setActiveLayer).not.toHaveBeenCalled();
+    expect(useStore.getState().multiSelectMode).toBe(true);
+    expect(useStore.getState().selectedLayerIds).toEqual(['shape', 'raster']);
   });
 });
 

@@ -539,14 +539,21 @@ export class PaintEngine {
       canTransferShape: ls.canTransferShape(l.id),
     }));
     const state = useStore.getState();
-    const selectedLayerIds = state.multiSelectMode
+    let selectedLayerIds = state.multiSelectMode
       ? state.selectedLayerIds.filter(id => ls.byId(id))
       : [ls.activeLayerId].filter(Boolean);
+    let multiSelectMode = state.multiSelectMode;
+    if (multiSelectMode && selectedLayerIds.length <= 1 && selectedLayerIds.length < state.selectedLayerIds.length) {
+      multiSelectMode = false;
+      if (selectedLayerIds[0]) ls.activeLayerId = selectedLayerIds[0];
+      selectedLayerIds = [ls.activeLayerId].filter(Boolean);
+    }
     useStore.getState().set({
       layers: metas,
       rootLayerIds: ls.layerRootIds(),
       activeLayerId: ls.activeLayerId,
       selectedLayerIds,
+      multiSelectMode,
       pages: this.pages.pageOrder.map(id => ({
         id,
         thumbnailVersion: id === this.pages.activePageId
