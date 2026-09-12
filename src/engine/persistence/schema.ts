@@ -116,6 +116,8 @@ function isAtomicOp(value: unknown): value is PersistedAtomicOp {
         typeof op.beforeActiveId === 'string' &&
         typeof op.afterActiveId === 'string'
       );
+    case 'layerContent':
+      return typeof op.layerId === 'string' && isLayerSnapshot(op.before) && isLayerSnapshot(op.after);
     default:
       return false;
   }

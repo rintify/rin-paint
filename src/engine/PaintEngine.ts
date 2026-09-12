@@ -45,6 +45,8 @@ import type { RasterLayer } from './layers';
 import type { LayerParameterValue } from './layerParameters';
 import { mmToPx } from './units';
 import { rotatedRectBounds } from './shapes/snap';
+import { imageToolBoxPx } from '../tools/image/settings';
+import { canvasFromImageFile } from './image/load';
 import {
   normalizeEyedropperToolSettings,
   type EyedropperSource,
@@ -228,16 +230,40 @@ export class PaintEngine {
   }
   cancelEyedropper(): void { this.input.cancelEyedropper(); }
   longPressEyedropperSource(): EyedropperSource {
+    return normalizeEyedropperToolSettings(this.firstToolOfKind('eyedropper')?.settings).source;
+  }
+  firstToolOfKind(kind: ToolKind) {
     const state = useStore.getState();
     const orderedIds = state.toolLayout.flatMap((item) => {
       if (item.type === 'tool') return [item.toolId];
       return state.toolStacks.find((stack) => stack.id === item.stackId)?.toolIds ?? [];
     });
-    const first = [...orderedIds, ...state.tools.map((tool) => tool.id)]
+    return [...orderedIds, ...state.tools.map((tool) => tool.id)]
       .map((id) => state.tools.find((tool) => tool.id === id))
-      .find((tool) => tool?.kind === 'eyedropper');
-    return normalizeEyedropperToolSettings(first?.settings).source;
+      .find((tool) => tool?.kind === kind);
   }
+
+  async placeDroppedImage(file: File, clientX: number, clientY: number): Promise<boolean> {
+    const canvas = await canvasFromImageFile(file);
+    if (!canvas) return false;
+    const tool = this.firstToolOfKind('image');
+    if (!tool) {
+      this.notify('画像ツールを追加してください');
+      return true;
+    }
+    const box = imageToolBoxPx(tool.settings, this.getCanvasSpec().ppi);
+    const point = this.view.clientToArt(clientX, clientY);
+    this.addImageLayer(canvas, point.x, point.y, box.width, box.height);
+    return true;
+  }
+
+  replaceImageContent(id: string, canvas: HTMLCanvasElement): void {
+    this.layerService.replaceImageContent(id, canvas);
+  }
+  fitImageAspect(id: string): void {
+    this.layerService.fitImageAspect(id);
+  }
+
   applyPickedColor(color: string, restorePreviousTool: boolean): void {
     const state = useStore.getState();
     if (restorePreviousTool && this.toolBeforeEyedropperId
@@ -297,7 +323,7 @@ export class PaintEngine {
   }
   visibleObjectBounds(excludeId: string): { x: number; y: number; w: number; h: number }[] {
     return this.layerService.layers.flatMap(layer => {
-      if (layer.id === excludeId || !layer.visible || (layer.type !== 'shape' && layer.type !== 'text')) return [];
+      if (layer.id === excludeId || !layer.visible || (layer.type !== 'shape' && layer.type !== 'text' && layer.type !== 'image')) return [];
       const bounds = this.objectBounds(layer.id);
       return bounds ? [bounds] : [];
     });
@@ -321,6 +347,9 @@ export class PaintEngine {
   addOutlineLayer(): void { this.layerService.addOutlineLayer(); }
   addClipLayer(): void { this.layerService.addClipLayer(); }
   addShapeLayer(shape: ShapeParams): void { this.layerService.addShapeLayer(shape); }
+  addImageLayer(canvas: HTMLCanvasElement, x: number, y: number, maxWidth: number, maxHeight: number): void {
+    this.layerService.addImageLayer(canvas, x, y, maxWidth, maxHeight);
+  }
   layerChildren(id: string): string[] { return this.layerService.layerChildren(id); }
   layerRootIds(): string[] { return this.layerService.layerRootIds(); }
   canMoveLayer(id: string, parentId: string | null): boolean { return this.layerService.canMoveLayer(id, parentId); }
@@ -554,55 +583,6 @@ export class PaintEngine {
   lassoCommit(): void { this.commitFloatSelection(); }
   lassoDuplicate(): void { this.duplicateFloatSelection(); }
   lassoCancel(): void { this.cancelFloatSelection(); }
-
-  transferReferenceImage(
-    image: CanvasImageSource,
-    naturalWidth: number,
-    naturalHeight: number,
-    corners: {
-      topLeft: { x: number; y: number };
-      topRight: { x: number; y: number };
-      bottomLeft: { x: number; y: number };
-      bottomRight: { x: number; y: number };
-    },
-    opacity: number,
-  ): boolean {
-    if (this.busy || naturalWidth <= 0 || naturalHeight <= 0) return false;
-    this.layerService.finishFloating();
-    const layer = this.activeRaster();
-    if (!layer) return false;
-    const p0 = this.view.clientToArt(corners.topLeft.x, corners.topLeft.y);
-    const px = this.view.clientToArt(corners.topRight.x, corners.topRight.y);
-    const py = this.view.clientToArt(corners.bottomLeft.x, corners.bottomLeft.y);
-    const p3 = this.view.clientToArt(corners.bottomRight.x, corners.bottomRight.y);
-    this.captureBefore(layer);
-    layer.ctx.save();
-    layer.ctx.globalAlpha = Math.max(0, Math.min(1, opacity));
-    layer.ctx.globalCompositeOperation = 'source-over';
-    layer.ctx.setTransform(
-      (px.x - p0.x) / naturalWidth,
-      (px.y - p0.y) / naturalWidth,
-      (py.x - p0.x) / naturalHeight,
-      (py.y - p0.y) / naturalHeight,
-      p0.x,
-      p0.y,
-    );
-    layer.ctx.drawImage(image, 0, 0, naturalWidth, naturalHeight);
-    layer.ctx.restore();
-    const xs = [p0.x, px.x, py.x, p3.x];
-    const ys = [p0.y, px.y, py.y, p3.y];
-    this.commitRasterEdit(
-      layer,
-      {
-        minX: Math.min(...xs) - 2,
-        minY: Math.min(...ys) - 2,
-        maxX: Math.max(...xs) + 2,
-        maxY: Math.max(...ys) + 2,
-      },
-      '画像を転写',
-    );
-    return true;
-  }
 
   async exportPNG(): Promise<void> { return this.project.exportPNG(); }
   async exportProject(): Promise<void> { return this.project.exportProject(); }

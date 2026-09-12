@@ -3,6 +3,7 @@ import type { LayerMeta, LayerType } from '../../model';
 import { TextControls } from '../TextControls';
 import { AdjustControls } from './AdjustControlsPanel';
 import { ShapeControls } from './ShapeControlsPanel';
+import { ImageControls } from './ImageControlsPanel';
 import { OutlineControls } from './OutlineControlsPanel';
 import { ClipControls } from './ClipControlsPanel';
 
@@ -13,6 +14,7 @@ const LAYER_CONTROLS: Partial<Record<LayerType, ComponentType<{ meta: LayerMeta 
   clip: ClipControls,
   shape: ShapeControls,
   text: TextControls,
+  image: ImageControls,
 };
 
 export function layerControlsPanel(type: LayerType): ComponentType<{ meta: LayerMeta }> | undefined {

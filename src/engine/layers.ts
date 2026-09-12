@@ -1,5 +1,6 @@
 import { DEFAULT_ADJUST, type AdjustParams } from '../model/adjust';
 import type { BlendMode } from '../model/blend';
+import { cloneImageParams, normalizeImageParams, type ImageParams } from '../model/image';
 import { DEFAULT_OUTLINE, type OutlineParams } from '../model/outline';
 import type { ShapeParams } from '../model/shape';
 import type { TextParams } from '../model/text';
@@ -74,7 +75,46 @@ export interface TextLayer extends LayerTreeFields {
   blend: BlendMode;
   visible: boolean;
 }
-export type Layer = RasterLayer | AdjustLayer | OutlineLayer | ClipLayer | ShapeLayer | TextLayer;
+
+export interface ImageLayer extends LayerTreeFields {
+  id: string;
+  type: 'image';
+  name: string;
+  image: ImageParams;
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  snapEnabled: boolean;
+  constrainAspect: boolean;
+  opacity: number;
+  blend: BlendMode;
+  visible: boolean;
+}
+export type Layer = RasterLayer | AdjustLayer | OutlineLayer | ClipLayer | ShapeLayer | TextLayer | ImageLayer;
+
+export function createImageLayer(
+  name: string,
+  canvas: HTMLCanvasElement,
+  image: ImageParams,
+  id = newLayerId(),
+  snapEnabled = true,
+  constrainAspect = true,
+): ImageLayer {
+  return {
+    id,
+    type: 'image',
+    name,
+    image: normalizeImageParams(cloneImageParams(image)),
+    canvas,
+    ctx: canvas.getContext('2d', { willReadFrequently: true })!,
+    snapEnabled,
+    constrainAspect,
+    opacity: 1,
+    blend: 'source-over',
+    visible: true,
+    parentId: null,
+    childIds: [],
+  };
+}
 
 export function createTextLayer(name: string, text: TextParams, id = newLayerId(), snapEnabled = true): TextLayer {
   return {

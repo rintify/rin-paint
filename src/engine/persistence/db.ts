@@ -1,6 +1,6 @@
 import { openDB, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import type {
-  AdjustParams, BlendMode, LayerType, OutlineParams, ShapeParams, ToolInstance, TextParams,
+  AdjustParams, BlendMode, ImageParams, LayerType, OutlineParams, ShapeParams, ToolInstance, TextParams,
   CanvasSpec, ProjectFont, ToolLayoutItem, ToolStack, LayerParameterLink,
 } from '../../model';
 import type { PersistedHistory } from '../history/historyTree';
@@ -14,7 +14,7 @@ import type { ShortcutBindings } from '../../shortcuts';
 export interface SavedLayer {
   id: string; type: LayerType; name: string; opacity: number; blend: BlendMode;
   visible: boolean; parentId: string | null; childIds: string[];
-  params?: AdjustParams; outline?: OutlineParams; maskLayerIds?: string[]; shape?: ShapeParams; snapEnabled?: boolean; text?: TextParams; parameterLink?: LayerParameterLink; blob?: Blob;
+  params?: AdjustParams; outline?: OutlineParams; maskLayerIds?: string[]; shape?: ShapeParams; snapEnabled?: boolean; constrainAspect?: boolean; text?: TextParams; image?: ImageParams; parameterLink?: LayerParameterLink; blob?: Blob;
 }
 export interface SavedPage {
   id: string; canvasSpec: CanvasSpec; rootLayerIds: string[]; layers: SavedLayer[];

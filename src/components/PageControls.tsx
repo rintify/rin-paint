@@ -116,7 +116,7 @@ function PageManager({ onClose }: { onClose: () => void }) {
               const id = menu?.id;
               setMenu(null);
               if (!id) return;
-              if (await appConfirm('このページのレイヤー・履歴・参照画像・タイムラプスを削除します。よろしいですか？')) {
+              if (await appConfirm('このページのレイヤー・履歴・タイムラプスを削除します。よろしいですか？')) {
                 await engine.deletePage(id);
               }
             }}

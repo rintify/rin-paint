@@ -27,6 +27,7 @@ export function atomicBytes(op: PersistedAtomicOp | Exclude<Op, { kind: 'batch' 
     return [...op.before.entries, ...op.after.entries]
       .reduce((n, entry) => n + snapshotBytes(entry.snapshot), 0);
   }
+  if (op.kind === 'layerContent') return snapshotBytes(op.before) + snapshotBytes(op.after);
   return 0;
 }
 

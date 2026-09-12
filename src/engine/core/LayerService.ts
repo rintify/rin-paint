@@ -1,5 +1,7 @@
 import { useStore } from '../../state/store';
 import {
+  cloneImageParams,
+  fitImageParamsToSource,
   type LayerType,
   type ShapeParams,
   type TextParams,
@@ -26,16 +28,19 @@ import { textFrame } from '../layer-types/text';
 import {
   createAdjustLayer,
   createClipLayer,
+  createImageLayer,
   createOutlineLayer,
   createRasterLayer,
   createShapeLayer,
   createTextLayer,
   makeCanvas,
+  type ImageLayer,
   type Layer,
   type RasterLayer,
   type ShapeLayer,
 } from '../layers';
 import { canReparent, closestRasterOrRoot, structuralLowerId } from '../layerTree';
+import { placedImage } from '../image/frame';
 import { isEmptyText } from '../text/model';
 import type { PaintEngine } from '../PaintEngine';
 import { cloneShape, polygonFromWorldPoints, shapeCorners } from '../shapes';
@@ -74,6 +79,11 @@ export class LayerService {
   shapeById(id: string): ShapeLayer | null {
     const l = this.byId(id);
     return l && l.type === 'shape' ? l : null;
+  }
+
+  imageById(id: string): ImageLayer | null {
+    const l = this.byId(id);
+    return l && l.type === 'image' ? l : null;
   }
 
   siblingIds(parentId: string | null): string[] {
@@ -174,7 +184,7 @@ export class LayerService {
   }
 
   assignProps(l: Layer, p: LayerProps): void {
-    const affectsMask = p.opacity !== undefined || p.shape !== undefined || p.text !== undefined || p.outline !== undefined;
+    const affectsMask = p.opacity !== undefined || p.shape !== undefined || p.text !== undefined || p.outline !== undefined || p.image !== undefined;
     if (p.name !== undefined) l.name = p.name;
     if (p.opacity !== undefined) l.opacity = p.opacity;
     if (p.blend !== undefined) l.blend = p.blend;
@@ -233,8 +243,12 @@ export class LayerService {
   }
 
   canTransferShape(id = this.activeLayerId): boolean {
-    const layer = this.shapeById(id);
-    return !!layer && layer.childIds.length === 0 && !!layer.parentId && !!this.rasterById(layer.parentId);
+    const layer = this.byId(id);
+    return !!layer
+      && (layer.type === 'shape' || layer.type === 'image')
+      && layer.childIds.length === 0
+      && !!layer.parentId
+      && !!this.rasterById(layer.parentId);
   }
 
   canMoveLayer(id: string, parentId: string | null): boolean {
@@ -465,6 +479,23 @@ export class LayerService {
     this.engine.committed();
   }
 
+  addImageLayer(canvas: HTMLCanvasElement, x: number, y: number, maxWidth: number, maxHeight: number): void {
+    if (this.engine.isBusy()) return;
+    const parentId = closestRasterOrRoot(this.layers, this.activeLayerId);
+    const siblings = this.siblingIds(parentId);
+    const location: LayerLocation = { parentId, index: siblings.length };
+    const layer = createImageLayer(
+      this.nextLayerName('image'),
+      canvas,
+      placedImage(canvas, x, y, maxWidth, maxHeight),
+    );
+    this.layers.push(layer);
+    this.insertAt(layer.id, location);
+    this.activeLayerId = layer.id;
+    this.engine.history.push({ kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, true, true) }, '画像を追加');
+    this.engine.committed();
+  }
+
   moveLayerAsTopChild(id: string, parentId: string): void {
     const parent = this.byId(parentId);
     if (parent && this.canMoveLayer(id, parentId)) this.moveLayer(id, { parentId, index: parent.childIds.length });
@@ -578,9 +609,53 @@ export class LayerService {
   transferShapeLayer(): void {
     if (this.engine.isBusy()) return;
     if (!this.canTransferShape()) return;
-    const shape = this.shapeById(this.activeLayerId)!;
-    const parent = this.rasterById(shape.parentId!)!;
-    this.bakeAndMerge(shape, parent, '図形を転写', shape.id);
+    const layer = this.byId(this.activeLayerId)!;
+    const parent = this.rasterById(layer.parentId!)!;
+    this.bakeAndMerge(layer, parent, layer.type === 'image' ? '画像を転写' : '図形を転写', layer.id);
+  }
+
+  async applyLayerContent(snapshot: LayerSnapshot): Promise<void> {
+    const current = this.byId(snapshot.id);
+    if (!current || current.type !== snapshot.type) return;
+    const restored = await restoreLayerFrom(snapshot, { artboard: this.engine.artboard });
+    if (!restored || restored.type !== current.type) return;
+    if (current.type === 'image' && restored.type === 'image') {
+      current.canvas = restored.canvas;
+      current.ctx = restored.ctx;
+      current.image = restored.image;
+      current.snapEnabled = restored.snapEnabled;
+      current.constrainAspect = restored.constrainAspect;
+    } else {
+      this.assignProps(current, layerTypeProps(restored));
+    }
+    this.bumpLayer(current.id);
+  }
+
+  replaceImageContent(id: string, canvas: HTMLCanvasElement): void {
+    if (this.engine.isBusy()) return;
+    const layer = this.imageById(id);
+    if (!layer || canvas.width <= 0 || canvas.height <= 0) return;
+    const before = this.snapshotLayer(layer, true, true);
+    layer.canvas = canvas;
+    layer.ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+    this.bumpLayer(layer.id);
+    const after = this.snapshotLayer(layer, true, true);
+    this.engine.history.push({ kind: 'layerContent', layerId: layer.id, before, after }, '画像を差し替え');
+    this.engine.committed();
+  }
+
+  fitImageAspect(id: string): void {
+    if (this.engine.isBusy()) return;
+    const layer = this.imageById(id);
+    if (!layer) return;
+    const afterImage = fitImageParamsToSource(layer.image, layer.canvas.width, layer.canvas.height);
+    if (afterImage.width === layer.image.width && afterImage.height === layer.image.height) return;
+    this.commitLayerProps(
+      id,
+      { image: cloneImageParams(layer.image) },
+      { image: afterImage },
+      '比率を画像に合わせる',
+    );
   }
 
   setActiveLayer(id: string): void {
@@ -836,7 +911,7 @@ export class LayerService {
       return linkOp ? [propsOp, linkOp] : [propsOp];
     });
     if (!ops.length) return;
-    this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, key === 'snapEnabled' ? 'スナップを変更' : '共通パラメータを変更');
+    this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, key === 'snapEnabled' ? 'スナップを変更' : key === 'constrainAspect' ? '比率の維持を変更' : '共通パラメータを変更');
     for (const { layerId } of changes) this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId });
     this.engine.committed();
   }

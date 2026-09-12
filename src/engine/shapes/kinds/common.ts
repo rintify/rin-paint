@@ -135,13 +135,41 @@ export function resizeByCorner(
   halfWidth: number,
   halfHeight: number,
   point: StrokePoint,
+  lockAspect = false,
 ): { cx: number; cy: number; w: number; h: number } | null {
   if (mode !== 'nw' && mode !== 'ne' && mode !== 'sw' && mode !== 'se') return null;
   const cos = Math.cos(-angle), sin = Math.sin(-angle);
   const px = (point.x - center.x) * cos - (point.y - center.y) * sin;
   const py = (point.x - center.x) * sin + (point.y - center.y) * cos;
-  const left = mode.endsWith('w') ? px : -halfWidth, right = mode.endsWith('e') ? px : halfWidth;
-  const top = mode.startsWith('n') ? py : -halfHeight, bottom = mode.startsWith('s') ? py : halfHeight;
+  let left = mode.endsWith('w') ? px : -halfWidth, right = mode.endsWith('e') ? px : halfWidth;
+  let top = mode.startsWith('n') ? py : -halfHeight, bottom = mode.startsWith('s') ? py : halfHeight;
+  if (lockAspect) {
+    const oppositeX = mode.endsWith('w') ? halfWidth : -halfWidth;
+    const oppositeY = mode.startsWith('n') ? halfHeight : -halfHeight;
+    const towardX = mode.endsWith('w') ? -1 : 1;
+    const towardY = mode.startsWith('n') ? -1 : 1;
+    const origW = Math.max(0.01, halfWidth * 2);
+    const origH = Math.max(0.01, halfHeight * 2);
+    const dw = Math.max(0.01, (px - oppositeX) * towardX);
+    const dh = Math.max(0.01, (py - oppositeY) * towardY);
+    const scale = Math.max(dw / origW, dh / origH);
+    const w = origW * scale;
+    const h = origH * scale;
+    if (towardX < 0) {
+      right = oppositeX;
+      left = oppositeX - w;
+    } else {
+      left = oppositeX;
+      right = oppositeX + w;
+    }
+    if (towardY < 0) {
+      bottom = oppositeY;
+      top = oppositeY - h;
+    } else {
+      top = oppositeY;
+      bottom = oppositeY + h;
+    }
+  }
   const localX = (left + right) / 2, localY = (top + bottom) / 2;
   return {
     cx: center.x + localX * Math.cos(angle) - localY * Math.sin(angle),

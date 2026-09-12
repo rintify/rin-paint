@@ -1,4 +1,4 @@
-import type { AdjustParams, BlendMode, LayerAddress, LayerParameterLink, LayerType, OutlineParams, ShapeParams, TextParams, CanvasSpec } from '../../model';
+import type { AdjustParams, BlendMode, ImageParams, LayerAddress, LayerParameterLink, LayerType, OutlineParams, ShapeParams, TextParams, CanvasSpec } from '../../model';
 import { HISTORY_VERSION } from '../persistence/version';
 import { opBytes } from './bytes';
 import type { TilePatch } from './tilePatch';
@@ -18,7 +18,9 @@ export interface LayerSnapshot {
   maskLayerIds?: string[];
   shape?: ShapeParams;
   snapEnabled?: boolean;
+  constrainAspect?: boolean;
   text?: TextParams;
+  image?: ImageParams;
   parameterLink?: LayerParameterLink;
   /** ラスター内容。作成直後は canvas、PNG エンコード完了後は blob に置き換わる */
   canvas?: HTMLCanvasElement;
@@ -35,7 +37,9 @@ export interface LayerProps {
   maskLayerIds?: string[];
   shape?: ShapeParams;
   snapEnabled?: boolean;
+  constrainAspect?: boolean;
   text?: TextParams;
+  image?: ImageParams;
   parameterLink?: LayerParameterLink | null;
 }
 
@@ -90,6 +94,13 @@ export interface TileLayerMergeOp {
 
 export type LayerMergeOp = TileLayerMergeOp;
 
+export interface LayerContentOp {
+  kind: 'layerContent';
+  layerId: string;
+  before: LayerSnapshot;
+  after: LayerSnapshot;
+}
+
 export type AtomicOp =
   | { kind: 'canvasChange'; before: CanvasSnapshot; after: CanvasSnapshot }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
@@ -99,7 +110,8 @@ export type AtomicOp =
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
   | LayerLinkOp
   | LayerReplaceOp
-  | LayerMergeOp;
+  | LayerMergeOp
+  | LayerContentOp;
 
 export type Op = AtomicOp | { kind: 'batch'; ops: AtomicOp[] };
 
@@ -159,7 +171,8 @@ export type PersistedAtomicOp =
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
   | LayerLinkOp
   | PersistedLayerReplaceOp
-  | PersistedTileLayerMergeOp;
+  | PersistedTileLayerMergeOp
+  | { kind: 'layerContent'; layerId: string; before: PersistedLayerSnapshot; after: PersistedLayerSnapshot };
 
 export type PersistedOp = PersistedAtomicOp | { kind: 'batch'; ops: PersistedAtomicOp[] };
 
@@ -279,6 +292,12 @@ export class HistoryTree {
               before: [...change.before],
               after: [...change.after],
             })),
+          };
+        case 'layerContent':
+          return {
+            ...op,
+            before: await snapshot(op.before),
+            after: await snapshot(op.after),
           };
       }
     };

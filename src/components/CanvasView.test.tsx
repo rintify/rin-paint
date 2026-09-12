@@ -6,10 +6,6 @@ import { EngineProvider } from './EngineContext';
 import { useStore } from '../state/store';
 import type { PaintEngine } from '../engine/PaintEngine';
 vi.mock('./TextEditor', () => ({ TextEditor: () => null }));
-vi.mock('./ReferenceImageWindow', () => ({
-  ReferenceImageWindow: () => null,
-  handleReferenceImageDrop: () => false,
-}));
 import { CanvasView } from './CanvasView';
 
 const setConstrained = vi.hoisted(() => vi.fn());

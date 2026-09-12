@@ -15,6 +15,7 @@ import { DEFAULT_FILL_TOOL_SETTINGS } from '../tools/fill/settings';
 import { DEFAULT_SHAPE_TOOL_SETTINGS } from '../tools/shape/settings';
 import { DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS } from '../tools/polygonSplit/settings';
 import { DEFAULT_TEXT_TOOL_SETTINGS } from '../tools/text/settings';
+import { DEFAULT_IMAGE_TOOL_SETTINGS } from '../tools/image/settings';
 import { DEFAULT_EYEDROPPER_TOOL_SETTINGS } from '../tools/eyedropper/settings';
 import { getToolDescriptor, isToolKind, type ToolKind } from '../tools/registry';
 import { normalizeToolLayout } from './toolLayout';
@@ -55,6 +56,7 @@ export function defaultToolSetup(): DefaultToolSetup {
     { kind: 'move', name: '移動変形' },
     { kind: 'blur', name: 'ぼかし' },
     { kind: 'text', name: '文字', settings: { ...DEFAULT_TEXT_TOOL_SETTINGS } },
+    { kind: 'image', name: '画像', settings: { ...DEFAULT_IMAGE_TOOL_SETTINGS } },
   ];
   const tools = definitions.map(({ kind, name, settings }) => {
     return {

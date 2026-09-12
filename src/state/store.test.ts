@@ -10,9 +10,9 @@ describe('tool management', () => {
   it('provides every tool kind once and groups the shape tools by default', () => {
     const setup = defaultToolSetup();
     expect(setup.tools.map(tool => tool.kind)).toEqual([
-      'pen', 'line', 'rect', 'ellipse', 'polygon', 'fill', 'eyedropper', 'polygonSplit', 'lasso', 'move', 'blur', 'text',
+      'pen', 'line', 'rect', 'ellipse', 'polygon', 'fill', 'eyedropper', 'polygonSplit', 'lasso', 'move', 'blur', 'text', 'image',
     ]);
-    expect(new Set(setup.tools.map(tool => tool.kind)).size).toBe(12);
+    expect(new Set(setup.tools.map(tool => tool.kind)).size).toBe(13);
     expect(setup.toolStacks).toHaveLength(1);
     expect(setup.toolStacks[0].name).toBe('図形');
     expect(setup.toolStacks[0].toolIds.map(id => setup.tools.find(tool => tool.id === id)?.kind))

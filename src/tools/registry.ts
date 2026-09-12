@@ -12,6 +12,7 @@ import { ellipseTool } from './ellipse';
 import { polygonTool } from './polygon';
 import { polygonSplitTool } from './polygonSplit';
 import { textTool } from './text';
+import { imageTool } from './image';
 import { eyedropperTool } from './eyedropper';
 import type { Tool, ToolDescriptor } from './types';
 
@@ -28,6 +29,7 @@ export const TOOL_REGISTRY = {
   move: moveTool,
   blur: blurTool,
   text: textTool,
+  image: imageTool,
 } as const;
 
 export type ToolKind = keyof typeof TOOL_REGISTRY;
@@ -50,6 +52,8 @@ function legacySettings(kind: ToolKind, raw: Record<string, unknown>): unknown {
       return raw.penSettings;
     case 'text':
       return raw.textSettings;
+    case 'image':
+      return raw.imageSettings;
     case 'fill':
       return raw.fillSettings;
     case 'eyedropper':
@@ -131,3 +135,8 @@ export {
   normalizePolygonSplitToolSettings,
   type PolygonSplitToolSettings,
 } from './polygonSplit/settings';
+export {
+  DEFAULT_IMAGE_TOOL_SETTINGS,
+  normalizeImageToolSettings,
+  type ImageToolSettings,
+} from './image/settings';

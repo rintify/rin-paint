@@ -166,6 +166,10 @@ export class HistoryService {
         applyMaskChanges();
         break;
       }
+      case 'layerContent': {
+        await ls.applyLayerContent(dir === 'undo' ? op.before : op.after);
+        break;
+      }
     }
   }
 

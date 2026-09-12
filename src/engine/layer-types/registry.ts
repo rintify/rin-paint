@@ -4,6 +4,7 @@ import type { Layer } from '../layers';
 import type { SavedLayer } from '../persistence/db';
 import { adjustLayerType } from './adjust';
 import { clipLayerType } from './clip';
+import { imageLayerType } from './image';
 import { outlineLayerType } from './outline';
 import { rasterLayerType } from './raster';
 import { shapeLayerType } from './shape';
@@ -33,6 +34,7 @@ function handlers(): Record<LayerType, LayerTypeHandler> {
     clip: clipLayerType,
     shape: shapeLayerType,
     text: textLayerType,
+    image: imageLayerType,
   });
 }
 

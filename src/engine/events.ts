@@ -1,10 +1,8 @@
 export interface EngineEventMap {
   /** テキスト編集中の内容を確定させたい時にエンジンが発火 (TextEditor が購読) */
   textCommitRequest: void;
-  /** newProject / importProject / switchPage 後 (参照画像ウィンドウ等が購読) */
+  /** newProject / importProject / switchPage 後 */
   projectReset: void;
-  /** 参照画像ファイルのドロップ受付 (MainMenu → ReferenceImageWindow) */
-  referenceImageImport: File;
   /** UI が選択対象に応じて処理するショートカット */
   shortcutCommand: { command: 'rename-selection' | 'delete-selection' };
 }

@@ -419,7 +419,7 @@ describe('canvas history and new project', () => {
   });
 
   it('merges drawable and effect layers as tiles-v1', async () => {
-    const verify = async (type: 'shape' | 'text' | 'adjust' | 'outline' | 'clip', add: () => void) => {
+    const verify = async (type: 'shape' | 'text' | 'adjust' | 'outline' | 'clip' | 'image', add: () => void) => {
       await engine.newProject();
       add();
       const upperId = useStore.getState().activeLayerId;
@@ -439,6 +439,13 @@ describe('canvas history and new project', () => {
     await verify('adjust', () => engine.addAdjustLayer());
     await verify('outline', () => engine.addOutlineLayer());
     await verify('clip', () => engine.addClipLayer());
+    await verify('image', () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 6;
+      canvas.height = 3;
+      canvas.getContext('2d')!.fillRect(0, 0, 6, 3);
+      engine.addImageLayer(canvas, 4, 5, 20, 20);
+    });
   });
 
   it('bakes target opacity into an exact effect merge and restores it through undo/redo', async () => {

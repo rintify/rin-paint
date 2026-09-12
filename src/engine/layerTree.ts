@@ -1,6 +1,8 @@
+import type { LayerType } from '../model';
+
 export interface TreeLayerLike {
   id: string;
-  type: 'raster' | 'adjust' | 'outline' | 'clip' | 'shape' | 'text';
+  type: LayerType;
   parentId: string | null;
   childIds: string[];
 }

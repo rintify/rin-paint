@@ -18,14 +18,13 @@ describe('Artboard', () => {
 describe('EngineEvents', () => {
   it('delivers typed payloads and supports off', () => {
     const events = new EngineEvents();
-    const seen: File[] = [];
-    const handler = (file: File) => seen.push(file);
-    events.on('referenceImageImport', handler);
-    const file = new File(['x'], 'a.png');
-    events.emit('referenceImageImport', file);
-    expect(seen).toEqual([file]);
-    events.off('referenceImageImport', handler);
-    events.emit('referenceImageImport', new File(['y'], 'b.png'));
+    const seen: { command: 'rename-selection' | 'delete-selection' }[] = [];
+    const handler = (payload: { command: 'rename-selection' | 'delete-selection' }) => seen.push(payload);
+    events.on('shortcutCommand', handler);
+    events.emit('shortcutCommand', { command: 'rename-selection' });
+    expect(seen).toEqual([{ command: 'rename-selection' }]);
+    events.off('shortcutCommand', handler);
+    events.emit('shortcutCommand', { command: 'delete-selection' });
     expect(seen).toHaveLength(1);
   });
 

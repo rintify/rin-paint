@@ -112,6 +112,16 @@ function LayerSettingsOverflow({
             {action.label}
           </MenuItem>
         ))}
+        {meta.type === 'image' && (
+          <MenuItem
+            onClick={() => {
+              setAnchor(null);
+              engine.fitImageAspect(meta.id);
+            }}
+          >
+            比率を画像に合わせる
+          </MenuItem>
+        )}
       </Menu>
     </>
   );

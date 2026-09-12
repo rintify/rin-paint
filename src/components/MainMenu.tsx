@@ -20,7 +20,6 @@ import {
 } from '@mui/material';
 import { useState, type MouseEvent } from 'react';
 import { exportTimelapse } from '../engine/timelapse/exporter';
-import { importReferenceImage } from '../referenceImage';
 import { useStore } from '../state/store';
 import { canvasPixels, validateCanvasSpec } from '../engine/canvasSpec';
 import {
@@ -178,12 +177,6 @@ export function MainMenu() {
     }
   };
 
-  const onImportImage = async () => {
-    const file = await pickFile('image/*');
-    if (!file) return;
-    if (!importReferenceImage(file)) await appAlert('画像ファイルを選択してください');
-  };
-
   const onImportSettings = async () => {
     const file = await pickFile('.rinsettings,application/json');
     if (!file) return;
@@ -230,14 +223,6 @@ export function MainMenu() {
           }}
         >
           キャンバスサイズ…
-        </MenuItem>
-        <MenuItem
-          onClick={() => {
-            close();
-            void onImportImage();
-          }}
-        >
-          画像をインポート…
         </MenuItem>
         <MenuItem
           onClick={() => {
@@ -326,7 +311,7 @@ export function MainMenu() {
       <Dialog open={newOpen} onClose={creating ? undefined : () => setNewOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>新規プロジェクトを作成しますか？</DialogTitle>
         <DialogContent>
-          <Typography>現在の描画内容、すべての履歴、参照画像、タイムラプス、追加フォントを消去します。この操作は取り消せません。</Typography>
+          <Typography>現在の描画内容、すべての履歴、タイムラプス、追加フォントを消去します。この操作は取り消せません。</Typography>
           <Typography color="text.secondary" sx={{ mt: 1.5 }}>キャンバスのサイズ・解像度と登録ツールは引き継ぎます。</Typography>
         </DialogContent>
         <DialogActions>

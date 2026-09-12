@@ -27,4 +27,26 @@ describe('PaintEngine long-press eyedropper selection', () => {
 
     expect(engine.longPressEyedropperSource()).toBe('final-color');
   });
+
+  it('uses the first image tool in visible tool order for drop placement size', () => {
+    const setup = defaultToolSetup();
+    const first = setup.tools.find((tool) => tool.kind === 'image')!;
+    const second = {
+      ...first,
+      id: 'second-image',
+      settings: { widthMm: 10, heightMm: 20 },
+    };
+    useStore.setState({
+      ...original,
+      tools: [first, second],
+      toolLayout: [
+        { type: 'tool', toolId: second.id },
+        { type: 'tool', toolId: first.id },
+      ],
+      toolStacks: [],
+    });
+    const engine = Object.create(PaintEngine.prototype) as PaintEngine;
+    expect(engine.firstToolOfKind('image')?.id).toBe('second-image');
+    expect(engine.firstToolOfKind('image')?.settings).toEqual({ widthMm: 10, heightMm: 20 });
+  });
 });

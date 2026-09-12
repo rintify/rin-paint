@@ -1,10 +1,11 @@
 import type { AdjustParams } from './adjust';
 import type { BlendMode } from './blend';
+import type { ImageParams } from './image';
 import type { OutlineParams } from './outline';
 import type { ShapeParams } from './shape';
 import type { TextParams } from './text';
 
-export type LayerType = 'raster' | 'adjust' | 'outline' | 'clip' | 'shape' | 'text';
+export type LayerType = 'raster' | 'adjust' | 'outline' | 'clip' | 'shape' | 'text' | 'image';
 
 export interface LayerAddress {
   pageId: string;
@@ -45,7 +46,9 @@ export interface LayerMeta {
   maskLayerIds?: string[];
   shape?: ShapeParams;
   snapEnabled?: boolean;
+  constrainAspect?: boolean;
   text?: TextParams;
+  image?: ImageParams;
   parameterLink?: LayerParameterLink;
   linkSource?: LayerLinkEndpointSummary;
   directLinkTargets?: LayerLinkEndpointSummary[];

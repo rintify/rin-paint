@@ -5,10 +5,6 @@ import { canTransformObjectType } from '../engine/layer-types/registry';
 import { useStore } from '../state/store';
 import { appAlert } from './AppDialogs';
 import { TextEditor } from './TextEditor';
-import {
-  handleReferenceImageDrop,
-  ReferenceImageWindow,
-} from './ReferenceImageWindow';
 
 function ViewChip() {
   const engine = useEngine();
@@ -111,9 +107,12 @@ export function CanvasView() {
       onDrop={(event) => {
         event.preventDefault();
         setDropActive(false);
-        if (!handleReferenceImageDrop(event)) {
-          void appAlert('画像ファイルをドロップしてください');
-        }
+        const file = [...event.dataTransfer.files].find(item => !item.type || item.type.startsWith('image/'));
+        void (async () => {
+          if (!file || !await engine.placeDroppedImage(file, event.clientX, event.clientY)) {
+            await appAlert('画像ファイルをドロップしてください');
+          }
+        })();
       }}
     >
       <Box
@@ -184,8 +183,7 @@ export function CanvasView() {
           <Button size="small" onClick={() => engine.cancelFill()}>キャンセル</Button>
         </Paper>
       )}
-      <ReferenceImageWindow areaRef={areaRef} />
-      {dropActive && <Box className="image-drop-hint">画像を参照として開く</Box>}
+      {dropActive && <Box className="image-drop-hint">画像を配置</Box>}
       <ViewChip />
       <Snackbar
         open={!!toolNotice}

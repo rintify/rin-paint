@@ -43,7 +43,7 @@ function cloneLink(link: LayerParameterLink | undefined | null): LayerParameterL
 }
 
 function assignStored(layer: SavedLayer, props: Record<string, unknown>): void {
-  for (const key of ['name', 'opacity', 'blend', 'visible', 'params', 'outline', 'maskLayerIds', 'shape', 'snapEnabled', 'text'] as const) {
+      for (const key of ['name', 'opacity', 'blend', 'visible', 'params', 'outline', 'maskLayerIds', 'shape', 'snapEnabled', 'constrainAspect', 'text', 'image'] as const) {
     if (props[key] !== undefined) (layer as unknown as Record<string, unknown>)[key] = structuredClone(props[key]);
   }
   if (props.parameterLink !== undefined) {

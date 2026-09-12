@@ -1,6 +1,7 @@
 import type {
   AdjustParams,
   BlendMode,
+  ImageParams,
   LayerMeta,
   LayerType,
   OutlineParams,
@@ -42,7 +43,9 @@ export interface StoredLayer {
   maskLayerIds?: string[];
   shape?: ShapeParams;
   snapEnabled?: boolean;
+  constrainAspect?: boolean;
   text?: TextParams;
+  image?: ImageParams;
   parameterLink?: LayerParameterLink;
   canvas?: HTMLCanvasElement;
   blob?: Blob;
