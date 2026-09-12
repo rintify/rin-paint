@@ -1,4 +1,4 @@
-import type { AdjustParams, BlendMode, LayerType, ShapeParams, TextParams, CanvasSpec } from '../../model';
+import type { AdjustParams, BlendMode, LayerType, OutlineParams, ShapeParams, TextParams, CanvasSpec } from '../../model';
 import { HISTORY_VERSION } from '../persistence/version';
 import { opBytes } from './bytes';
 import type { TilePatch } from './tilePatch';
@@ -14,6 +14,7 @@ export interface LayerSnapshot {
   parentId: string | null;
   childIds: string[];
   params?: AdjustParams;
+  outline?: OutlineParams;
   maskLayerIds?: string[];
   shape?: ShapeParams;
   snapEnabled?: boolean;
@@ -29,6 +30,7 @@ export interface LayerProps {
   blend?: BlendMode;
   visible?: boolean;
   params?: AdjustParams;
+  outline?: OutlineParams;
   maskLayerIds?: string[];
   shape?: ShapeParams;
   snapEnabled?: boolean;
@@ -72,6 +74,8 @@ export interface TileLayerMergeOp {
   tiles: TilePatch[];
   beforeActiveId: string;
   afterActiveId: string;
+  /** Effect merges bake the target's rendered opacity/blend into its pixels. */
+  targetProps?: { before: LayerProps; after: LayerProps };
   maskChanges?: { layerId: string; before: string[]; after: string[] }[];
 }
 
@@ -123,6 +127,7 @@ export interface PersistedTileLayerMergeOp {
   tiles: TilePatch[];
   beforeActiveId: string;
   afterActiveId: string;
+  targetProps?: { before: LayerProps; after: LayerProps };
   maskChanges?: { layerId: string; before: string[]; after: string[] }[];
 }
 
@@ -253,6 +258,9 @@ export class HistoryTree {
               snapshot: await snapshot(op.removed.snapshot),
             },
             tiles: op.tiles.map((tile) => ({ ...tile })),
+            targetProps: op.targetProps
+              ? { before: { ...op.targetProps.before }, after: { ...op.targetProps.after } }
+              : undefined,
             maskChanges: op.maskChanges?.map((change) => ({
               ...change,
               before: [...change.before],

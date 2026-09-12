@@ -1,6 +1,5 @@
 import AddIcon from '@mui/icons-material/Add';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
-import TuneIcon from '@mui/icons-material/Tune';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import {
@@ -60,6 +59,7 @@ export function LayerPanel() {
     open: !!active && hasLayerControls(active.type),
   }));
   const [menu, setMenu] = useState<{ id: string; anchor: HTMLElement } | null>(null);
+  const [addEffectAnchor, setAddEffectAnchor] = useState<HTMLElement | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [drop, setDrop] = useState<DropTarget | null>(null);
   const frozen = useRef<{ id: string; depth: number }[] | null>(null);
@@ -249,14 +249,20 @@ export function LayerPanel() {
               <AddIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Button
-            size="small"
-            onClick={() => engine.addAdjustLayer()}
-            startIcon={<TuneIcon sx={{ fontSize: 14 }} />}
-            sx={{ fontSize: 12 }}
-          >
-            補正
-          </Button>
+          <Tooltip title="効果レイヤーを追加">
+            <IconButton
+              size="small"
+              aria-label="効果レイヤーを追加"
+              onClick={event => setAddEffectAnchor(event.currentTarget)}
+            >
+              <MoreVertIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Menu anchorEl={addEffectAnchor} open={!!addEffectAnchor} onClose={() => setAddEffectAnchor(null)}>
+            <MenuItem onClick={() => { engine.addAdjustLayer(); setAddEffectAnchor(null); }}>色調補正を追加</MenuItem>
+            <MenuItem onClick={() => { engine.addOutlineLayer(); setAddEffectAnchor(null); }}>縁どりを追加</MenuItem>
+            <MenuItem onClick={() => { engine.addClipLayer(); setAddEffectAnchor(null); }}>クリップを追加</MenuItem>
+          </Menu>
         </Stack>
       </Stack>
       <Box
@@ -428,7 +434,9 @@ export function LayerPanel() {
                     ? <VisibilityIcon sx={{ fontSize: 16 }} />
                     : <VisibilityOffIcon sx={{ fontSize: 16 }} />}
                 </IconButton>
-                {meta.type === 'adjust' ? <Box className="adjust-badge">補正</Box> : <Thumb meta={meta} />}
+                {meta.type === 'adjust' || meta.type === 'outline' || meta.type === 'clip'
+                  ? <Box className={`effect-badge ${meta.type}`}>{meta.type === 'adjust' ? '補正' : meta.type === 'outline' ? '縁' : 'クリップ'}</Box>
+                  : <Thumb meta={meta} />}
                 <Typography variant="body2" noWrap sx={{ flex: 1, opacity: meta.visible ? 1 : 0.5 }}>
                   {meta.name}
                 </Typography>

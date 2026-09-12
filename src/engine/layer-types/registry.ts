@@ -3,6 +3,8 @@ import type { LayerProps, LayerSnapshot } from '../history/historyTree';
 import type { Layer } from '../layers';
 import type { SavedLayer } from '../persistence/db';
 import { adjustLayerType } from './adjust';
+import { clipLayerType } from './clip';
+import { outlineLayerType } from './outline';
 import { rasterLayerType } from './raster';
 import { shapeLayerType } from './shape';
 import { textLayerType } from './text';
@@ -27,6 +29,8 @@ function handlers(): Record<LayerType, LayerTypeHandler> {
   return (cache ??= {
     raster: rasterLayerType,
     adjust: adjustLayerType,
+    outline: outlineLayerType,
+    clip: clipLayerType,
     shape: shapeLayerType,
     text: textLayerType,
   });

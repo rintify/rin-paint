@@ -1,6 +1,6 @@
 export interface TreeLayerLike {
   id: string;
-  type: 'raster' | 'adjust' | 'shape' | 'text';
+  type: 'raster' | 'adjust' | 'outline' | 'clip' | 'shape' | 'text';
   parentId: string | null;
   childIds: string[];
 }

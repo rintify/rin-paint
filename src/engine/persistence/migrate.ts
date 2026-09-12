@@ -1,6 +1,5 @@
 import { isSavedPage, isSavedProjectMeta } from './schema';
 import { HISTORY_VERSION, PROJECT_VERSION } from './version';
-import { normalizeToolInstance } from '../../tools/registry';
 import type { LayerClipboard, SavedPage, SavedProjectMeta } from './db';
 
 type MutableRecord = Record<string, unknown>;
@@ -61,11 +60,6 @@ export function migrateSavedPage(value: unknown): SavedPage {
 export function migrateProjectMeta(value: unknown): SavedProjectMeta {
   if (!isRecord(value) || value.version !== PROJECT_VERSION) {
     throw new Error('対応していないプロジェクト形式です');
-  }
-  if (Array.isArray(value.tools)) {
-    value.tools = value.tools
-      .map(tool => normalizeToolInstance(tool))
-      .filter((tool): tool is NonNullable<typeof tool> => !!tool);
   }
   if (!isSavedProjectMeta(value)) throw new Error('プロジェクト設定の形式が不正です');
   return value;

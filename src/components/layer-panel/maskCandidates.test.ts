@@ -22,13 +22,15 @@ function layer(
 
 describe('maskCandidateRows', () => {
   const layers: LayerMeta[] = [
-    layer({ id: 'folder', name: 'Folder', type: 'raster', childIds: ['a', 'adj', 'b'] }),
+    layer({ id: 'folder', name: 'Folder', type: 'raster', childIds: ['a', 'adj', 'outline', 'clip', 'b'] }),
     layer({ id: 'a', name: 'Alpha', type: 'raster', parentId: 'folder' }),
     layer({ id: 'adj', name: 'Adjust', type: 'adjust', parentId: 'folder' }),
+    layer({ id: 'outline', name: 'Outline', type: 'outline', parentId: 'folder' }),
+    layer({ id: 'clip', name: 'Clip', type: 'clip', parentId: 'folder' }),
     layer({ id: 'b', name: 'Beta', type: 'raster', parentId: 'folder' }),
   ];
 
-  it('excludes adjust layers and the excluded id', () => {
+  it('excludes all effect layers and the excluded id', () => {
     const rows = maskCandidateRows(['folder'], layers, 'a', '');
     expect(rows.map((r) => r.layer.id)).toEqual(['folder', 'b']);
   });

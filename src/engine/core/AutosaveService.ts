@@ -74,16 +74,6 @@ export class AutosaveService {
     const canvasSpec = { ...eng.getCanvasSpec() };
     const fonts = structuredClone(st.fonts);
     const rootLayerIds = [...ls.rootLayerIds];
-    const penColor = st.penColor;
-    const penSizeMm = st.penSizeMm;
-    const colorHistory = [...st.colorHistory];
-    const tools = st.tools.map((tool) => ({
-      ...tool,
-      settings: tool.settings !== undefined ? structuredClone(tool.settings) : undefined,
-    }));
-    const activeToolId = st.activeToolId;
-    const toolLayout = structuredClone(st.toolLayout);
-    const toolStacks = structuredClone(st.toolStacks);
     const historyPromise = eng.history.serialize(canvasToBlob);
     const layers: SavedLayer[] = await Promise.all(layerSources);
     let thumbnail: Blob | undefined;
@@ -101,13 +91,6 @@ export class AutosaveService {
       pageOrder: [...pages.pageOrder],
       activePageId: pages.activePageId,
       fonts,
-      penColor,
-      penSizeMm,
-      colorHistory,
-      tools,
-      toolLayout,
-      toolStacks,
-      activeToolId,
     });
     await savePage({
       id: pages.activePageId,

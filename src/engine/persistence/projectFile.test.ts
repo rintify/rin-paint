@@ -3,7 +3,7 @@ import { packProjectFile, unpackProjectFile, type ProjectFile } from './projectF
 import { HISTORY_VERSION, PROJECT_MAGIC, PROJECT_VERSION } from './version';
 import { isPersistedHistory, isSavedProjectMeta } from './schema';
 
-describe('v7 project container', () => {
+describe('v8 project container', () => {
   it('stores binary layer/history payloads without base64 and restores them', async () => {
     const history = {
       version: HISTORY_VERSION,
@@ -36,29 +36,21 @@ describe('v7 project container', () => {
       pageOrder: ['p1'],
       activePageId: 'p1',
       fonts: [],
-      penColor: '#000',
-      penSizeMm: 1.19,
-      colorHistory: [],
-      tools: [],
-      toolLayout: [],
-      toolStacks: [],
-      activeToolId: null,
     };
     const packed = await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages: [page] });
     expect(new TextDecoder().decode(await packed.slice(0, PROJECT_MAGIC.length).arrayBuffer())).toBe(PROJECT_MAGIC);
     const restored = await unpackProjectFile(packed) as ProjectFile;
     expect(new Uint8Array(await restored.pages[0].layers[0].blob!.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
-    expect(restored.meta.activeToolId).toBeNull();
-    expect(restored.meta.penSizeMm).toBe(1.19);
+    expect(restored.meta.fonts).toEqual([]);
   });
 
-  it('rejects a legacy v6 magic container', async () => {
+  it('explicitly rejects a legacy v7 magic container', async () => {
     const history = { version: HISTORY_VERSION, rootId: 0, currentId: 0, nodes: [{ id: 0, parentId: null, label: '開始', op: null, childIds: [], lastChild: 0 }] };
     const page = { id: 'p1', canvasSpec: { widthMm: 10, heightMm: 10, ppi: 300 }, rootLayerIds: ['l1'], activeLayerId: 'l1', layers: [{ id: 'l1', type: 'shape' as const, name: '直線', opacity: 1, blend: 'source-over' as const, visible: true, parentId: null, childIds: [], shape: { kind: 'line' as const, x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 5, color: '#000' } }], history, view: { x: 0, y: 0, scale: 1, rot: 0 }, thumbnailVersion: 0 };
-    const meta = { version: PROJECT_VERSION, pageOrder: ['p1'], activePageId: 'p1', fonts: [], penColor: '#000', penSizeMm: 1, colorHistory: [], tools: [], toolLayout: [], toolStacks: [], activeToolId: null };
+    const meta = { version: PROJECT_VERSION, pageOrder: ['p1'], activePageId: 'p1', fonts: [] };
     const current = new Uint8Array(await (await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages: [page] })).arrayBuffer());
-    current.set(new TextEncoder().encode('RINPAINT6'), 0);
-    await expect(unpackProjectFile(new Blob([current]))).rejects.toThrow(/v7/);
+    current.set(new TextEncoder().encode('RINPAINT7'), 0);
+    await expect(unpackProjectFile(new Blob([current]))).rejects.toThrow(/v8/);
   });
 });
 
@@ -69,13 +61,6 @@ describe('schema guards', () => {
       pageOrder: ['p1'],
       activePageId: 'p1',
       fonts: [],
-      penColor: '#000',
-      penSizeMm: 1,
-      colorHistory: [],
-      tools: [],
-      toolLayout: [],
-      toolStacks: [],
-      activeToolId: null,
     })).toBe(true);
     expect(isPersistedHistory({ version: 4, rootId: 0, currentId: 0, nodes: [] })).toBe(false);
     expect(isPersistedHistory({

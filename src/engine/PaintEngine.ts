@@ -20,7 +20,7 @@ import {
   type LayerProps,
   type CanvasSnapshot,
 } from './history/historyTree';
-import { saveTimelapseEnabled, type SavedPage } from './persistence/db';
+import type { SavedPage } from './persistence/db';
 import { TimelapseRecorder } from './timelapse/recorder';
 import { ViewController, type ViewState } from './view';
 import { Compositor } from './core/Compositor';
@@ -35,6 +35,7 @@ import { ProjectService } from './core/ProjectService';
 import { ClipboardService } from './core/ClipboardService';
 import { FillService } from './core/FillService';
 import { PolygonSplitService } from './core/PolygonSplitService';
+import { SettingsService } from './core/SettingsService';
 import { layerTypeProps } from './layer-types/registry';
 import type { RasterLayer } from './layers';
 import type { LayerParameterValue } from './layerParameters';
@@ -58,6 +59,7 @@ export class PaintEngine {
   /** @internal */ readonly clipboard = new ClipboardService(this);
   /** @internal */ readonly fill = new FillService(this);
   /** @internal */ readonly polygonSplit = new PolygonSplitService(this);
+  /** @internal */ readonly settings = new SettingsService(this);
 
   private recorder = new TimelapseRecorder(this, () => this.scheduleStorageRefresh());
 
@@ -98,19 +100,6 @@ export class PaintEngine {
   cancelSessions(): void { this.activeSession()?.cancel(); }
 
   constructor() {
-    useStore.subscribe((s, prev) => {
-      if (
-        s.penColor !== prev.penColor ||
-        s.penSizeMm !== prev.penSizeMm ||
-        s.colorHistory !== prev.colorHistory ||
-        s.tools !== prev.tools ||
-        s.toolLayout !== prev.toolLayout ||
-        s.toolStacks !== prev.toolStacks ||
-        s.activeToolId !== prev.activeToolId
-      ) {
-        this.scheduleSave();
-      }
-    });
     this.view.onChange = () => {
       const view = this.view.snapshot();
       const st = useStore.getState();
@@ -187,7 +176,10 @@ export class PaintEngine {
   resetView(): void { this.view.reset(); }
 
   private init(): Promise<void> {
-    this.initPromise ??= this.project.doInit();
+    this.initPromise ??= (async () => {
+      await this.settings.init();
+      await this.project.doInit();
+    })();
     return this.initPromise;
   }
 
@@ -237,7 +229,6 @@ export class PaintEngine {
     if (st.timelapseEnabled === enabled) return;
     st.set({ timelapseEnabled: enabled });
     this.recorder.setEnabled(enabled);
-    void saveTimelapseEnabled(enabled).catch(() => {});
   }
 
   getLayerCanvas(id: string): HTMLCanvasElement | null { return this.layerService.getLayerCanvas(id); }
@@ -256,6 +247,8 @@ export class PaintEngine {
 
   addRasterLayer(): void { this.layerService.addRasterLayer(); }
   addAdjustLayer(): void { this.layerService.addAdjustLayer(); }
+  addOutlineLayer(): void { this.layerService.addOutlineLayer(); }
+  addClipLayer(): void { this.layerService.addClipLayer(); }
   addShapeLayer(shape: ShapeParams): void { this.layerService.addShapeLayer(shape); }
   layerChildren(id: string): string[] { return this.layerService.layerChildren(id); }
   layerRootIds(): string[] { return this.layerService.layerRootIds(); }
@@ -291,12 +284,10 @@ export class PaintEngine {
 
   setPenSizeMm(n: number): void {
     useStore.getState().setPenSizeMm(n);
-    this.scheduleSave();
   }
 
   setPenColor(c: string): void {
     useStore.getState().setPenColor(c);
-    this.scheduleSave();
   }
 
   activeToolSettings(): ActiveToolSettings | null {
@@ -315,7 +306,6 @@ export class PaintEngine {
 
   updateActiveToolSettings(patch: Record<string, unknown>): void {
     useStore.getState().updateActiveToolSettings(patch);
-    this.scheduleSave();
   }
 
   pushColor(color: string): void {
@@ -353,7 +343,6 @@ export class PaintEngine {
       this.activeTool().cancel?.();
       st.deactivateTool();
       this.requestRender();
-      this.scheduleSave();
       return;
     }
     if (inst.kind !== st.tool) {
@@ -393,32 +382,25 @@ export class PaintEngine {
   reorderToolInstance(from: number, to: number): void {
     if (this.busy) return;
     useStore.getState().reorderTools(from, to);
-    this.scheduleSave();
   }
   reorderToolLayout(from: number, to: number): void {
     if (this.busy) return;
     useStore.getState().reorderToolLayout(from, to);
-    this.scheduleSave();
   }
   createToolStack(sourceToolId: string, targetToolId: string): void {
     useStore.getState().createToolStack(sourceToolId, targetToolId);
-    this.scheduleSave();
   }
   moveToolToStack(toolId: string, stackId: string, targetIndex?: number): void {
     useStore.getState().moveToolToStack(toolId, stackId, targetIndex);
-    this.scheduleSave();
   }
   reorderStackTools(stackId: string, from: number, to: number): void {
     useStore.getState().reorderStackTools(stackId, from, to);
-    this.scheduleSave();
   }
   unstackTool(toolId: string, targetIndex?: number): void {
     useStore.getState().unstackTool(toolId, targetIndex);
-    this.scheduleSave();
   }
   dissolveToolStack(stackId: string): void {
     useStore.getState().dissolveToolStack(stackId);
-    this.scheduleSave();
   }
   renameToolInstance(id: string, name: string): boolean {
     if (!name.trim()) return false;
@@ -426,7 +408,6 @@ export class PaintEngine {
     if (!tool) return false;
     if (tool.name === name) return true;
     useStore.getState().renameTool(id, name);
-    this.scheduleSave();
     return true;
   }
   renameToolStack(id: string, name: string): boolean {
@@ -435,7 +416,6 @@ export class PaintEngine {
     if (!stack) return false;
     if (stack.name === name) return true;
     useStore.getState().renameToolStack(id, name);
-    this.scheduleSave();
     return true;
   }
 
@@ -524,6 +504,8 @@ export class PaintEngine {
   async exportPNG(): Promise<void> { return this.project.exportPNG(); }
   async exportProject(): Promise<void> { return this.project.exportProject(); }
   async importProject(file: File): Promise<void> { return this.project.importProject(file); }
+  async exportSettings(): Promise<void> { return this.settings.exportFile(); }
+  async importSettings(file: File): Promise<void> { return this.settings.importFile(file); }
 
   syncStore(): void {
     const ls = this.layerService;

@@ -12,6 +12,10 @@ const actions = vi.hoisted(() => ({
   remove: vi.fn(),
   merge: vi.fn(async () => undefined),
   rename: vi.fn(() => true),
+  addRaster: vi.fn(),
+  addAdjust: vi.fn(),
+  addOutline: vi.fn(),
+  addClip: vi.fn(),
   setActiveLayer: vi.fn((id: string) => useStore.getState().set({ activeLayerId: id })),
   beginMultiSelect: vi.fn((id: string) => {
     const state = useStore.getState();
@@ -32,6 +36,10 @@ const mockEngine = vi.hoisted(() => ({
   renameLayer: actions.rename,
   commitLayerProps: vi.fn(),
   updateSelectedParameter: vi.fn(),
+  addRasterLayer: actions.addRaster,
+  addAdjustLayer: actions.addAdjust,
+  addOutlineLayer: actions.addOutline,
+  addClipLayer: actions.addClip,
 })) as unknown as PaintEngine;
 
 vi.mock('../engine/shapes', async (importOriginal) => {
@@ -110,6 +118,21 @@ function renderPanel() {
     ));
 }
 describe('layer settings entry points', () => {
+  it('keeps raster addition on + and groups all effects in the overflow menu', async () => {
+    actions.addRaster.mockClear();
+    actions.addAdjust.mockClear();
+    actions.addOutline.mockClear();
+    actions.addClip.mockClear();
+    await renderPanel();
+    await click(container.querySelector('[aria-label="レイヤーを追加"]'));
+    expect(actions.addRaster).toHaveBeenCalledOnce();
+    await click(container.querySelector('[aria-label="効果レイヤーを追加"]'));
+    expect(menuItem('色調補正を追加')).not.toBeNull();
+    expect(menuItem('縁どりを追加')).not.toBeNull();
+    expect(menuItem('クリップを追加')).not.toBeNull();
+    await click(menuItem('縁どりを追加'));
+    expect(actions.addOutline).toHaveBeenCalledOnce();
+  });
   it('lists lower layers first and marks the first selected layer as primary in multi-select', async () => {
     useStore.getState().set({
       selectedLayerIds: ['raster', 'shape'],

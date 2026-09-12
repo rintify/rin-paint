@@ -1,8 +1,9 @@
 import { layerHandler } from '../layer-types/registry';
-import type { LayerDrawEnv, LayerMeasureEnv } from '../layer-types/types';
+import type { CanvasLease, LayerDrawEnv, LayerMeasureEnv } from '../layer-types/types';
 import { makeCanvas, type Layer, type RasterLayer } from '../layers';
 import { TextRenderer } from '../text/render';
 import type { PaintEngine } from '../PaintEngine';
+import { CanvasPool } from './CanvasPool';
 
 /** Owns canvases, text renderer, and the composite/render loop. */
 export class Compositor {
@@ -16,8 +17,7 @@ export class Compositor {
   fillReference = makeCanvas(1600, 1200);
   fillReferenceCtx = this.fillReference.getContext('2d', { willReadFrequently: true })!;
 
-  /** レイヤー種別ハンドラへ貸し出す作業キャンバス。用途ごとに使い回す。 */
-  private work = new Map<string, HTMLCanvasElement>();
+  private readonly canvasPool = new CanvasPool();
 
   textRenderer = new TextRenderer();
   dirty = true;
@@ -43,18 +43,9 @@ export class Compositor {
     }
   }
 
-  /** 名前ごとに使い回す作業キャンバス。常にアートボードサイズへ揃える。 */
-  workCtx(name: string): CanvasRenderingContext2D {
+  private borrowCanvas(): CanvasLease {
     const { w, h } = this.engine.artboard;
-    let canvas = this.work.get(name);
-    if (!canvas) {
-      canvas = makeCanvas(w, h);
-      this.work.set(name, canvas);
-    } else if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
-    }
-    return canvas.getContext('2d')!;
+    return this.canvasPool.acquire(w, h);
   }
 
   measureEnv(): LayerMeasureEnv {
@@ -62,19 +53,41 @@ export class Compositor {
   }
 
   /** レイヤー種別ハンドラが描画に使う依存一式 */
-  drawEnv(backdrop: HTMLCanvasElement | null, withToolOverlay: boolean): LayerDrawEnv {
+  drawEnv(withToolOverlay: boolean): LayerDrawEnv {
     const eng = this.engine;
     const tool = withToolOverlay ? eng.activeTool() : null;
     const drawAboveLayer = tool?.drawAboveLayer?.bind(tool);
-    return {
+    const env: LayerDrawEnv = {
       artboard: eng.artboard,
       textRenderer: this.textRenderer,
       layerById: (id) => eng.layerById(id),
       handlerFor: layerHandler,
-      workCtx: (name) => this.workCtx(name),
-      backdrop,
+      borrowCanvas: () => this.borrowCanvas(),
+      ppi: eng.getCanvasSpec().ppi,
+      maskCanvas: (ids) => this.renderMask(ids, env),
       drawAboveLayer,
     };
+    return env;
+  }
+
+  private renderMask(ids: string[], env: LayerDrawEnv): CanvasLease | null {
+    if (!ids.length) return null;
+    const lease = this.borrowCanvas();
+    const ctx = lease.ctx;
+    ctx.save();
+    for (const id of ids) {
+      const source = this.engine.layerById(id);
+      if (!source) continue;
+      const handler = layerHandler(source);
+      if (!handler.drawMask) continue;
+      ctx.save();
+      ctx.globalAlpha = source.opacity;
+      ctx.globalCompositeOperation = 'source-over';
+      handler.drawMask(ctx, source, env);
+      ctx.restore();
+    }
+    ctx.restore();
+    return lease;
   }
 
   syncTextRenders(): void {
@@ -130,40 +143,105 @@ export class Compositor {
     const ctx = this.mainCtx;
     const surface = this.main;
     if (!ctx || !surface) return;
-    this.renderLayers(surface, ctx, null, true);
+    this.renderLayers(ctx, null, true);
     this.dirty = false;
   }
 
   compositeSelection(ids: Set<string>): HTMLCanvasElement {
     this.syncWorkCanvases();
-    this.renderLayers(this.fillReference, this.fillReferenceCtx, ids, false);
+    this.renderLayers(this.fillReferenceCtx, ids, false);
     return this.fillReference;
   }
 
   private renderLayers(
-    surface: HTMLCanvasElement,
     ctx: CanvasRenderingContext2D,
     included: Set<string> | null,
     drawToolOverlay: boolean,
   ): void {
     const eng = this.engine;
     const { w, h } = eng.artboard;
+    const art = this.borrowCanvas();
+    const artCtx = art.ctx;
+    artCtx.save();
+    artCtx.setTransform(1, 0, 0, 1, 0, 0);
+    artCtx.globalAlpha = 1;
+    artCtx.globalCompositeOperation = 'source-over';
+    artCtx.filter = 'none';
+    artCtx.restore();
+    const env = this.drawEnv(drawToolOverlay);
+    const participates = (layer: Layer) => layer.visible && (included === null || included.has(layer.id));
+    const activeEffectInChain = (layer: Layer): boolean => {
+      if (!layerHandler(layer).effect) return false;
+      if (participates(layer)) return true;
+      return layer.childIds.some(id => {
+        const child = eng.layerById(id);
+        return !!child && activeEffectInChain(child);
+      });
+    };
+    const resetTarget = (target: CanvasRenderingContext2D) => {
+      target.globalAlpha = 1;
+      target.globalCompositeOperation = 'source-over';
+      target.filter = 'none';
+    };
+    const renderSequence = (ids: string[], target: CanvasRenderingContext2D) => {
+      for (const id of ids) {
+        const layer = eng.layerById(id);
+        if (!layer) continue;
+        const handler = layerHandler(layer);
+        if (handler.effect) {
+          if (participates(layer)) {
+            handler.effect.apply({ canvas: target.canvas, coverage: target.canvas }, layer, env);
+            resetTarget(target);
+          }
+          renderSequence(layer.childIds, target);
+          continue;
+        }
+
+        const hasActiveDirectEffect = layer.childIds.some(childId => {
+          const child = eng.layerById(childId);
+          return !!child && activeEffectInChain(child);
+        });
+        if (hasActiveDirectEffect) {
+          const scope = this.borrowCanvas();
+          const local = scope.ctx;
+          local.save();
+          local.setTransform(1, 0, 0, 1, 0, 0);
+          resetTarget(local);
+          if (participates(layer)) {
+            local.save();
+            handler.draw(local, layer, env);
+            local.restore();
+          }
+          renderSequence(layer.childIds, local);
+          local.restore();
+          target.save();
+          resetTarget(target);
+          target.drawImage(local.canvas, 0, 0);
+          target.restore();
+          scope.release();
+          continue;
+        }
+        if (participates(layer)) {
+          target.save();
+          handler.draw(target, layer, env);
+          target.restore();
+        }
+        renderSequence(layer.childIds, target);
+      }
+    };
+    renderSequence(eng.getRootLayerIds(), artCtx);
+
     ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
+    ctx.filter = 'none';
+    ctx.clearRect(0, 0, w, h);
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, w, h);
-    const env = this.drawEnv(surface, drawToolOverlay);
-    const render = (id: string) => {
-      const l = eng.layerById(id);
-      if (!l) return;
-      if (l.visible && (included === null || included.has(id))) {
-        layerHandler(l).draw(ctx, l, env);
-      }
-      for (const childId of l.childIds) render(childId);
-    };
-    for (const id of eng.getRootLayerIds()) render(id);
+    ctx.drawImage(artCtx.canvas, 0, 0);
     ctx.restore();
+    art.release();
   }
 
   drawOverlayFrame(): void {
@@ -190,6 +268,19 @@ export class Compositor {
   }
 
   bakeLayerOnto(target: RasterLayer, source: Layer): void {
-    layerHandler(source).bakeOnto(target, source, this.drawEnv(target.canvas, false));
+    const handler = layerHandler(source);
+    const env = this.drawEnv(false);
+    if (handler.effect) {
+      const borrowed = this.borrowCanvas();
+      const scope = borrowed.ctx;
+      const { w, h } = this.engine.artboard;
+      if (target.visible) layerHandler(target).draw(scope, target, env);
+      handler.effect.apply({ canvas: scope.canvas, coverage: scope.canvas }, source, env);
+      target.ctx.clearRect(0, 0, w, h);
+      target.ctx.drawImage(scope.canvas, 0, 0);
+      borrowed.release();
+      return;
+    }
+    handler.bakeOnto(target, source, env);
   }
 }

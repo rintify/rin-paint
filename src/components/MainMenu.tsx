@@ -132,6 +132,21 @@ export function MainMenu() {
     if (!importReferenceImage(file)) await appAlert('画像ファイルを選択してください');
   };
 
+  const onImportSettings = async () => {
+    const file = await pickFile('.rinsettings,application/json');
+    if (!file) return;
+    const ok = await appConfirm(
+      '登録ツール、ツールの並び・設定、色履歴、タイムラプス設定を読み込んだ内容で置き換えます。よろしいですか？',
+    );
+    if (!ok) return;
+    try {
+      await engine.importSettings(file);
+      await appAlert('設定を読み込みました');
+    } catch (error) {
+      await appAlert(error instanceof Error ? error.message : '設定の読み込みに失敗しました');
+    }
+  };
+
   const openMenu = (e: MouseEvent<HTMLElement>) => {
     setAnchor(e.currentTarget);
   };
@@ -195,6 +210,18 @@ export function MainMenu() {
           }}
         >
           プロジェクトを読み込み…
+        </MenuItem>
+        <Divider />
+        <MenuItem
+          onClick={() => {
+            close();
+            void engine.exportSettings().catch(error => appAlert(error instanceof Error ? error.message : '設定の保存に失敗しました'));
+          }}
+        >
+          設定をエクスポート
+        </MenuItem>
+        <MenuItem onClick={() => { close(); void onImportSettings(); }}>
+          設定をインポート…
         </MenuItem>
         <Divider />
         <MenuItem

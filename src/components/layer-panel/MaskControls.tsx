@@ -19,7 +19,7 @@ import { maskSourceLabel } from '../../engine/layer-types/registry';
 import { maskCandidateRows } from './maskCandidates';
 import { Thumb } from './Thumb';
 
-export function MaskControls({ meta }: { meta: LayerMeta }) {
+export function MaskControls({ meta, mode = 'adjust' }: { meta: LayerMeta; mode?: 'adjust' | 'clip' }) {
   const engine = useEngine();
   const layers = useStore(s => s.layers);
   const rootLayerIds = useStore(s => s.rootLayerIds);
@@ -42,7 +42,7 @@ export function MaskControls({ meta }: { meta: LayerMeta }) {
             <Typography variant="body2">
               {meta.maskLayerIds?.length
                 ? `選択した${meta.maskLayerIds.length}レイヤーのアルファをOR合成`
-                : '全面を補正'}
+                : mode === 'adjust' ? '全面を補正' : 'マスク未指定のため変化なし'}
             </Typography>
           </Box>
           <Button size="small" variant="outlined" onClick={show}>編集</Button>
@@ -78,7 +78,7 @@ export function MaskControls({ meta }: { meta: LayerMeta }) {
             <Box sx={{ flex: 1 }}>
               <Typography variant="h6" component="div">マスク元レイヤー</Typography>
               <Typography variant="caption" color="text.secondary">
-                アルファをOR合成して補正範囲を作成
+                アルファをOR合成して{mode === 'adjust' ? '補正範囲' : 'クリップ範囲'}を作成
               </Typography>
             </Box>
             <Chip size="small" label={`${draft.length}件選択`} />
@@ -138,6 +138,9 @@ export function MaskControls({ meta }: { meta: LayerMeta }) {
               <Typography color="text.secondary">一致するレイヤーがありません</Typography>
             </Box>
           )}
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            選択したレイヤーは非表示でもマスクとして使用されます。
+          </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpen(false)}>キャンセル</Button>

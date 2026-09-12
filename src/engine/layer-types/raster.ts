@@ -1,5 +1,5 @@
 import { canvasToBlob, createRasterLayer, makeCanvas, type Layer, type RasterLayer } from '../layers';
-import type { LayerTypeHandler } from './types';
+import type { LayerDrawEnv, LayerTypeHandler } from './types';
 
 /** ラスターレイヤー: ピクセル内容そのものを持つ唯一の種別。 */
 export const rasterLayerType: LayerTypeHandler<RasterLayer> = {
@@ -67,26 +67,24 @@ export const rasterLayerType: LayerTypeHandler<RasterLayer> = {
   },
 
   draw(ctx, layer, env) {
-    const { w, h } = env.artboard;
     const erasers = layer.childIds
       .map((id) => env.layerById(id))
       .filter((child): child is Layer => !!child && child.visible && !!env.handlerFor(child).eraser?.applies(child));
     let source: HTMLCanvasElement = layer.canvas;
+    let borrowed: ReturnType<LayerDrawEnv['borrowCanvas']> | null = null;
     if (erasers.length) {
-      const work = env.workCtx('raster-erase');
-      work.save();
-      work.clearRect(0, 0, w, h);
-      work.globalAlpha = 1;
-      work.globalCompositeOperation = 'source-over';
-      work.drawImage(layer.canvas, 0, 0);
-      for (const eraser of erasers) env.handlerFor(eraser).eraser!.draw(work, eraser, env);
-      work.restore();
-      source = work.canvas;
+      borrowed = env.borrowCanvas();
+      borrowed.ctx.save();
+      borrowed.ctx.drawImage(layer.canvas, 0, 0);
+      for (const eraser of erasers) env.handlerFor(eraser).eraser!.draw(borrowed.ctx, eraser, env);
+      borrowed.ctx.restore();
+      source = borrowed.canvas;
     }
     ctx.globalAlpha = layer.opacity;
     ctx.globalCompositeOperation = layer.blend;
     ctx.drawImage(source, 0, 0);
     env.drawAboveLayer?.(ctx, layer.id);
+    borrowed?.release();
   },
 
   drawMask(ctx, layer) {

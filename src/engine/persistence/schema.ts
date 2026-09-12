@@ -135,13 +135,7 @@ export function isSavedProjectMeta(value: unknown): value is SavedProjectMeta {
     Array.isArray(m.pageOrder) &&
     m.pageOrder.length > 0 &&
     typeof m.activePageId === 'string' &&
-    Array.isArray(m.fonts) &&
-    typeof m.penColor === 'string' &&
-    typeof m.penSizeMm === 'number' &&
-    Array.isArray(m.colorHistory) &&
-    Array.isArray(m.tools) &&
-    Array.isArray(m.toolLayout) &&
-    Array.isArray(m.toolStacks)
+    Array.isArray(m.fonts)
   );
 }
 

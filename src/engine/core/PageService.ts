@@ -37,13 +37,6 @@ export class PageService {
       pageOrder: [...this.pageOrder],
       activePageId: this.activePageId,
       fonts: structuredClone(st.fonts),
-      penColor: st.penColor,
-      penSizeMm: st.penSizeMm,
-      colorHistory: [...st.colorHistory],
-      tools: structuredClone(st.tools),
-      toolLayout: structuredClone(st.toolLayout),
-      toolStacks: structuredClone(st.toolStacks),
-      activeToolId: st.activeToolId,
     });
   }
 

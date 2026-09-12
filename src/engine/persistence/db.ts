@@ -1,6 +1,6 @@
 import { openDB, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import type {
-  AdjustParams, BlendMode, LayerType, ShapeParams, ToolInstance, TextParams,
+  AdjustParams, BlendMode, LayerType, OutlineParams, ShapeParams, ToolInstance, TextParams,
   CanvasSpec, ProjectFont, ToolLayoutItem, ToolStack,
 } from '../../model';
 import type { PersistedHistory } from '../history/historyTree';
@@ -8,11 +8,12 @@ import { opBytes } from '../history/bytes';
 import type { ViewState } from '../view';
 import { DB_VERSION, PROJECT_VERSION } from './version';
 import { migrateClipboard, migrateProjectMeta, migrateSavedPage } from './migrate';
+import { validateAppSettings } from './settingsFile';
 
 export interface SavedLayer {
   id: string; type: LayerType; name: string; opacity: number; blend: BlendMode;
   visible: boolean; parentId: string | null; childIds: string[];
-  params?: AdjustParams; maskLayerIds?: string[]; shape?: ShapeParams; snapEnabled?: boolean; text?: TextParams; blob?: Blob;
+  params?: AdjustParams; outline?: OutlineParams; maskLayerIds?: string[]; shape?: ShapeParams; snapEnabled?: boolean; text?: TextParams; blob?: Blob;
 }
 export interface SavedPage {
   id: string; canvasSpec: CanvasSpec; rootLayerIds: string[]; layers: SavedLayer[];
@@ -21,8 +22,14 @@ export interface SavedPage {
 }
 export interface SavedProjectMeta {
   version: typeof PROJECT_VERSION; pageOrder: string[]; activePageId: string; fonts: ProjectFont[];
-  penColor: string; penSizeMm: number; colorHistory: string[]; tools: ToolInstance[];
-  toolLayout: ToolLayoutItem[]; toolStacks: ToolStack[]; activeToolId: string | null;
+}
+export interface SavedAppSettings {
+  tools: ToolInstance[]; toolLayout: ToolLayoutItem[]; toolStacks: ToolStack[];
+  activeToolId: string | null; penColor: string; penSizeMm: number;
+  colorHistory: string[]; timelapseEnabled: boolean;
+}
+export interface SavedAppSettingsFile {
+  app: 'rin-paint'; kind: 'settings'; version: 1; settings: SavedAppSettings;
 }
 export interface LayerClipboard { version: 1; sourcePageId: string; sourcePpi: number; rootIds: string[]; layers: SavedLayer[] }
 export interface TimelapseFrame { key?: string; pageId?: string; t: number; blob: Blob }
@@ -83,6 +90,14 @@ export async function saveProjectMeta(meta: SavedProjectMeta): Promise<void> {
 export async function loadProjectMeta(): Promise<SavedProjectMeta | undefined> {
   const value = await (await db()).get('kv', 'project-meta') as unknown;
   return value === undefined ? undefined : migrateProjectMeta(value);
+}
+export async function saveAppSettings(settings: SavedAppSettings): Promise<void> {
+  await (await db()).put('kv', settings, 'app-settings');
+}
+export async function loadAppSettings(): Promise<SavedAppSettings | undefined> {
+  const value = await (await db()).get('kv', 'app-settings') as unknown;
+  if (value === undefined) return undefined;
+  return validateAppSettings(value);
 }
 export async function savePage(page: SavedPage): Promise<void> {
   const d = await db();
@@ -189,13 +204,6 @@ async function ensureFrameBytes(): Promise<number> {
   if (frameBytes !== null) return frameBytes;
   frameBytes = (await (await db()).getAll('frames') as TimelapseFrame[]).reduce((n, f) => n + f.blob.size, 0);
   return frameBytes;
-}
-export async function loadTimelapseEnabled(): Promise<boolean> {
-  const value = await (await db()).get('kv', 'timelapse-enabled');
-  return typeof value === 'boolean' ? value : true;
-}
-export async function saveTimelapseEnabled(enabled: boolean): Promise<void> {
-  await (await db()).put('kv', enabled, 'timelapse-enabled');
 }
 export interface PersistenceUsage { project: number; timelapse: number; other: number }
 export async function getPersistenceUsage(): Promise<PersistenceUsage> {

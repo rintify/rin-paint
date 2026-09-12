@@ -145,6 +145,7 @@ export class HistoryService {
         if (dir === 'undo') {
           if (target) {
             await applyTiles(target, op.tiles, 'before');
+            if (op.targetProps) ls.assignProps(target, op.targetProps.before);
             ls.bumpLayer(target.id);
           }
           if (!ls.byId(op.removed.snapshot.id)) await ls.restoreEntries([op.removed]);
@@ -152,6 +153,7 @@ export class HistoryService {
           ls.removeLayerExact(op.removed.snapshot.id);
           if (target) {
             await applyTiles(target, op.tiles, 'after');
+            if (op.targetProps) ls.assignProps(target, op.targetProps.after);
             ls.bumpLayer(target.id);
           }
         }

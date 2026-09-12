@@ -24,6 +24,8 @@ import { shapeLayerName } from '../layer-types/shape';
 import { textFrame } from '../layer-types/text';
 import {
   createAdjustLayer,
+  createClipLayer,
+  createOutlineLayer,
   createRasterLayer,
   createShapeLayer,
   createTextLayer,
@@ -198,7 +200,20 @@ export class LayerService {
 
   canMergeLayerDown(id = this.activeLayerId): boolean {
     const layer = this.byId(id);
-    return !!layer && !!this.mergeTarget(layer);
+    return !!layer && !!this.mergeTargetFor(layer);
+  }
+
+  private mergeTargetFor(layer: Layer): RasterLayer | null {
+    if (!layerHandler(layer).effect) return this.mergeTarget(layer);
+    if (layer.childIds.length) return null;
+    if (layer.parentId) {
+      const parent = this.rasterById(layer.parentId);
+      return parent?.childIds.length === 1 && parent.childIds[0] === layer.id ? parent : null;
+    }
+    const index = this.rootLayerIds.indexOf(layer.id);
+    if (index !== 1) return null;
+    const target = this.rasterById(this.rootLayerIds[0]);
+    return target && target.childIds.length === 0 ? target : null;
   }
 
   canTransferShape(id = this.activeLayerId): boolean {
@@ -361,6 +376,42 @@ export class LayerService {
     this.engine.committed();
   }
 
+  addOutlineLayer(): void {
+    if (this.engine.isBusy()) return;
+    this.finishFloating();
+    const activeLocation = this.locationOf(this.activeLayerId);
+    const location = activeLocation
+      ? { ...activeLocation, index: activeLocation.index + 1 }
+      : { parentId: null, index: this.rootLayerIds.length };
+    const layer = createOutlineLayer(this.nextLayerName('outline'));
+    this.layers.push(layer);
+    this.insertAt(layer.id, location);
+    this.activeLayerId = layer.id;
+    this.engine.history.push(
+      { kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, false) },
+      '縁どりレイヤー追加',
+    );
+    this.engine.committed();
+  }
+
+  addClipLayer(): void {
+    if (this.engine.isBusy()) return;
+    this.finishFloating();
+    const activeLocation = this.locationOf(this.activeLayerId);
+    const location = activeLocation
+      ? { ...activeLocation, index: activeLocation.index + 1 }
+      : { parentId: null, index: this.rootLayerIds.length };
+    const layer = createClipLayer(this.nextLayerName('clip'));
+    this.layers.push(layer);
+    this.insertAt(layer.id, location);
+    this.activeLayerId = layer.id;
+    this.engine.history.push(
+      { kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, false) },
+      'クリップレイヤー追加',
+    );
+    this.engine.committed();
+  }
+
   addShapeLayer(shape: ShapeParams): void {
     if (this.engine.isBusy()) return;
     const parentId = closestRasterOrRoot(this.layers, this.activeLayerId);
@@ -433,7 +484,12 @@ export class LayerService {
     if (!removedLocation) return;
     const removedSnapshot = this.snapshotLayer(upper, true);
     const maskChanges = this.detachMaskReferences(new Set(this.descendantIds(upper.id)));
+    const effectMerge = !!layerHandler(upper).effect;
+    const targetProps = effectMerge
+      ? { before: { opacity: lower.opacity, blend: lower.blend }, after: { opacity: 1, blend: 'source-over' as const } }
+      : undefined;
     this.engine.compositor.bakeLayerOnto(lower, upper);
+    if (targetProps) this.assignProps(lower, targetProps.after);
     this.removeLayerInternal(upper.id);
     this.activeLayerId = lower.id;
     this.bumpLayer(lower.id);
@@ -452,6 +508,7 @@ export class LayerService {
       tiles: [],
       beforeActiveId,
       afterActiveId: lower.id,
+      targetProps,
       maskChanges,
     };
     const node = this.engine.history.push(op, label);
@@ -467,7 +524,7 @@ export class LayerService {
     this.finishFloating();
     const upper = this.byId(id);
     if (!upper) return;
-    const lower = this.mergeTarget(upper);
+    const lower = this.mergeTargetFor(upper);
     if (!lower) return;
 
     this.engine.setBusy(true);

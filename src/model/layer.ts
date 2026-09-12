@@ -1,9 +1,10 @@
 import type { AdjustParams } from './adjust';
 import type { BlendMode } from './blend';
+import type { OutlineParams } from './outline';
 import type { ShapeParams } from './shape';
 import type { TextParams } from './text';
 
-export type LayerType = 'raster' | 'adjust' | 'shape' | 'text';
+export type LayerType = 'raster' | 'adjust' | 'outline' | 'clip' | 'shape' | 'text';
 
 /** React 側に渡すレイヤーの読み取り専用メタデータ */
 export interface LayerMeta {
@@ -16,6 +17,7 @@ export interface LayerMeta {
   parentId: string | null;
   childIds: string[];
   params?: AdjustParams;
+  outline?: OutlineParams;
   maskLayerIds?: string[];
   shape?: ShapeParams;
   snapEnabled?: boolean;

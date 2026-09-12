@@ -1,5 +1,6 @@
 import { DEFAULT_ADJUST, type AdjustParams } from '../model/adjust';
 import type { BlendMode } from '../model/blend';
+import { DEFAULT_OUTLINE, type OutlineParams } from '../model/outline';
 import type { ShapeParams } from '../model/shape';
 import type { TextParams } from '../model/text';
 
@@ -30,6 +31,26 @@ export interface AdjustLayer extends LayerTreeFields {
   visible: boolean;
 }
 
+export interface OutlineLayer extends LayerTreeFields {
+  id: string;
+  type: 'outline';
+  name: string;
+  outline: OutlineParams;
+  opacity: number;
+  blend: BlendMode;
+  visible: boolean;
+}
+
+export interface ClipLayer extends LayerTreeFields {
+  id: string;
+  type: 'clip';
+  name: string;
+  maskLayerIds: string[];
+  opacity: number;
+  blend: BlendMode;
+  visible: boolean;
+}
+
 export interface ShapeLayer extends LayerTreeFields {
   id: string;
   type: 'shape';
@@ -50,7 +71,7 @@ export interface TextLayer extends LayerTreeFields {
   blend: BlendMode;
   visible: boolean;
 }
-export type Layer = RasterLayer | AdjustLayer | ShapeLayer | TextLayer;
+export type Layer = RasterLayer | AdjustLayer | OutlineLayer | ClipLayer | ShapeLayer | TextLayer;
 
 export function createTextLayer(name: string, text: TextParams, id = newLayerId()): TextLayer {
   return {
@@ -107,6 +128,34 @@ export function createAdjustLayer(name: string, id = newLayerId()): AdjustLayer 
     type: 'adjust',
     name,
     params: { ...DEFAULT_ADJUST },
+    maskLayerIds: [],
+    opacity: 1,
+    blend: 'source-over',
+    visible: true,
+    parentId: null,
+    childIds: [],
+  };
+}
+
+export function createOutlineLayer(name: string, id = newLayerId()): OutlineLayer {
+  return {
+    id,
+    type: 'outline',
+    name,
+    outline: { ...DEFAULT_OUTLINE },
+    opacity: 1,
+    blend: 'source-over',
+    visible: true,
+    parentId: null,
+    childIds: [],
+  };
+}
+
+export function createClipLayer(name: string, id = newLayerId()): ClipLayer {
+  return {
+    id,
+    type: 'clip',
+    name,
     maskLayerIds: [],
     opacity: 1,
     blend: 'source-over',

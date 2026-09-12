@@ -3,6 +3,7 @@ import type {
   BlendMode,
   LayerMeta,
   LayerType,
+  OutlineParams,
   ShapeParams,
   TextParams,
 } from '../../model';
@@ -36,6 +37,7 @@ export interface StoredLayer {
   parentId: string | null;
   childIds: string[];
   params?: AdjustParams;
+  outline?: OutlineParams;
   maskLayerIds?: string[];
   shape?: ShapeParams;
   snapEnabled?: boolean;
@@ -83,12 +85,29 @@ export interface LayerDrawEnv extends LayerMeasureEnv {
   layerById(id: string): Layer | null;
   /** 他レイヤーを描くためのハンドラ解決 */
   handlerFor(layer: Layer): LayerTypeHandler;
-  /** name ごとに再利用される作業キャンバス。アートボードサイズに揃えて返す */
-  workCtx(name: string): CanvasRenderingContext2D;
-  /** 補正レイヤーが読む、そのレイヤーより下までの合成結果 */
-  backdrop: HTMLCanvasElement | null;
+  /** 再帰合成でも衝突しない貸出式作業キャンバス。使用後は必ず release する。 */
+  borrowCanvas(): CanvasLease;
+  /** 現在ページの解像度。mm指定の効果をpxへ変換する。 */
+  ppi: number;
+  /** 指定レイヤー自身のアルファをOR合成する。表示状態は無視する。 */
+  maskCanvas(ids: string[]): CanvasLease | null;
   /** ラスターレイヤー直上に描くツールのプレビュー */
   drawAboveLayer?(ctx: CanvasRenderingContext2D, layerId: string): void;
+}
+
+export interface CanvasLease {
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  release(): void;
+}
+
+export interface EffectScope {
+  canvas: HTMLCanvasElement;
+  coverage: HTMLCanvasElement;
+}
+
+export interface LayerEffectHandler<L extends Layer> {
+  apply(scope: EffectScope, layer: L, env: LayerDrawEnv): void;
 }
 
 export interface ObjectBounds {
@@ -177,6 +196,8 @@ export interface LayerTypeHandler<L extends Layer = Layer> {
   scaleStored(source: StoredLayer, env: LayerStoredScaleEnv): Promise<void>;
 
   draw(ctx: CanvasRenderingContext2D, layer: L, env: LayerDrawEnv): void;
+  /** 対象区間の合成結果そのものを変更する非破壊効果。 */
+  effect?: LayerEffectHandler<L>;
   /** 補正レイヤーのマスクとしてアルファを描く。canMask と対応する */
   drawMask?(ctx: CanvasRenderingContext2D, layer: L, env: LayerDrawEnv): void;
   bakeOnto(target: RasterLayer, layer: L, env: LayerDrawEnv): void;

@@ -284,7 +284,7 @@ describe('canvas history and new project', () => {
     expect(page?.history?.nodes).toHaveLength(1);
     expect(meta?.fonts).toEqual([]);
     expect(page?.canvasSpec).toEqual(spec);
-    expect(meta?.tools).toEqual(tools);
+    expect(useStore.getState().tools).toEqual(tools);
     expect(await frameCount()).toBe(0);
     expect(await loadReferenceImage()).toBeUndefined();
     expect(useStore.getState().canUndo).toBe(false);
@@ -390,8 +390,8 @@ describe('canvas history and new project', () => {
     expect(useStore.getState().activeLayerId).toBe(lowerId);
   });
 
-  it('merges shape, text and adjustment layers as tiles-v1', async () => {
-    const verify = async (type: 'shape' | 'text' | 'adjust', add: () => void) => {
+  it('merges drawable and effect layers as tiles-v1', async () => {
+    const verify = async (type: 'shape' | 'text' | 'adjust' | 'outline' | 'clip', add: () => void) => {
       await engine.newProject();
       add();
       const upperId = useStore.getState().activeLayerId;
@@ -409,6 +409,67 @@ describe('canvas history and new project', () => {
     await verify('shape', () => engine.addShapeLayer({ kind: 'line', x1: 10, y1: 10, x2: 70, y2: 40, color: '#123456', strokeWidth: 6 }));
     await verify('text', () => engine.addTextLayer({ ...newText(20, 30, '#222222'), content: '統合' }));
     await verify('adjust', () => engine.addAdjustLayer());
+    await verify('outline', () => engine.addOutlineLayer());
+    await verify('clip', () => engine.addClipLayer());
+  });
+
+  it('bakes target opacity into an exact effect merge and restores it through undo/redo', async () => {
+    await engine.newProject();
+    const targetId = useStore.getState().activeLayerId;
+    const target = engine.getLayerCanvas(targetId)!;
+    target.getContext('2d')!.fillStyle = '#ff0000';
+    target.getContext('2d')!.fillRect(0, 0, 1, 1);
+    engine.commitLayerProps(targetId, { opacity: 1 }, { opacity: .5 }, '不透明度');
+    engine.addAdjustLayer();
+    const effectId = useStore.getState().activeLayerId;
+    engine.commitLayerProps(
+      effectId,
+      { params: { brightness: 100, contrast: 100, hue: 0, saturation: 100 } },
+      { params: { brightness: 0, contrast: 100, hue: 0, saturation: 100 } },
+      '明度',
+    );
+    await engine.mergeLayerDown(effectId);
+    await awaitHistoryReady();
+    expect(useStore.getState().layers.find(layer => layer.id === targetId)?.opacity).toBe(1);
+    expect(pixel(targetId, 0, 0)[3]).toBeGreaterThanOrEqual(127);
+    expect(pixel(targetId, 0, 0)[3]).toBeLessThanOrEqual(128);
+    await engine.undo();
+    expect(useStore.getState().layers.find(layer => layer.id === targetId)?.opacity).toBe(.5);
+    expect(pixel(targetId, 0, 0)).toEqual([255, 0, 0, 255]);
+    await engine.redo();
+    expect(useStore.getState().layers.find(layer => layer.id === targetId)?.opacity).toBe(1);
+  });
+
+  it('enables effect merge only for the two exact single-raster structures', async () => {
+    await engine.newProject();
+    const rasterId = useStore.getState().activeLayerId;
+    engine.addClipLayer();
+    const effectId = useStore.getState().activeLayerId;
+    expect(useStore.getState().layers.find(layer => layer.id === effectId)?.canMergeDown).toBe(true);
+    engine.moveLayerAsTopChild(effectId, rasterId);
+    expect(useStore.getState().layers.find(layer => layer.id === effectId)?.canMergeDown).toBe(true);
+    engine.addRasterLayer();
+    const extraId = useStore.getState().activeLayerId;
+    engine.moveLayerAsTopChild(extraId, rasterId);
+    expect(useStore.getState().layers.find(layer => layer.id === effectId)?.canMergeDown).toBe(false);
+    engine.moveLayerAsTopChild(extraId, effectId);
+    expect(useStore.getState().layers.find(layer => layer.id === effectId)?.canMergeDown).toBe(false);
+  });
+
+  it('detaches clip mask references on source deletion and restores both through history', async () => {
+    await engine.newProject();
+    const maskId = useStore.getState().activeLayerId;
+    engine.addClipLayer();
+    const clipId = useStore.getState().activeLayerId;
+    engine.commitLayerProps(clipId, { maskLayerIds: [] }, { maskLayerIds: [maskId] }, 'マスク');
+    engine.addRasterLayer();
+    engine.removeLayer(maskId);
+    expect(useStore.getState().layers.find(layer => layer.id === clipId)?.maskLayerIds).toEqual([]);
+    await engine.undo();
+    expect(useStore.getState().layers.some(layer => layer.id === maskId)).toBe(true);
+    expect(useStore.getState().layers.find(layer => layer.id === clipId)?.maskLayerIds).toEqual([maskId]);
+    await engine.redo();
+    expect(useStore.getState().layers.find(layer => layer.id === clipId)?.maskLayerIds).toEqual([]);
   });
 });
 
@@ -560,4 +621,3 @@ describe('shape snap, constraints, and persistence', () => {
     expect(fromGui).toMatchObject({ kind: 'rect', width: 8, height: 8 });
   });
 });
-

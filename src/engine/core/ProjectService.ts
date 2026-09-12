@@ -2,11 +2,9 @@ import { useStore } from '../../state/store';
 import {
   DEFAULT_CANVAS,
   type LayerType,
-  type ToolInstance,
   type CanvasSpec,
   type ProjectFont,
 } from '../../model';
-import { normalizeToolInstance } from '../../tools/registry';
 import { HistoryTree, type CanvasSnapshot } from '../history/historyTree';
 import { isPersistedHistory } from '../persistence/schema';
 import { PROJECT_VERSION } from '../persistence/version';
@@ -21,7 +19,6 @@ import {
   hasClipboard,
   loadPage,
   loadProjectMeta,
-  loadTimelapseEnabled,
   replaceProject,
   savePage,
   saveProjectMeta,
@@ -45,23 +42,6 @@ export class ProjectService {
   projectGeneration = 0;
 
   constructor(private engine: PaintEngine) {}
-
-  restoreTools(tools: unknown, activeToolId: unknown, toolLayout?: unknown, toolStacks?: unknown): void {
-    if (!Array.isArray(tools)) return;
-    const valid = tools
-      .map((t) => normalizeToolInstance(t))
-      .filter((t): t is ToolInstance => !!t);
-    const st = useStore.getState();
-    const validIds = new Set(valid.map(tool => tool.id));
-    const stacks = Array.isArray(toolStacks) ? toolStacks.filter(stack => stack && typeof stack.id === 'string' && typeof stack.name === 'string' && Array.isArray(stack.toolIds)).map(stack => ({ ...stack, toolIds: stack.toolIds.filter((id: unknown): id is string => typeof id === 'string' && validIds.has(id)) })).filter(stack => stack.toolIds.length >= 2) : [];
-    const stackIds = new Set(stacks.map(stack => stack.id));
-    const layout = Array.isArray(toolLayout) ? toolLayout.filter(item => item && ((item.type === 'tool' && validIds.has(item.toolId)) || (item.type === 'stack' && stackIds.has(item.stackId)))) : valid.map(tool => ({ type: 'tool' as const, toolId: tool.id }));
-    st.set({ tools: valid, toolLayout: layout, toolStacks: stacks });
-    const active = valid.some((t) => t.id === activeToolId)
-      ? (activeToolId as string)
-      : null;
-    if (active) st.activateTool(active); else st.deactivateTool();
-  }
 
   async restoreSavedPage(page: SavedPage): Promise<void> {
     const eng = this.engine;
@@ -93,11 +73,6 @@ export class ProjectService {
     const eng = this.engine;
     const ls = eng.layerService;
     const pages = eng.pages;
-    try {
-      useStore.getState().set({ timelapseEnabled: await loadTimelapseEnabled() });
-    } catch {
-      // 設定を読めない場合も、既定値のオンでプロジェクト復元を続ける。
-    }
     let persistedDataFound = false;
     let restoreFailed = false;
     try {
@@ -114,11 +89,7 @@ export class ProjectService {
           await loadFonts(meta.fonts);
           useStore.getState().set({
             fonts: meta.fonts,
-            penColor: meta.penColor,
-            penSizeMm: meta.penSizeMm,
-            colorHistory: meta.colorHistory,
           });
-          this.restoreTools(meta.tools, meta.activeToolId, meta.toolLayout, meta.toolStacks);
           await this.restoreSavedPage(page);
           await Promise.all([
             saveProjectMeta(meta),
@@ -242,7 +213,6 @@ export class ProjectService {
       if (eng.autosave.saveTimer !== null) { clearTimeout(eng.autosave.saveTimer); eng.autosave.saveTimer = null; }
       await eng.autosave.saving;
       const layer = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
-      const st = useStore.getState();
       const history = new HistoryTree();
       const pageId = pages.newPageId();
       const meta: SavedProjectMeta = {
@@ -250,13 +220,6 @@ export class ProjectService {
         pageOrder: [pageId],
         activePageId: pageId,
         fonts: [],
-        tools: structuredClone(st.tools),
-        activeToolId: st.activeToolId,
-        penColor: st.penColor,
-        penSizeMm: st.penSizeMm,
-        toolLayout: structuredClone(st.toolLayout),
-        toolStacks: structuredClone(st.toolStacks),
-        colorHistory: [...st.colorHistory],
       };
       const page: SavedPage = {
         id: pageId,
@@ -380,11 +343,6 @@ export class ProjectService {
       if (isPersistedHistory(proj.history)) eng.history.restore(proj.history);
       for (const l of layers) ls.bumpLayer(l.id);
       useStore.getState().set({
-        penColor: archive.meta.penColor,
-        penSizeMm: archive.meta.penSizeMm,
-        colorHistory: Array.isArray(archive.meta.colorHistory)
-          ? archive.meta.colorHistory
-          : useStore.getState().colorHistory,
         canvasW: eng.artboard.w,
         canvasH: eng.artboard.h,
         canvasSpec: { ...this.canvasSpec },
@@ -392,7 +350,6 @@ export class ProjectService {
         activePageId: pages.activePageId,
         pages: pages.pageOrder.map(id => ({ id, thumbnailVersion: archive.pages.find(page => page.id === id)?.thumbnailVersion ?? 0 })),
       });
-      this.restoreTools(archive.meta.tools, archive.meta.activeToolId, archive.meta.toolLayout, archive.meta.toolStacks);
       ls.fixActive();
       eng.compositor.syncTextRenders();
     } catch (error) {

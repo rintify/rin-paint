@@ -1,5 +1,6 @@
 import { DEFAULT_ADJUST, type AdjustParams } from '../../model';
 import { buildFilter, createAdjustLayer, type AdjustLayer } from '../layers';
+import { copyCanvas, mixCanvases } from './effectUtils';
 import type { LayerParameterDescriptor, LayerParameterLayer, LayerTypeHandler } from './types';
 
 function adjustOf(layer: LayerParameterLayer): AdjustParams {
@@ -48,53 +49,36 @@ export const adjustLayerType: LayerTypeHandler<AdjustLayer> = {
   scale() {},
   async scaleStored() {},
 
-  draw(ctx, layer, env) {
-    if (!env.backdrop) return;
-    const { w, h } = env.artboard;
-    const work = env.workCtx('adjust');
-    work.save();
-    work.clearRect(0, 0, w, h);
-    work.filter = buildFilter(layer.params);
-    work.drawImage(env.backdrop, 0, 0);
-    work.restore();
-    if (layer.maskLayerIds.length) {
-      const mask = env.workCtx('adjust-mask');
-      mask.save();
-      mask.clearRect(0, 0, w, h);
-      mask.globalCompositeOperation = 'source-over';
-      for (const id of layer.maskLayerIds) {
-        const source = env.layerById(id);
-        if (!source?.visible) continue;
-        const handler = env.handlerFor(source);
-        if (!handler.drawMask) continue;
-        mask.globalAlpha = source.opacity;
-        handler.drawMask(mask, source, env);
-      }
-      mask.restore();
-      work.save();
-      work.globalCompositeOperation = 'destination-in';
-      work.globalAlpha = 1;
-      work.drawImage(mask.canvas, 0, 0);
-      work.restore();
-    }
-    ctx.globalAlpha = layer.opacity;
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.drawImage(work.canvas, 0, 0);
+  draw() {},
+
+  effect: {
+   apply(scope, layer, env) {
+    const original = copyCanvas(env, scope.canvas);
+    const filtered = env.borrowCanvas();
+    filtered.ctx.save();
+    filtered.ctx.filter = buildFilter(layer.params);
+    filtered.ctx.drawImage(original.canvas, 0, 0);
+    filtered.ctx.restore();
+    const mask = layer.maskLayerIds.length ? env.maskCanvas(layer.maskLayerIds) : null;
+    mixCanvases(scope.canvas, original.canvas, filtered.canvas, layer.opacity, mask?.canvas ?? null);
+    mask?.release();
+    filtered.release();
+    original.release();
+   },
   },
 
   bakeOnto(target, layer, env) {
-    const { w, h } = env.artboard;
-    const work = env.workCtx('adjust');
-    work.save();
-    work.clearRect(0, 0, w, h);
-    work.filter = buildFilter(layer.params);
-    work.drawImage(target.canvas, 0, 0);
-    work.restore();
+    const work = env.borrowCanvas();
+    work.ctx.save();
+    work.ctx.filter = buildFilter(layer.params);
+    work.ctx.drawImage(target.canvas, 0, 0);
+    work.ctx.restore();
     target.ctx.save();
     target.ctx.globalAlpha = layer.opacity;
     target.ctx.globalCompositeOperation = 'source-over';
     target.ctx.drawImage(work.canvas, 0, 0);
     target.ctx.restore();
+    work.release();
   },
 
   contentCanvas: () => null,

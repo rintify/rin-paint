@@ -153,7 +153,8 @@
   background: #fff;
 }
 
-.adjust-badge {
+.adjust-badge,
+.effect-badge {
   width: 40px;
   height: 30px;
   flex: none;
@@ -164,6 +165,9 @@
   place-items: center;
   font-size: 11px;
 }
+
+.effect-badge.outline { border-color: #8e7dff; color: #8e7dff; }
+.effect-badge.clip { border-color: #50a9a0; color: #50a9a0; font-size: 9px; }
 
 .layer-list {
   flex: 1;
