@@ -53,8 +53,18 @@ export class InputController {
   panDrag: PanDrag | null = null;
   spaceDown = false;
   private panShortcutCode: string | null = null;
+  private layerPickPointer: number | null = null;
 
   constructor(private engine: PaintEngine) {}
+
+  private isLayerPickClick(e: PointerEvent): boolean {
+    return e.metaKey;
+  }
+
+  private beginLayerPick(point: StrokePoint, event: PointerEvent): void {
+    this.layerPickPointer = event.pointerId;
+    this.engine.cursor.onDown(point, event);
+  }
 
   private beginEditableShape(point: StrokePoint, event: PointerEvent): boolean {
     return this.engine.activeTool().allowsDirectShapeEdit !== false
@@ -87,6 +97,7 @@ export class InputController {
     this.gesture = null;
     this.panDrag = null;
     this.clearPendingPress();
+    this.layerPickPointer = null;
     this.area = null;
   }
 
@@ -130,6 +141,11 @@ export class InputController {
     const p = this.toPoint(e);
     this.activePointer = e.pointerId;
     this.area?.setPointerCapture(e.pointerId);
+    if (this.isLayerPickClick(e)) {
+      this.beginLayerPick(p, e);
+      e.preventDefault();
+      return;
+    }
     const activeTool = eng.activeTool();
     if (activeTool.startsImmediately) {
       activeTool.onDown(p, e);
@@ -237,6 +253,7 @@ export class InputController {
       return;
     }
     if (this.activePointer !== e.pointerId) return;
+    if (this.layerPickPointer === e.pointerId) return;
     const pending = this.pendingPress;
     if (pending && pending.pointerId === e.pointerId) {
       pending.latest = this.toPoint(e);
@@ -280,6 +297,11 @@ export class InputController {
     }
     if (this.activePointer !== e.pointerId) return;
     this.activePointer = null;
+    if (this.layerPickPointer === e.pointerId) {
+      this.layerPickPointer = null;
+      eng.cursor.onUp(this.toPoint(e), e);
+      return;
+    }
     if (eng.hasShapeEdit()) {
       eng.finishShapeEdit(this.toPoint(e));
       return;
@@ -318,6 +340,11 @@ export class InputController {
     }
     if (this.activePointer !== e.pointerId) return;
     this.activePointer = null;
+    if (this.layerPickPointer === e.pointerId) {
+      this.layerPickPointer = null;
+      eng.cursor.cancel?.();
+      return;
+    }
     if (this.pendingPress?.pointerId === e.pointerId) {
       this.clearPendingPress();
       return;

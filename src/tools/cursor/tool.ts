@@ -26,8 +26,8 @@ export class CursorTool implements Tool {
     this.beginGlow(hit.mask);
   }
 
-  onMove(): void {}
-  onUp(): void {}
+  onMove(_point: StrokePoint, _event: PointerEvent): void {}
+  onUp(_point: StrokePoint, _event: PointerEvent): void {}
 
   cancel(): void {
     this.clearGlow();

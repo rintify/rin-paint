@@ -293,11 +293,11 @@ export class Compositor {
   private loop = (): void => {
     this.raf = 0;
     if (this.dirty) this.composite();
-    if (this.overlayDirty || this.engine.activeTool().overlayAnimated?.()) {
+    if (this.overlayDirty || this.engine.overlayAnimated?.() || this.engine.activeTool().overlayAnimated?.()) {
       this.drawOverlayFrame();
       this.overlayDirty = false;
     }
-    if (this.engine.activeTool().overlayAnimated?.()) this.scheduleFrame();
+    if (this.engine.overlayAnimated?.() || this.engine.activeTool().overlayAnimated?.()) this.scheduleFrame();
   };
 
   composite(): void {
@@ -616,7 +616,7 @@ export class Compositor {
       const ctx = this.overlayCtx!;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, eng.artboard.w, eng.artboard.h);
-      eng.activeTool().drawOverlay?.(ctx);
+      this.paintToolOverlays(eng, ctx);
       eng.drawActiveShapeHandles(ctx);
       eng.drawLoupeIfAny(ctx);
       return;
@@ -653,10 +653,15 @@ export class Compositor {
     ctx.beginPath();
     ctx.rect(0, 0, eng.artboard.w, eng.artboard.h);
     ctx.clip();
-    eng.activeTool().drawOverlay?.(ctx);
+    this.paintToolOverlays(eng, ctx);
     eng.drawActiveShapeHandles(ctx);
     eng.drawLoupeIfAny(ctx);
     ctx.restore();
+  }
+
+  private paintToolOverlays(eng: PaintEngine, ctx: CanvasRenderingContext2D): void {
+    if (eng.drawToolOverlays) eng.drawToolOverlays(ctx);
+    else eng.activeTool().drawOverlay?.(ctx);
   }
 
   captureBefore(layer: RasterLayer): void {

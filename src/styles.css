@@ -173,10 +173,14 @@
 .layer-list {
   flex: 1;
   overflow-y: auto;
+  scrollbar-width: none;
   display: flex;
   flex-direction: column;
   gap: 1px;
   min-height: 60px;
+}
+.layer-list::-webkit-scrollbar {
+  display: none;
 }
 
 .layer-flat-list { overflow-anchor: none; min-height: 150px; }

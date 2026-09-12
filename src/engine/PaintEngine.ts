@@ -22,6 +22,7 @@ import type { ActiveToolSettings, Tool, ToolSession } from '../tools/types';
 import { LassoTool } from '../tools/lasso/tool';
 import { MoveTool } from '../tools/move/tool';
 import { PolygonTool } from '../tools/polygon/tool';
+import { CursorTool } from '../tools/cursor/tool';
 import { isFloatTool, type FloatSelection } from '../tools/transform/floatSelection';
 import { type DirtyRect } from './brush';
 import {
@@ -90,6 +91,12 @@ export class PaintEngine {
   private lastViewState: ViewState = this.view.snapshot();
   private toolBeforeEyedropperId: string | null = null;
 
+  private readonly nullTool: Tool = {
+    onDown: () => undefined,
+    onMove: () => undefined,
+    onUp: () => undefined,
+  };
+
   /** @internal — tests cast to HistoryTree */
   get history(): HistoryTree { return this.historyService.history; }
   set history(value: HistoryTree) { this.historyService.history = value; }
@@ -106,6 +113,7 @@ export class PaintEngine {
   get lasso(): LassoTool { return this.toolInstance('lasso') as LassoTool; }
   get move(): MoveTool { return this.toolInstance('move') as MoveTool; }
   get polygon(): PolygonTool { return this.toolInstance('polygon') as PolygonTool; }
+  get cursor(): CursorTool { return this.toolInstance('cursor') as CursorTool; }
 
   activeFloat(): FloatSelection | null {
     const tool = this.activeTool();
@@ -166,7 +174,16 @@ export class PaintEngine {
   /** @internal */ getTextEditingId(): string | null { return useStore.getState().textEditingId; }
   /** @internal */ activeTool(): Tool {
     const kind = useStore.getState().tool;
-    return this.toolInstance(kind && isToolKind(kind) ? kind : 'cursor');
+    return kind && isToolKind(kind) ? this.toolInstance(kind) : this.nullTool;
+  }
+  /** @internal */ overlayAnimated(): boolean {
+    return !!(this.activeTool().overlayAnimated?.() || this.toolCache.get('cursor')?.overlayAnimated?.());
+  }
+  /** @internal */ drawToolOverlays(ctx: CanvasRenderingContext2D): void {
+    const active = this.activeTool();
+    active.drawOverlay?.(ctx);
+    const cursor = this.toolCache.get('cursor');
+    if (cursor && cursor !== active) cursor.drawOverlay?.(ctx);
   }
   /** @internal */ cursorToolSettings() {
     const state = useStore.getState();

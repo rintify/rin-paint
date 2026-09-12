@@ -1,5 +1,4 @@
 // @vitest-environment happy-dom
-import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PaintEngine } from './PaintEngine';
 import { defaultToolSetup, useStore } from '../state/store';
@@ -11,7 +10,7 @@ const original = useStore.getState();
 afterEach(() => useStore.setState(original, true));
 
 describe('cursor tool activation', () => {
-  it('uses the same cursor instance for an explicit tool and a missing selection', () => {
+  it('does not treat a missing tool selection as the cursor', () => {
     const setup = defaultToolSetup();
     const cursor = setup.tools.find(tool => tool.kind === 'cursor')!;
     useStore.setState({
@@ -28,9 +27,9 @@ describe('cursor tool activation', () => {
     expect(explicit.allowsDirectShapeEdit).toBe(false);
 
     useStore.getState().deactivateTool();
-    const implicit = engine.activeTool();
-    expect(implicit).toBe(explicit);
-    expect(implicit.allowsDirectShapeEdit).toBe(false);
+    expect(engine.activeTool()).not.toBe(explicit);
+    expect(engine.activeTool().allowsDirectShapeEdit).not.toBe(false);
+    expect(engine.cursor).toBe(explicit);
   });
 
   it('resolves cursor settings from the explicit tool, then the first visible cursor, then defaults', () => {

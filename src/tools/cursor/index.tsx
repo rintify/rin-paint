@@ -12,7 +12,7 @@ export {
 export const cursorTool: ToolDescriptor = {
   kind: 'cursor',
   label: 'カーソル',
-  description: '見えているレイヤーを選択',
+  description: '見えているレイヤーを選択。Command+クリックでも選択',
   icon: <NearMeIcon sx={{ fontSize: 20, transform: 'rotate(-30deg)' }} />,
   category: 'root',
   capabilities: { color: false, size: false, multiSelect: true },
