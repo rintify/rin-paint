@@ -1,156 +1,244 @@
-import type { LayerType } from '../../model';
-import type { LayerProps, LayerSnapshot } from '../history/historyTree';
+import type { LayerCommon, LayerType } from '../../model';
+import { isLayerType } from '../../model';
 import type { Layer } from '../layers';
-import type { SavedLayer } from '../persistence/db';
+import { makeCanvas } from '../layers';
+import { commonForLayer } from '../parameters/common';
+import { resolveCommonParameter, resolveKindParameter } from '../parameters/catalog';
+import type { ParameterCatalog, ResolvedParameter } from '../parameters/types';
 import { adjustLayerType } from './adjust';
 import { clipLayerType } from './clip';
+import {
+  applyCommonRecord,
+  commonRecordFrom,
+  type LayerDefinition,
+  type LayerProps,
+  type LayerRecord,
+  type LayerSnapshot,
+} from './definition';
 import { imageLayerType } from './image';
 import { outlineLayerType } from './outline';
-import { rasterLayerType } from './raster';
+import { rasterLayerType, scaleRasterRuntime } from './raster';
 import { shapeLayerType } from './shape';
 import { textLayerType } from './text';
 import type {
   LayerContentEnv,
-  LayerParameterDescriptor,
-  LayerParameterLayer,
   LayerScaleEnv,
   LayerSnapshotEnv,
   LayerStoredScaleEnv,
-  LayerTypeHandler,
-  StoredLayer,
 } from './types';
 
-let cache: Record<LayerType, LayerTypeHandler> | null = null;
+export type { LayerProps, LayerRecord, LayerSnapshot };
 
-/**
- * 遅延構築。ハンドラは設定パネル (React) を参照し、そこから再びこのモジュールへ
- * 戻る輪ができるため、読み込み順に依存しないよう初回アクセスまで待つ。
- */
-function handlers(): Record<LayerType, LayerTypeHandler> {
-  return (cache ??= {
-    raster: rasterLayerType,
-    adjust: adjustLayerType,
-    outline: outlineLayerType,
-    clip: clipLayerType,
-    shape: shapeLayerType,
-    text: textLayerType,
-    image: imageLayerType,
-  });
+const definitions = {
+  raster: rasterLayerType,
+  adjust: adjustLayerType,
+  outline: outlineLayerType,
+  clip: clipLayerType,
+  shape: shapeLayerType,
+  text: textLayerType,
+  image: imageLayerType,
+} as const;
+
+type Definitions = typeof definitions;
+
+export function layerDefinition<K extends LayerType>(type: K): Definitions[K];
+export function layerDefinition(type: LayerType): LayerDefinition<LayerType>;
+export function layerDefinition(type: LayerType): LayerDefinition<LayerType> {
+  return definitions[type] as never;
 }
 
-export function layerTypeHandler(type: LayerType): LayerTypeHandler {
-  return handlers()[type];
+export function layerTypeHandler(type: LayerType): LayerDefinition<LayerType> {
+  return layerDefinition(type) as never;
 }
 
-/** レイヤー実体からハンドラを引く。コア側のディスパッチはすべてここを通る。 */
-export function layerHandler(layer: Layer): LayerTypeHandler {
-  return handlers()[layer.type];
+export function layerHandler(layer: Layer): LayerDefinition<LayerType> {
+  return layerDefinition(layer.type) as never;
 }
 
-function knownType(type: string): type is LayerType {
-  return type in handlers();
+export function kindCatalog(layer: { type: LayerType; state: unknown }): ParameterCatalog<unknown> {
+  const def = layerDefinition(layer.type);
+  const catalog = typeof def.parameters === 'function'
+    ? def.parameters(layer as never)
+    : def.parameters;
+  return catalog;
 }
 
-/** 共通フィールド + 型固有フィールドのスナップショット */
+export function resolvedParameters(layer: LayerCommon & { type: LayerType; state: unknown }): ResolvedParameter[] {
+  const def = layerDefinition(layer.type);
+  const common = commonForLayer(def.info.supportsBlend).map(resolveCommonParameter);
+  const catalog = kindCatalog(layer);
+  return [...common, ...catalog.definitions.map(item => resolveKindParameter(item, layer.type))];
+}
+
 export function buildLayerSnapshot(layer: Layer, env: LayerSnapshotEnv): LayerSnapshot {
+  const def = layerHandler(layer);
   const snapshot: LayerSnapshot = {
     id: layer.id,
     type: layer.type,
-    name: layer.name,
-    opacity: layer.opacity,
-    blend: layer.blend,
-    visible: layer.visible,
-    parentId: layer.parentId,
-    childIds: [...layer.childIds],
-    ...(layer.parameterLink ? { parameterLink: structuredClone(layer.parameterLink) } : {}),
+    common: commonRecordFrom(layer),
+    state: def.codec.encode(layer.state as never),
   };
-  layerHandler(layer).snapshot(layer, snapshot, env);
+  if (!env.withContent) return snapshot;
+  if (layer.type === 'raster' || layer.type === 'image') {
+    const source = layer.runtime.canvas;
+    const copy = makeCanvas(source.width, source.height);
+    copy.getContext('2d')!.drawImage(source, 0, 0);
+    snapshot.canvas = copy;
+    if (env.keepCanvas) return snapshot;
+    void (async () => {
+      snapshot.content = await def.codec.encodeContent?.(layer as never);
+      snapshot.canvas = undefined;
+      env.onEncoded();
+    })();
+  }
   return snapshot;
 }
 
-/**
- * 履歴スナップショット・保存データ・クリップボードのいずれからでもレイヤーを
- * 復元する。データが足りない場合は null を返し、呼び出し側が読み飛ばす。
- * index は名前を持たないデータへ連番名を振るときだけ使う。
- */
 export async function restoreLayerFrom(
-  source: StoredLayer,
+  source: LayerRecord | LayerSnapshot,
   env: LayerContentEnv,
   index = 0,
 ): Promise<Layer | null> {
-  if (!knownType(source.type)) return null;
-  const handler = handlers()[source.type];
-  const layer = await handler.restore(source, {
-    artboard: env.artboard,
-    name: source.name ?? handler.defaultName(index),
-  });
-  if (!layer) return null;
-  layer.opacity = source.opacity ?? 1;
-  layer.blend = source.blend ?? 'source-over';
-  layer.visible = source.visible ?? true;
-  layer.parentId = source.parentId;
-  layer.childIds = [...source.childIds];
-  layer.parameterLink = source.parameterLink ? structuredClone(source.parameterLink) : undefined;
+  if (!isLayerType(source.type)) return null;
+  const def = layerDefinition(source.type);
+  const state = def.codec.decode(source.state);
+  if (!state && source.type !== 'raster' && source.type !== 'adjust' && source.type !== 'outline' && source.type !== 'clip') {
+    return null;
+  }
+  const content = 'canvas' in source && source.canvas ? source.canvas : source.content;
+  const runtime = def.codec.decodeRuntime
+    ? await def.codec.decodeRuntime(content, env)
+    : undefined;
+  if ((source.type === 'raster' || source.type === 'image') && !runtime) return null;
+  const layer = {
+    id: source.id,
+    type: source.type,
+    name: source.common.name ?? def.info.defaultName(index),
+    opacity: source.common.opacity ?? 1,
+    blend: source.common.blend ?? 'source-over',
+    visible: source.common.visible ?? true,
+    parentId: source.common.parentId,
+    childIds: [...source.common.childIds],
+    parameterLink: source.common.parameterLink ? structuredClone(source.common.parameterLink) : undefined,
+    state: def.state.normalize((state ?? def.state.initial()) as never),
+    runtime,
+  } as Layer;
   return layer;
 }
 
-/**
- * 保存用の 1 レイヤー。ラスター内容は呼び出し時点の見た目を同期でコピーし、
- * PNG エンコードだけを待たせるので、保存中の描画と競合しない。
- */
-export function savedLayerFrom(layer: Layer, env: LayerContentEnv): Promise<SavedLayer> {
-  const saved: SavedLayer = {
+export async function savedLayerFrom(layer: Layer, _env: LayerContentEnv): Promise<LayerRecord> {
+  const def = layerHandler(layer);
+  return {
     id: layer.id,
     type: layer.type,
-    name: layer.name,
-    opacity: layer.opacity,
-    blend: layer.blend,
-    visible: layer.visible,
-    parentId: layer.parentId,
-    childIds: [...layer.childIds],
-    ...(layer.parameterLink ? { parameterLink: structuredClone(layer.parameterLink) } : {}),
+    common: commonRecordFrom(layer),
+    state: def.codec.encode(layer.state as never),
+    content: await def.codec.encodeContent?.(layer as never),
   };
-  return layerHandler(layer).toSaved(layer, env).then(fields => Object.assign(saved, fields));
 }
 
-/** 型固有プロパティの現在値 */
 export function layerTypeProps(layer: Layer): LayerProps {
-  return layerHandler(layer).captureProps(layer);
+  return { state: layerHandler(layer).state.clone(layer.state as never) };
 }
 
-/** オブジェクト変形の履歴に残す値。変形できない種別は空。 */
 export function objectTransformProps(layer: Layer): LayerProps {
-  const handler = layerHandler(layer);
-  return handler.objectTransform ? handler.captureProps(layer) : {};
+  return layerHandler(layer).capabilities.objectTransform ? layerTypeProps(layer) : {};
 }
 
 export function scaleLayer(layer: Layer, factor: number, env: LayerScaleEnv): void {
-  layerHandler(layer).scale(layer, factor, env);
+  const def = layerHandler(layer);
+  layer.state = def.state.scale(layer.state as never, factor, env);
+  if (layer.type === 'raster') scaleRasterRuntime(layer, factor, env.width, env.height);
 }
 
-export function scaleStoredLayer(source: StoredLayer, env: LayerStoredScaleEnv): Promise<void> {
-  if (!knownType(source.type)) return Promise.resolve();
-  return handlers()[source.type].scaleStored(source, env);
+export async function scaleStoredLayer(source: LayerRecord | LayerSnapshot, env: LayerStoredScaleEnv): Promise<void> {
+  if (!isLayerType(source.type)) return;
+  const def = layerDefinition(source.type);
+  if (def.codec.scaleStored) source.state = def.codec.scaleStored(source.state, env);
+  if (source.type === 'raster' && (source.content || ('canvas' in source && source.canvas))) {
+    const content = 'canvas' in source && source.canvas ? source.canvas : source.content;
+    if (content instanceof Blob) {
+      const bitmap = await createImageBitmap(content);
+      const canvas = makeCanvas(env.artboard.w, env.artboard.h);
+      canvas.getContext('2d')!.drawImage(bitmap, 0, 0, bitmap.width * env.factor, bitmap.height * env.factor);
+      bitmap.close();
+      (source as LayerSnapshot).canvas = canvas;
+      source.content = undefined;
+    } else if (content instanceof HTMLCanvasElement) {
+      const canvas = makeCanvas(env.artboard.w, env.artboard.h);
+      canvas.getContext('2d')!.drawImage(content, 0, 0, content.width * env.factor, content.height * env.factor);
+      (source as LayerSnapshot).canvas = canvas;
+      source.content = undefined;
+    }
+  }
 }
 
-/** マスク元に使えるレイヤー種別か */
 export function canMaskLayerType(type: LayerType): boolean {
-  return handlers()[type].canMask;
+  return layerDefinition(type).info.canMask;
 }
 
 export function maskSourceLabel(type: LayerType): string {
-  return handlers()[type].maskSourceLabel ?? '';
+  return layerDefinition(type).info.maskSourceLabel ?? '';
 }
 
 export function supportsBlendMode(type: LayerType): boolean {
-  return handlers()[type].supportsBlend;
+  return layerDefinition(type).info.supportsBlend;
 }
 
-/** 自由変形で動かせる種別 (図形・文字) か */
 export function canTransformObjectType(type: LayerType): boolean {
-  return !!handlers()[type].objectTransform;
+  return !!layerDefinition(type).capabilities.objectTransform;
 }
 
-export function layerTypeParameterDescriptors(layer: LayerParameterLayer): LayerParameterDescriptor[] {
-  return handlers()[layer.type].parameterDescriptors(layer);
+export function applyLayerProps(layer: Layer, props: LayerProps): void {
+  if (props.name !== undefined) layer.name = props.name;
+  if (props.opacity !== undefined) layer.opacity = props.opacity;
+  if (props.blend !== undefined) layer.blend = props.blend;
+  if (props.visible !== undefined) layer.visible = props.visible;
+  if (props.parameterLink !== undefined) {
+    layer.parameterLink = props.parameterLink ? structuredClone(props.parameterLink) : undefined;
+  }
+  if (props.state !== undefined) {
+    layer.state = layerHandler(layer).state.applyPatch(layer.state as never, props.state as never);
+  }
 }
+
+export function hostWithProps(layer: Layer, props: LayerProps): import('../parameters/host').ParameterHost {
+  const next = {
+    ...layer,
+    state: layerHandler(layer).state.clone(layer.state as never),
+  };
+  applyLayerProps(next as Layer, structuredClone(props));
+  next.parameterLink = layer.parameterLink;
+  return next;
+}
+
+export function applyRecordProps(record: LayerRecord, props: LayerProps): void {
+  if (props.name !== undefined) record.common.name = props.name;
+  if (props.opacity !== undefined) record.common.opacity = props.opacity;
+  if (props.blend !== undefined) record.common.blend = props.blend;
+  if (props.visible !== undefined) record.common.visible = props.visible;
+  if (props.parameterLink !== undefined) {
+    record.common.parameterLink = props.parameterLink ? structuredClone(props.parameterLink) : undefined;
+  }
+  if (props.state !== undefined && isLayerType(record.type)) {
+    const current = layerDefinition(record.type).codec.decode(record.state)
+      ?? layerDefinition(record.type).state.initial();
+    const next = layerDefinition(record.type).state.applyPatch(current as never, props.state as never);
+    record.state = layerDefinition(record.type).codec.encode(next as never);
+  }
+}
+
+export function remapRecordIds(record: LayerRecord, mapId: (id: string) => string | undefined): void {
+  record.id = mapId(record.id) ?? record.id;
+  record.common.parentId = record.common.parentId ? mapId(record.common.parentId) ?? null : null;
+  record.common.childIds = record.common.childIds.map(id => mapId(id)).filter((id): id is string => !!id);
+  if (isLayerType(record.type) && layerDefinition(record.type).state.remapReferences) {
+    const current = layerDefinition(record.type).codec.decode(record.state)
+      ?? layerDefinition(record.type).state.initial();
+    record.state = layerDefinition(record.type).codec.encode(
+      layerDefinition(record.type).state.remapReferences!(current as never, mapId) as never,
+    );
+  }
+}
+
+export { applyCommonRecord, commonRecordFrom };

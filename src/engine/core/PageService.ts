@@ -51,7 +51,7 @@ export class PageService {
       canvasSpec: { ...eng.getCanvasSpec() },
       rootLayerIds: [layer.id],
       activeLayerId: layer.id,
-      layers: [{ ...eng.layerService.snapshotLayer(layer, false), blob: await toBlobP(layer.canvas) }],
+      layers: [{ ...eng.layerService.snapshotLayer(layer, false), content: await toBlobP(layer.runtime.canvas) }],
       history: await history.serialize(toBlobP),
       view: { x: 0, y: 0, scale: 1, rot: 0 },
       thumbnailVersion: 0,

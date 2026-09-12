@@ -8,6 +8,7 @@ import { Blob as NodeBlob } from 'node:buffer';
 import { newText } from './text/model';
 import { useStore } from '../state/store';
 import { addFrame, frameCount, loadPage, loadProjectMeta, loadReferenceImage, saveReferenceImage, referenceEpoch } from './persistence/db';
+import { layerMaskIds } from './layer-types/definition';
 import type { HistoryTree, TileLayerMergeOp } from './history/historyTree';
 
 // Real pixel buffers/PNG roundtrips without launching a browser.
@@ -102,7 +103,7 @@ describe('canvas history and new project', () => {
     const rasters = useStore.getState().layers.filter(layer => layer.type === 'raster');
     expect(shapes).toHaveLength(2);
     expect(rasters).toHaveLength(3);
-    expect(shapes.map(layer => layer.shape)).toEqual(expect.arrayContaining([
+    expect(shapes.map(layer => layer.type === 'shape' && layer.state.shape)).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'polygon', paintMode: 'fill-inside', color: '#123456' }),
       expect.objectContaining({ kind: 'polygon', paintMode: 'fill-inside', color: '#123456' }),
     ]));
@@ -459,8 +460,8 @@ describe('canvas history and new project', () => {
     const effectId = useStore.getState().activeLayerId;
     engine.commitLayerProps(
       effectId,
-      { params: { brightness: 100, contrast: 100, hue: 0, saturation: 100 } },
-      { params: { brightness: 0, contrast: 100, hue: 0, saturation: 100 } },
+      { state: { params: { brightness: 100, contrast: 100, hue: 0, saturation: 100 } } },
+      { state: { params: { brightness: 0, contrast: 100, hue: 0, saturation: 100 } } },
       '明度',
     );
     await engine.mergeLayerDown(effectId);
@@ -496,15 +497,15 @@ describe('canvas history and new project', () => {
     const maskId = useStore.getState().activeLayerId;
     engine.addClipLayer();
     const clipId = useStore.getState().activeLayerId;
-    engine.commitLayerProps(clipId, { maskLayerIds: [] }, { maskLayerIds: [maskId] }, 'マスク');
+    engine.commitLayerProps(clipId, { state: { maskLayerIds: [] } }, { state: { maskLayerIds: [maskId] } }, 'マスク');
     engine.addRasterLayer();
     engine.removeLayer(maskId);
-    expect(useStore.getState().layers.find(layer => layer.id === clipId)?.maskLayerIds).toEqual([]);
+    expect(layerMaskIds(useStore.getState().layers.find(layer => layer.id === clipId)?.state)).toEqual([]);
     await engine.undo();
     expect(useStore.getState().layers.some(layer => layer.id === maskId)).toBe(true);
-    expect(useStore.getState().layers.find(layer => layer.id === clipId)?.maskLayerIds).toEqual([maskId]);
+    expect(layerMaskIds(useStore.getState().layers.find(layer => layer.id === clipId)?.state)).toEqual([maskId]);
     await engine.redo();
-    expect(useStore.getState().layers.find(layer => layer.id === clipId)?.maskLayerIds).toEqual([]);
+    expect(layerMaskIds(useStore.getState().layers.find(layer => layer.id === clipId)?.state)).toEqual([]);
   });
 });
 
@@ -514,7 +515,7 @@ describe('shape snap, constraints, and persistence', () => {
     return (engine as unknown as { shapeEdit: { snapGuides(): { x: number | null; y: number | null } } }).shapeEdit;
   }
   function layerSnap(id: string) {
-    return (engine as unknown as { layerService: { shapeById(id: string): { snapEnabled: boolean } | null } }).layerService.shapeById(id)?.snapEnabled;
+    return (engine as unknown as { layerService: { shapeById(id: string): { state: { snapEnabled: boolean } } | null } }).layerService.shapeById(id)?.state.snapEnabled;
   }
 
   it('creates shapes with snap on and keeps the setting through undo, save, and copy', async () => {
@@ -522,7 +523,7 @@ describe('shape snap, constraints, and persistence', () => {
     engine.addShapeLayer({ kind: 'rect', x: 40, y: 40, width: 20, height: 20, color: '#000', strokeWidth: 2, paintMode: 'stroke' });
     const id = useStore.getState().activeLayerId;
     expect(layerSnap(id)).toBe(true);
-    engine.commitLayerProps(id, { snapEnabled: true }, { snapEnabled: false }, 'スナップを変更');
+    engine.commitLayerProps(id, { state: { snapEnabled: true } }, { state: { snapEnabled: false } }, 'スナップを変更');
     expect(layerSnap(id)).toBe(false);
     await engine.undo();
     expect(layerSnap(id)).toBe(true);
@@ -531,10 +532,10 @@ describe('shape snap, constraints, and persistence', () => {
     await engine.copyLayers(id);
     await engine.pasteLayers();
     const shapes = useStore.getState().layers.filter(layer => layer.type === 'shape');
-    expect(shapes.every(layer => layer.snapEnabled === false)).toBe(true);
+    expect(shapes.every(layer => layer.type === 'shape' && layer.state.snapEnabled === false)).toBe(true);
     await (engine as unknown as { flushSave(): Promise<void> }).flushSave();
     const { page } = await loadActivePersisted();
-    expect(page?.layers.filter(layer => layer.type === 'shape').every(layer => layer.snapEnabled === false)).toBe(true);
+    expect(page?.layers.filter(layer => layer.type === 'shape').every(layer => (layer.state as { snapEnabled?: boolean }).snapEnabled === false)).toBe(true);
   });
 
   it('snaps moves to canvas lines, skips hidden and self, and stays free when disabled', async () => {
@@ -563,13 +564,13 @@ describe('shape snap, constraints, and persistence', () => {
     await engine.newProject();
     engine.addShapeLayer({ kind: 'rect', x: 5, y: 80, width: 40, height: 40, color: '#000', strokeWidth: 1, paintMode: 'stroke' });
     const nearId = useStore.getState().activeLayerId;
-    engine.commitLayerProps(nearId, { snapEnabled: true }, { snapEnabled: false }, 'スナップを変更');
+    engine.commitLayerProps(nearId, { state: { snapEnabled: true } }, { state: { snapEnabled: false } }, 'スナップを変更');
     engine.beginShapeEdit(pt(25, 100));
     engine.updateShapeEdit(pt(28, 100));
     expect(engine.getShape(nearId)).toMatchObject({ x: 8 });
     expect(shapeEdit().snapGuides()).toEqual({ x: null, y: null });
     engine.cancelShapeEdit();
-    engine.commitLayerProps(nearId, { snapEnabled: false }, { snapEnabled: true }, 'スナップを変更');
+    engine.commitLayerProps(nearId, { state: { snapEnabled: false } }, { state: { snapEnabled: true } }, 'スナップを変更');
     engine.beginShapeEdit(pt(25, 100));
     engine.updateShapeEdit(pt(25, 100));
     expect(engine.getShape(nearId)).toMatchObject({ x: 0 });
@@ -588,7 +589,7 @@ describe('shape snap, constraints, and persistence', () => {
     engine.finishShapeEdit(pt(150, 50));
     expect(useStore.getState().historyCount).toBe(historyBefore + 1);
 
-    engine.commitLayerProps(id, { snapEnabled: true }, { snapEnabled: false }, 'スナップを変更');
+    engine.commitLayerProps(id, { state: { snapEnabled: true } }, { state: { snapEnabled: false } }, 'スナップを変更');
     const angle = -6 * Math.PI / 180;
     engine.beginShapeEdit(pt(50, -28));
     engine.updateShapeEdit(pt(50 + Math.cos(angle) * 100, 50 + Math.sin(angle) * 100));
@@ -657,7 +658,7 @@ describe('shape snap, constraints, and persistence', () => {
       points: [expect.anything(), expect.objectContaining({ x: 100, y: 100 }), expect.anything()],
     }));
     engine.cancelShapeEdit();
-    engine.commitLayerProps(id, { snapEnabled: true }, { snapEnabled: false }, 'スナップを変更');
+    engine.commitLayerProps(id, { state: { snapEnabled: true } }, { state: { snapEnabled: false } }, 'スナップを変更');
     engine.beginShapeEdit(pt(60, 20));
     engine.updateShapeEdit(pt(96, 98));
     expect(engine.getShape(id)).toEqual(expect.objectContaining({

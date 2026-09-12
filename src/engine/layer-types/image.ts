@@ -1,196 +1,201 @@
-import { cloneImageParams, normalizeImageParams, type ImageParams } from '../../model';
-import { canvasToBlob, createImageLayer, makeCanvas, type ImageLayer } from '../layers';
-import { imageFrameShape } from '../image/frame';
+import { cloneImageParams, normalizeImageParams, type ImageParams, type ImageState, type ShapeParams } from '../../model';
+import { canvasToBlob, makeCanvas } from '../layers';
+import { imageFrameShape, imageFromFrameShape } from '../image/frame';
 import { drawPlacedImage } from '../image/render';
 import { shapeBounds } from '../shapes';
-import type {
-  LayerParameterLayer,
-  LayerParameterValue,
-  LayerTypeHandler,
-} from './types';
+import { buildCatalog } from '../parameters/catalog';
+import type { LayerDefinition } from './definition';
 
-function imageOf(layer: LayerParameterLayer): ImageParams {
-  if (layer.type !== 'image' || !layer.image) throw new Error('Image parameter applied to a non-image layer');
-  return layer.image;
+function cloneState(state: ImageState): ImageState {
+  return {
+    placement: cloneImageParams(state.placement),
+    snapEnabled: state.snapEnabled,
+    constrainAspect: state.constrainAspect,
+  };
 }
 
-const imageWrite = (make: (image: ImageParams, value: LayerParameterValue) => ImageParams) =>
-  (layer: LayerParameterLayer, value: LayerParameterValue) => ({
-    image: make(cloneImageParams(imageOf(layer)), value),
-  });
-
-function aspectLocked(layer: LayerParameterLayer): boolean {
-  return layer.constrainAspect !== false;
+function asImageState(value: unknown): ImageState | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as { placement?: ImageParams; image?: ImageParams; snapEnabled?: unknown; constrainAspect?: unknown };
+  const placement = record.placement ?? record.image;
+  if (!placement || typeof placement !== 'object') return null;
+  return {
+    placement: normalizeImageParams(cloneImageParams(placement)),
+    snapEnabled: record.snapEnabled !== false,
+    constrainAspect: record.constrainAspect !== false,
+  };
 }
 
-async function canvasFromSource(source: { canvas?: HTMLCanvasElement; blob?: Blob }): Promise<HTMLCanvasElement | null> {
-  if (source.canvas) return source.canvas;
-  if (!source.blob) return null;
-  const bitmap = await createImageBitmap(source.blob);
+async function canvasFromSource(source: HTMLCanvasElement | Blob | undefined): Promise<HTMLCanvasElement | null> {
+  if (source && typeof source === 'object' && 'getContext' in source && typeof (source as HTMLCanvasElement).getContext === 'function') {
+    return source as HTMLCanvasElement;
+  }
+  if (!source) return null;
+  const bitmap = await createImageBitmap(source);
   const copy = makeCanvas(bitmap.width, bitmap.height);
   copy.getContext('2d')!.drawImage(bitmap, 0, 0);
   bitmap.close();
   return copy;
 }
 
-/** 配置画像: 元画素を保持し、枠の位置・サイズ・回転で描く。操作は四角形と同じ。 */
-export const imageLayerType: LayerTypeHandler<ImageLayer> = {
-  type: 'image',
-  canMask: true,
-  maskSourceLabel: '画像',
-  supportsBlend: true,
+function scalePlacement(placement: ImageParams, factor: number): ImageParams {
+  return {
+    ...placement,
+    x: placement.x * factor,
+    y: placement.y * factor,
+    width: placement.width * factor,
+    height: placement.height * factor,
+  };
+}
 
-  defaultName: (index) => `画像 ${index}`,
+const SURFACES = ['single', 'multi', 'link'] as const;
 
-  snapshot(layer, snapshot, env) {
-    snapshot.image = cloneImageParams(layer.image);
-    snapshot.snapEnabled = layer.snapEnabled;
-    snapshot.constrainAspect = layer.constrainAspect;
-    if (!env.withContent) return;
-    const copy = makeCanvas(layer.canvas.width, layer.canvas.height);
-    copy.getContext('2d')!.drawImage(layer.canvas, 0, 0);
-    snapshot.canvas = copy;
-    if (env.keepCanvas) return;
-    void canvasToBlob(copy).then((blob) => {
-      snapshot.blob = blob;
-      snapshot.canvas = undefined;
-      env.onEncoded();
-    });
+export const imageLayerType: LayerDefinition<'image'> = {
+  info: {
+    type: 'image',
+    canMask: true,
+    maskSourceLabel: '画像',
+    supportsBlend: true,
+    defaultName: index => `画像 ${index}`,
   },
-
-  async restore(source, env) {
-    if (!source.image) return null;
-    const canvas = await canvasFromSource(source);
-    if (!canvas) return null;
-    return createImageLayer(
-      env.name,
-      canvas,
-      source.image,
-      source.id,
-      source.snapEnabled !== false,
-      source.constrainAspect !== false,
-    );
+  state: {
+    initial: () => ({ placement: { x: 0, y: 0, width: 1, height: 1, rotation: 0 }, snapEnabled: true, constrainAspect: true }),
+    clone: cloneState,
+    normalize: state => ({
+      placement: normalizeImageParams(cloneImageParams(state.placement)),
+      snapEnabled: state.snapEnabled !== false,
+      constrainAspect: state.constrainAspect !== false,
+    }),
+    applyPatch: (state, patch) => cloneState({
+      ...state,
+      ...patch,
+      placement: patch.placement ? normalizeImageParams(cloneImageParams(patch.placement)) : state.placement,
+    }),
+    scale: (state, factor) => ({ ...cloneState(state), placement: scalePlacement(state.placement, factor) }),
   },
-
-  async toSaved(layer) {
-    return {
-      image: cloneImageParams(layer.image),
-      snapEnabled: layer.snapEnabled,
-      constrainAspect: layer.constrainAspect,
-      blob: await canvasToBlob(layer.canvas),
-    };
-  },
-
-  applyProps(layer, props) {
-    if (props.image !== undefined) layer.image = normalizeImageParams(cloneImageParams(props.image));
-    if (props.snapEnabled !== undefined) layer.snapEnabled = props.snapEnabled;
-    if (props.constrainAspect !== undefined) layer.constrainAspect = props.constrainAspect;
-  },
-  captureProps: (layer) => ({
-    image: cloneImageParams(layer.image),
-    snapEnabled: layer.snapEnabled,
-    constrainAspect: layer.constrainAspect,
-  }),
-
-  scale(layer, factor) {
-    layer.image = {
-      ...layer.image,
-      x: layer.image.x * factor,
-      y: layer.image.y * factor,
-      width: layer.image.width * factor,
-      height: layer.image.height * factor,
-    };
-  },
-
-  async scaleStored(source, env) {
-    if (!source.image) return;
-    source.image = {
-      ...source.image,
-      x: source.image.x * env.factor,
-      y: source.image.y * env.factor,
-      width: source.image.width * env.factor,
-      height: source.image.height * env.factor,
-    };
-  },
-
-  draw(ctx, layer) {
-    ctx.globalAlpha = layer.opacity;
-    ctx.globalCompositeOperation = layer.blend;
-    drawPlacedImage(ctx, layer.canvas, layer.image);
-  },
-
-  drawMask(ctx, layer) {
-    drawPlacedImage(ctx, layer.canvas, layer.image);
-  },
-
-  bakeOnto(target, layer) {
-    target.ctx.save();
-    target.ctx.globalAlpha = layer.opacity;
-    target.ctx.globalCompositeOperation = layer.blend;
-    drawPlacedImage(target.ctx, layer.canvas, layer.image);
-    target.ctx.restore();
-  },
-
-  objectTransform: {
-    bounds: (layer) => shapeBounds(imageFrameShape(layer.image)),
-    apply(layer, context) {
-      const image = context.before.image;
-      if (!image) return;
-      const { transform, scale, angle } = context;
-      const width = image.width * scale;
-      const height = image.height * scale;
-      const center = transform(image.x + image.width / 2, image.y + image.height / 2);
-      layer.image = {
-        x: center.x - width / 2,
-        y: center.y - height / 2,
-        width,
-        height,
-        rotation: image.rotation + angle,
-      };
+  codec: {
+    encode: cloneState,
+    decode: asImageState,
+    encodeContent: layer => canvasToBlob(layer.runtime.canvas),
+    async decodeRuntime(content) {
+      const canvas = await canvasFromSource(content);
+      if (!canvas) return null;
+      return { canvas, ctx: canvas.getContext('2d', { willReadFrequently: true })! };
+    },
+    scaleStored(state, env) {
+      const decoded = asImageState(state);
+      return decoded ? { ...decoded, placement: scalePlacement(decoded.placement, env.factor) } : state;
     },
   },
-
-  contentCanvas: (layer) => layer.canvas,
-
-  parameterDescriptors: () => [
-    {
-      key: 'snapEnabled', semanticId: 'interaction.snap', label: 'スナップ', control: 'switch',
-      trueLabel: 'ON', falseLabel: 'OFF',
-      read: layer => layer.type === 'image' ? layer.snapEnabled !== false : null,
-      write: (_layer, value) => ({ snapEnabled: Boolean(value) }),
+  renderer: {
+    draw(ctx, layer) {
+      ctx.globalAlpha = layer.opacity;
+      ctx.globalCompositeOperation = layer.blend;
+      drawPlacedImage(ctx, layer.runtime.canvas, layer.state.placement);
     },
-    {
-      key: 'constrainAspect', semanticId: 'transform.constrainAspect', label: '比率を維持', control: 'switch',
-      trueLabel: 'ON', falseLabel: 'OFF',
-      read: layer => layer.type === 'image' ? layer.constrainAspect !== false : null,
-      write: (_layer, value) => ({ constrainAspect: Boolean(value) }),
+    drawMask(ctx, layer) {
+      drawPlacedImage(ctx, layer.runtime.canvas, layer.state.placement);
     },
-    { key: 'image.x', semanticId: 'frame.leftMm', label: 'X', control: 'number', canvasLength: true, read: layer => imageOf(layer).x, write: imageWrite((image, value) => ({ ...image, x: Number(value) })) },
-    { key: 'image.y', semanticId: 'frame.topMm', label: 'Y', control: 'number', canvasLength: true, read: layer => imageOf(layer).y, write: imageWrite((image, value) => ({ ...image, y: Number(value) })) },
-    {
-      key: 'image.width', semanticId: 'frame.widthMm', label: '幅', control: 'number', canvasLength: true, min: 0.1,
-      read: layer => imageOf(layer).width,
-      write: (layer, value) => {
-        const image = cloneImageParams(imageOf(layer));
-        const width = Math.max(0.1, Number(value));
-        if (!aspectLocked(layer)) return { image: { ...image, width } };
-        return { image: { ...image, width, height: Math.max(0.1, width * (image.height / image.width)) } };
+    bakeOnto(target, layer) {
+      target.runtime.ctx.save();
+      target.runtime.ctx.globalAlpha = layer.opacity;
+      target.runtime.ctx.globalCompositeOperation = layer.blend;
+      drawPlacedImage(target.runtime.ctx, layer.runtime.canvas, layer.state.placement);
+      target.runtime.ctx.restore();
+    },
+    contentCanvas: layer => layer.runtime.canvas,
+  },
+  parameters: buildCatalog(
+    [
+      { id: 'interaction', label: '操作' },
+      { id: 'transform', label: '変形' },
+      { id: 'frame', label: '配置' },
+    ],
+    [
+      {
+        id: 'snapEnabled', semanticId: 'interaction.snap', groupId: 'interaction', label: 'スナップ',
+        editor: { kind: 'switch', trueLabel: 'ON', falseLabel: 'OFF' }, surfaces: SURFACES,
+        read: state => state.snapEnabled !== false,
+        write: (state, value) => ({ ...cloneState(state), snapEnabled: Boolean(value) }),
+      },
+      {
+        id: 'constrainAspect', semanticId: 'transform.constrainAspect', groupId: 'transform', label: '比率を維持',
+        editor: { kind: 'switch', trueLabel: 'ON', falseLabel: 'OFF' }, surfaces: SURFACES,
+        read: state => state.constrainAspect !== false,
+        write: (state, value) => ({ ...cloneState(state), constrainAspect: Boolean(value) }),
+      },
+      {
+        id: 'image.x', semanticId: 'frame.leftMm', groupId: 'frame', label: 'X',
+        editor: { kind: 'number', unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
+        read: state => state.placement.x,
+        write: (state, value) => ({ ...cloneState(state), placement: { ...state.placement, x: Number(value) } }),
+      },
+      {
+        id: 'image.y', semanticId: 'frame.topMm', groupId: 'frame', label: 'Y',
+        editor: { kind: 'number', unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
+        read: state => state.placement.y,
+        write: (state, value) => ({ ...cloneState(state), placement: { ...state.placement, y: Number(value) } }),
+      },
+      {
+        id: 'image.width', semanticId: 'frame.widthMm', groupId: 'frame', label: '幅',
+        editor: { kind: 'number', min: 0.1, unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
+        read: state => state.placement.width,
+        write: (state, value) => {
+          const width = Math.max(0.1, Number(value));
+          const placement = cloneImageParams(state.placement);
+          if (!state.constrainAspect) return { ...cloneState(state), placement: { ...placement, width } };
+          return { ...cloneState(state), placement: { ...placement, width, height: Math.max(0.1, width * (placement.height / placement.width)) } };
+        },
+      },
+      {
+        id: 'image.height', semanticId: 'frame.heightMm', groupId: 'frame', label: '高さ',
+        editor: { kind: 'number', min: 0.1, unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
+        read: state => state.placement.height,
+        write: (state, value) => {
+          const height = Math.max(0.1, Number(value));
+          const placement = cloneImageParams(state.placement);
+          if (!state.constrainAspect) return { ...cloneState(state), placement: { ...placement, height } };
+          return { ...cloneState(state), placement: { ...placement, height, width: Math.max(0.1, height * (placement.width / placement.height)) } };
+        },
+      },
+      {
+        id: 'rotation', semanticId: 'transform.rotation', groupId: 'transform', label: '回転',
+        editor: { kind: 'number', min: -3600, max: 3600, unit: { kind: 'degree' } }, surfaces: SURFACES,
+        read: state => state.placement.rotation * 180 / Math.PI,
+        write: (state, value) => ({ ...cloneState(state), placement: { ...state.placement, rotation: Number(value) * Math.PI / 180 } }),
+      },
+    ],
+  ),
+  capabilities: {
+    objectTransform: {
+      bounds: layer => shapeBounds(imageFrameShape(layer.state.placement)),
+      apply(layer, context) {
+        const image = context.before.placement;
+        const { transform, scale, angle } = context;
+        const width = image.width * scale;
+        const height = image.height * scale;
+        const center = transform(image.x + image.width / 2, image.y + image.height / 2);
+        layer.state.placement = {
+          x: center.x - width / 2,
+          y: center.y - height / 2,
+          width,
+          height,
+          rotation: image.rotation + angle,
+        };
       },
     },
-    {
-      key: 'image.height', semanticId: 'frame.heightMm', label: '高さ', control: 'number', canvasLength: true, min: 0.1,
-      read: layer => imageOf(layer).height,
-      write: (layer, value) => {
-        const image = cloneImageParams(imageOf(layer));
-        const height = Math.max(0.1, Number(value));
-        if (!aspectLocked(layer)) return { image: { ...image, height } };
-        return { image: { ...image, height, width: Math.max(0.1, height * (image.width / image.height)) } };
+    frameEdit: {
+      toShape: layer => imageFrameShape(layer.state.placement),
+      fromShape(layer, shape: ShapeParams) {
+        if (shape.kind === 'rect') layer.state.placement = imageFromFrameShape(layer.state.placement, shape);
       },
+      constrainAspect: layer => layer.state.constrainAspect !== false,
     },
-    {
-      key: 'rotation', semanticId: 'transform.rotation', label: '回転 (度)', control: 'number', min: -3600, max: 3600,
-      read: layer => imageOf(layer).rotation * 180 / Math.PI,
-      write: imageWrite((image, value) => ({ ...image, rotation: Number(value) * Math.PI / 180 })),
+    maskSource: {
+      drawOpacity: layer => layer.opacity,
     },
-  ],
+    transferToRaster: {
+      canTransfer: layer => layer.childIds.length === 0 && !!layer.parentId,
+    },
+  },
 };

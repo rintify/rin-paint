@@ -1,21 +1,18 @@
 import { openDB, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import type {
-  AdjustParams, BlendMode, ImageParams, LayerType, OutlineParams, ShapeParams, ToolInstance, TextParams,
-  CanvasSpec, ProjectFont, ToolLayoutItem, ToolStack, LayerParameterLink,
+  ToolInstance,
+  CanvasSpec, ProjectFont, ToolLayoutItem, ToolStack,
 } from '../../model';
 import type { PersistedHistory } from '../history/historyTree';
+import type { LayerRecord } from '../layer-types/definition';
 import { opBytes } from '../history/bytes';
 import type { ViewState } from '../view';
-import { DB_VERSION, PROJECT_VERSION } from './version';
+import { CLIPBOARD_VERSION, DB_VERSION, PROJECT_VERSION } from './version';
 import { migrateClipboard, migrateProjectMeta, migrateSavedPage } from './migrate';
 import { validateAppSettings } from './settingsFile';
 import type { ShortcutBindings } from '../../shortcuts';
 
-export interface SavedLayer {
-  id: string; type: LayerType; name: string; opacity: number; blend: BlendMode;
-  visible: boolean; parentId: string | null; childIds: string[];
-  params?: AdjustParams; outline?: OutlineParams; maskLayerIds?: string[]; shape?: ShapeParams; snapEnabled?: boolean; constrainAspect?: boolean; text?: TextParams; image?: ImageParams; parameterLink?: LayerParameterLink; blob?: Blob;
-}
+export type SavedLayer = LayerRecord;
 export interface SavedPage {
   id: string; canvasSpec: CanvasSpec; rootLayerIds: string[]; layers: SavedLayer[];
   activeLayerId: string; history: PersistedHistory; view: ViewState;
@@ -33,7 +30,7 @@ export interface SavedAppSettings {
 export interface SavedAppSettingsFile {
   app: 'rin-paint'; kind: 'settings'; version: 1; settings: SavedAppSettings;
 }
-export interface LayerClipboard { version: 2; sourcePageId: string; sourcePageIndex: number; sourcePpi: number; rootIds: string[]; layers: SavedLayer[] }
+export interface LayerClipboard { version: typeof CLIPBOARD_VERSION; sourcePageId: string; sourcePageIndex: number; sourcePpi: number; rootIds: string[]; layers: SavedLayer[] }
 export interface TimelapseFrame { key?: string; pageId?: string; t: number; blob: Blob }
 export interface SavedReferenceImage {
   blob: Blob; name: string; naturalWidth: number; naturalHeight: number; x: number; y: number;
@@ -71,7 +68,7 @@ function db(): Promise<IDBPDatabase> {
 }
 
 function pageBytes(page: SavedPage): number {
-  return page.layers.reduce((n, layer) => n + (layer.blob?.size ?? 0), 0)
+  return page.layers.reduce((n, layer) => n + (layer.content?.size ?? 0), 0)
     + page.history.nodes.reduce((n, node) => n + (node.op ? opBytes(node.op) : 0), 0)
     + (page.thumbnail?.size ?? 0);
 }

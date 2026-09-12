@@ -143,7 +143,7 @@ export class Compositor {
   }
 
   measureEnv(): LayerMeasureEnv {
-    return { artboard: this.engine.artboard, textRenderer: this.textRenderer };
+    return { artboard: this.engine.artboard, textRenderer: this.textRenderer, ppi: this.engine.getCanvasSpec().ppi };
   }
 
   /** レイヤー種別ハンドラが描画に使う依存一式 */
@@ -200,9 +200,11 @@ export class Compositor {
 
   syncTextRenders(): void {
     const layers = this.engine.allLayers();
-    this.textRenderer.retain(new Set(layers.filter(l => l.type === 'text').map(l => l.id)));
-    for (const layer of layers) if (layer.type === 'text') {
-      this.textRenderer.request(layer.id, layer.text, this.engine.getCanvasSpec().ppi, () => {
+    const prepared = layers.filter(layer => layerHandler(layer).capabilities.renderLifecycle?.prepare);
+    this.textRenderer.retain(new Set(prepared.map(layer => layer.id)));
+    const env = this.measureEnv();
+    for (const layer of prepared) {
+      layerHandler(layer).capabilities.renderLifecycle!.prepare!(layer as never, env, () => {
         this.engine.bumpLayer(layer.id);
         this.engine.syncStore();
       });
@@ -227,8 +229,8 @@ export class Compositor {
       return this.artCacheCtx.getImageData(cx, cy, 1, 1).data;
     }
     const layer = this.engine.layerById(includedLayerId);
-    const padding = layer?.type === 'outline'
-      ? Math.max(0, layerHandler(layer).effect?.paddingPx?.(layer, this.drawEnv(false)) ?? 0)
+    const padding = layer
+      ? Math.max(0, layerHandler(layer).renderer.effect?.paddingPx?.(layer as never, this.drawEnv(false)) ?? 0)
       : 0;
     const region = {
       x: Math.max(0, cx - padding),
@@ -236,7 +238,7 @@ export class Compositor {
       w: Math.min(this.engine.artboard.w, cx + padding + 1) - Math.max(0, cx - padding),
       h: Math.min(this.engine.artboard.h, cy + padding + 1) - Math.max(0, cy - padding),
     };
-    const art = layer?.type === 'outline'
+    const art = layer && layerHandler(layer).renderer.effect
       ? this.renderEffectContribution(includedLayerId, region)
       : this.renderArt(region, new Set([includedLayerId]), false);
     const data = art.ctx.getImageData(cx - region.x, cy - region.y, 1, 1).data;
@@ -330,7 +332,7 @@ export class Compositor {
       && !(layer.type === 'text' && layer.id === editingTextId)
       && (included === null || included.has(layer.id));
     const activeEffectInChain = (layer: Layer): boolean => {
-      if (!layerHandler(layer).effect) return false;
+      if (!layerHandler(layer).renderer.effect) return false;
       if (participates(layer) || capture?.effectId === layer.id) return true;
       return layer.childIds.some(id => {
         const child = eng.layerById(id);
@@ -355,7 +357,7 @@ export class Compositor {
     const drawLayer = (target: CanvasRenderingContext2D, layer: Layer) => {
       target.save();
       target.setTransform(1, 0, 0, 1, -region.x, -region.y);
-      layerHandler(layer).draw(target, layer, env);
+      layerHandler(layer).renderer.draw(target, layer, env);
       target.restore();
     };
     const renderSequence = (
@@ -368,12 +370,12 @@ export class Compositor {
         const layer = eng.layerById(id);
         if (!layer) continue;
         const handler = layerHandler(layer);
-        if (handler.effect) {
+        if (handler.renderer.effect) {
           if (participates(layer) || capture?.effectId === layer.id) {
             const capturesThisEffect = capture?.effectId === layer.id;
             const before = capturesThisEffect ? this.borrowCanvas(region.w, region.h) : null;
             before?.ctx.drawImage(targetCanvas, 0, 0);
-            handler.effect.apply(effectScope(targetCanvas, state.revision), layer, env);
+            handler.renderer.effect.apply(effectScope(targetCanvas, state.revision), layer, env);
             resetTarget(target);
             state.revision = mixRevision(state.revision, `${layer.id}:${eng.getRenderRevision?.(layer.id) ?? 0}`);
             if (capturesThisEffect && capture) {
@@ -457,7 +459,7 @@ export class Compositor {
   private effectPaddingByLayer(env: LayerDrawEnv): Map<string, number> {
     const eng = this.engine;
     const activeEffectInChain = (layer: Layer): boolean => {
-      const effect = layerHandler(layer).effect;
+      const effect = layerHandler(layer).renderer.effect;
       if (effect && layer.visible) return true;
       return layer.childIds.some(id => {
         const child = eng.layerById(id);
@@ -471,7 +473,7 @@ export class Compositor {
       for (const id of ids) {
         const layer = eng.layerById(id);
         if (!layer) continue;
-        const effect = layerHandler(layer).effect;
+        const effect = layerHandler(layer).renderer.effect;
         if (effect) {
           if (layer.visible) {
             const padding = Math.max(0, effect.paddingPx?.(layer, env) ?? 0);
@@ -613,30 +615,30 @@ export class Compositor {
   captureBefore(layer: RasterLayer): void {
     const { w, h } = this.engine.artboard;
     this.scratchCtx.clearRect(0, 0, w, h);
-    this.scratchCtx.drawImage(layer.canvas, 0, 0);
+    this.scratchCtx.drawImage(layer.runtime.canvas, 0, 0);
   }
 
   restoreBefore(layer: RasterLayer, rect?: DirtyRect): void {
     const { w, h } = this.engine.artboard;
-    layer.ctx.clearRect(0, 0, w, h);
-    layer.ctx.drawImage(this.scratch, 0, 0);
+    layer.runtime.ctx.clearRect(0, 0, w, h);
+    layer.runtime.ctx.drawImage(this.scratch, 0, 0);
     this.engine.bumpLayer(layer.id, rect);
   }
 
   bakeLayerOnto(target: RasterLayer, source: Layer): void {
     const handler = layerHandler(source);
     const env = this.drawEnv(false);
-    if (handler.effect) {
+    if (handler.renderer.effect) {
       const borrowed = this.borrowCanvas();
       const scope = borrowed.ctx;
       const { w, h } = this.engine.artboard;
-      if (target.visible) layerHandler(target).draw(scope, target, env);
-      handler.effect.apply({ canvas: borrowed.canvas, coverage: borrowed.canvas, x: 0, y: 0, width: w, height: h, inputRevision: 0 }, source, env);
-      target.ctx.clearRect(0, 0, w, h);
-      target.ctx.drawImage(scope.canvas, 0, 0);
+      if (target.visible) layerHandler(target).renderer.draw(scope, target, env);
+      handler.renderer.effect.apply({ canvas: borrowed.canvas, coverage: borrowed.canvas, x: 0, y: 0, width: w, height: h, inputRevision: 0 }, source, env);
+      target.runtime.ctx.clearRect(0, 0, w, h);
+      target.runtime.ctx.drawImage(scope.canvas, 0, 0);
       borrowed.release();
       return;
     }
-    handler.bakeOnto(target, source, env);
+    handler.renderer.bakeOnto(target, source, env);
   }
 }

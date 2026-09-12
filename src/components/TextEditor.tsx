@@ -14,8 +14,9 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   const editingId = useStore(s => s.textEditingId);
   const ppi = useStore(s => s.canvasSpec.ppi);
   const viewScale = useStore(s => s.viewScale);
-  const layer = layers.find(l => l.id === activeId && l.type === 'text');
-  const text = layer?.text;
+  const found = layers.find(l => l.id === activeId);
+  const layer = found?.type === 'text' ? found : undefined;
+  const text = layer?.state.text;
   const editor = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
   const before = useRef<TextParams | null>(null);
@@ -147,7 +148,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
     drag.current = {
       pointerId: event.pointerId, mode, corner, x: point.x, y: point.y, width, height,
       before: structuredClone(text), capture,
-      snapLines: mode === 'move' && layer.snapEnabled !== false
+      snapLines: mode === 'move' && layer.state.snapEnabled !== false
         ? collectSnapLines(engine.artboard, engine.visibleObjectBounds(activeId))
         : undefined,
     };
@@ -170,7 +171,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
       } else next = { ...d.before, x: d.before.x + dx, y: d.before.y + dy };
     } else if (d.mode === 'rotate') {
       const angle = Math.atan2(p.y - (d.before.y + d.height / 2), p.x - (d.before.x + d.width / 2)) + Math.PI / 2;
-      next = { ...d.before, rotation: layer.snapEnabled !== false ? snapAngleToRightAngles(angle).angle : angle };
+      next = { ...d.before, rotation: layer.state.snapEnabled !== false ? snapAngleToRightAngles(angle).angle : angle };
     } else {
       next = resizeTextBox(d.before, d.width, d.height, d.corner!, dx, dy);
     }

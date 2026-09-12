@@ -40,11 +40,11 @@ import { FillService } from './core/FillService';
 import { PolygonSplitService } from './core/PolygonSplitService';
 import { SettingsService } from './core/SettingsService';
 import { ParameterLinkService, type LayerLinkCandidate } from './core/ParameterLinkService';
-import { layerHandler, layerTypeProps } from './layer-types/registry';
+import { ParameterService } from './parameters/ParameterService';
+import { layerHandler } from './layer-types/registry';
 import type { RasterLayer } from './layers';
-import type { LayerParameterValue } from './layerParameters';
+import type { LayerParameterValue } from './parameters/types';
 import { mmToPx } from './units';
-import { rotatedRectBounds } from './shapes/snap';
 import { imageToolBoxPx } from '../tools/image/settings';
 import { canvasFromImageFile } from './image/load';
 import {
@@ -67,6 +67,7 @@ export class PaintEngine {
   /** @internal */ readonly autosave = new AutosaveService(this);
   /** @internal */ readonly pages = new PageService(this);
   /** @internal */ readonly links = new ParameterLinkService(this);
+  /** @internal */ readonly parameters = new ParameterService(this);
   /** @internal */ readonly project = new ProjectService(this);
   /** @internal */ readonly clipboard = new ClipboardService(this);
   /** @internal */ readonly fill = new FillService(this);
@@ -318,13 +319,11 @@ export class PaintEngine {
   objectBounds(id: string): { x: number; y: number; w: number; h: number } | null {
     const layer = this.layerService.byId(id);
     if (!layer) return null;
-    const bounds = layerHandler(layer).objectTransform?.bounds(layer, this.compositor.measureEnv());
-    if (!bounds) return null;
-    return layer.type === 'text' ? rotatedRectBounds(bounds, layer.text.rotation ?? 0) : bounds;
+    return layerHandler(layer).capabilities.objectTransform?.bounds(layer as never, this.compositor.measureEnv()) ?? null;
   }
   visibleObjectBounds(excludeId: string): { x: number; y: number; w: number; h: number }[] {
     return this.layerService.layers.flatMap(layer => {
-      if (layer.id === excludeId || !layer.visible || (layer.type !== 'shape' && layer.type !== 'text' && layer.type !== 'image')) return [];
+      if (layer.id === excludeId || !layer.visible || !layerHandler(layer).capabilities.objectTransform) return [];
       const bounds = this.objectBounds(layer.id);
       return bounds ? [bounds] : [];
     });
@@ -593,10 +592,10 @@ export class PaintEngine {
 
   syncStore(): void {
     const ls = this.layerService;
-    const metas: LayerMeta[] = ls.layers.map((l) => {
+      const metas: LayerMeta[] = ls.layers.map((l) => {
       const linkInfo = this.links.infoFor(l.id);
       return ({
-      ...layerTypeProps(l),
+      state: layerHandler(l).state.clone(l.state as never),
       id: l.id,
       type: l.type,
       name: l.name,
@@ -613,7 +612,7 @@ export class PaintEngine {
       canMergeDown: ls.canMergeLayerDown(l.id),
       canRemove: ls.canRemoveLayer(l.id),
       canTransferShape: ls.canTransferShape(l.id),
-    });
+    } as LayerMeta);
     });
     const state = useStore.getState();
     let selectedLayerIds = state.multiSelectMode

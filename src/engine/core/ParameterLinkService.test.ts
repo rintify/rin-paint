@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PaintEngine } from '../PaintEngine';
 import type { Layer, ShapeLayer } from '../layers';
+import { applyLayerProps } from '../layer-types/registry';
 import { ParameterLinkService } from './ParameterLinkService';
 
 function shape(id: string, color: string, x = 0): ShapeLayer {
@@ -13,8 +14,8 @@ function shape(id: string, color: string, x = 0): ShapeLayer {
     visible: true,
     parentId: null,
     childIds: [],
-    snapEnabled: true,
-    shape: { kind: 'rect', x, y: 0, width: 20, height: 10, color, strokeWidth: 2, paintMode: 'stroke' },
+    state: { snapEnabled: true, shape: { kind: 'rect', x, y: 0, width: 20, height: 10, color, strokeWidth: 2, paintMode: 'stroke' } },
+    runtime: undefined,
   };
 }
 
@@ -25,8 +26,7 @@ function setup(layers: Layer[]) {
     layerService: {
       layers,
       assignProps(layer: Layer, props: Record<string, unknown>) {
-        if (props.parameterLink === null) layer.parameterLink = undefined;
-        else Object.assign(layer, structuredClone(props));
+        applyLayerProps(layer, props);
       },
     },
     getCanvasSpec: () => ({ widthMm: 10, heightMm: 10, ppi: 254 }),
@@ -46,10 +46,10 @@ describe('ParameterLinkService', () => {
     const { service } = setup([a, b, c]);
     service.createPasteLink('b', { pageId: 'p1', layerId: 'a' });
     service.createPasteLink('c', { pageId: 'p1', layerId: 'b' });
-    a.shape.color = '#abcdef';
+    a.state.shape.color = '#abcdef';
     service.propagateFrom({ pageId: 'p1', layerId: 'a' });
-    expect(b.shape.color).toBe('#abcdef');
-    expect(c.shape.color).toBe('#abcdef');
+    expect(b.state.shape.color).toBe('#abcdef');
+    expect(c.state.shape.color).toBe('#abcdef');
     expect(c.parameterLink?.source.layerId).toBe('b');
   });
 
@@ -60,7 +60,7 @@ describe('ParameterLinkService', () => {
     service.createPasteLink('b', { pageId: 'p1', layerId: 'a' });
     const before = structuredClone(b);
     const after = structuredClone(b);
-    after.shape.color = '#fedcba';
+    after.state.shape.color = '#fedcba';
     const change = service.detachChanged(b, before, after)!;
     expect(change.after.linkedParameterIds).not.toContain('appearance.color');
     expect(change.after.linkedParameterIds).toContain('layer.opacity');
@@ -72,15 +72,15 @@ describe('ParameterLinkService', () => {
     const b = shape('b', '#222222');
     const { service, history } = setup([a, b]);
     service.createPasteLink('b', { pageId: 'p1', layerId: 'a' });
-    const color = b.shape.color;
+    const color = b.state.shape.color;
     service.unlinkParameter('b', 'appearance.color');
-    expect(b.shape.color).toBe(color);
+    expect(b.state.shape.color).toBe(color);
     expect(b.parameterLink?.linkedParameterIds).not.toContain('appearance.color');
     expect(b.parameterLink?.linkedParameterIds).toContain('layer.opacity');
     expect(history).toHaveLength(1);
   });
 
-  it('disables self and cyclic source candidates', async () => {
+  it('disables self and cyclic source candidates', () => {
     const a = shape('a', '#111111');
     const b = shape('b', '#111111');
     const { service } = setup([a, b]);

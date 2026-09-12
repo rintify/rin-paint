@@ -73,7 +73,7 @@ export class PenTool implements Tool {
     this.totalDistance = 0;
 
     const r = this.radius(p.pressure, this.taperFactor(0), true);
-    stampSegment(layer.ctx, p.x, p.y, r, p.x, p.y, r, this.color, this.erase);
+    stampSegment(layer.runtime.ctx, p.x, p.y, r, p.x, p.y, r, this.color, this.erase);
     expandRect(this.rect, p.x, p.y, r + 2);
     this.lastX = p.x;
     this.lastY = p.y;
@@ -89,7 +89,7 @@ export class PenTool implements Tool {
     this.points.push({ ...p, distance: this.totalDistance });
     const r = this.radius(p.pressure, this.taperFactor(this.totalDistance), false);
     stampSegment(
-      this.layer.ctx,
+      this.layer.runtime.ctx,
       this.lastX,
       this.lastY,
       this.lastR,
@@ -145,10 +145,10 @@ export class PenTool implements Tool {
       const taper = this.taperFactor(point.distance, this.totalDistance - point.distance);
       const r = this.radius(point.pressure, taper, i === 0);
       if (prev) {
-        stampSegment(layer.ctx, prev.x, prev.y, prevR, point.x, point.y, r, this.color, this.erase);
+        stampSegment(layer.runtime.ctx, prev.x, prev.y, prevR, point.x, point.y, r, this.color, this.erase);
         expandRect(this.rect, prev.x, prev.y, prevR + 2);
       } else {
-        stampSegment(layer.ctx, point.x, point.y, r, point.x, point.y, r, this.color, this.erase);
+        stampSegment(layer.runtime.ctx, point.x, point.y, r, point.x, point.y, r, this.color, this.erase);
       }
       expandRect(this.rect, point.x, point.y, r + 2);
       prev = point;

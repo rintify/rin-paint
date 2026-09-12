@@ -1,12 +1,13 @@
 import { useStore } from '../../state/store';
 import { type Op, type LayerSnapshot } from '../history/historyTree';
-import { savedLayerFrom, scaleStoredLayer } from '../layer-types/registry';
+import { savedLayerFrom, scaleStoredLayer, remapRecordIds } from '../layer-types/registry';
 import {
   loadClipboard,
   saveClipboard,
   type LayerClipboard,
   type SavedLayer,
 } from '../persistence/db';
+import { CLIPBOARD_VERSION } from '../persistence/version';
 import type { PaintEngine } from '../PaintEngine';
 
 export class ClipboardService {
@@ -33,7 +34,7 @@ export class ClipboardService {
         .map(layer => savedLayerFrom(layer, { artboard: eng.artboard })),
     );
     const clipboard: LayerClipboard = {
-      version: 2,
+      version: CLIPBOARD_VERSION,
       sourcePageId: eng.pages.activePageId,
       sourcePageIndex: Math.max(0, eng.pages.pageOrder.indexOf(eng.pages.activePageId)),
       sourcePpi: eng.getCanvasSpec().ppi,
@@ -52,18 +53,11 @@ export class ClipboardService {
     if (!clipboard?.layers.length) return;
     const factor = eng.getCanvasSpec().ppi / clipboard.sourcePpi;
     const ids = new Map<string, string>(clipboard.layers.map(layer => [layer.id, String(crypto.randomUUID())]));
-    const remap = (id: string | null) => id ? ids.get(id) ?? null : null;
     const snapshots: LayerSnapshot[] = [];
     for (const source of clipboard.layers) {
-      const snapshot: LayerSnapshot = {
-        ...structuredClone({ ...source, blob: undefined }),
-        blob: source.blob,
-        parameterLink: undefined,
-        id: ids.get(source.id)!, parentId: remap(source.parentId),
-        childIds: source.childIds.map(id => ids.get(id)).filter((id): id is string => typeof id === 'string'),
-        maskLayerIds: source.maskLayerIds?.map(id => ids.get(id)).filter((id): id is string => typeof id === 'string'),
-      };
-      // ページ間で解像度が違う場合に合わせ、ラスターは canvas へ展開する。
+      const snapshot: LayerSnapshot = structuredClone({ ...source, content: source.content });
+      remapRecordIds(snapshot, id => ids.get(id));
+      snapshot.common.parameterLink = undefined;
       await scaleStoredLayer(snapshot, { artboard: eng.artboard, factor });
       snapshots.push(snapshot);
     }
@@ -74,22 +68,22 @@ export class ClipboardService {
     const sourceIdByNew = new Map([...ids].map(([oldId, newId]) => [newId, oldId]));
     const pending = [...snapshots];
     while (pending.length) {
-      const index = pending.findIndex(snapshot => !snapshot.parentId || !!ls.byId(snapshot.parentId));
+      const index = pending.findIndex(snapshot => !snapshot.common.parentId || !!ls.byId(snapshot.common.parentId));
       if (index < 0) break;
       const [snapshot] = pending.splice(index, 1);
       const source = sourceById.get(sourceIdByNew.get(snapshot.id)!)!;
       const isRoot = rootIds.includes(snapshot.id);
       const location = isRoot
         ? { parentId: primaryLocation.parentId, index: primaryLocation.index + 1 + rootIds.indexOf(snapshot.id) }
-        : { parentId: snapshot.parentId, index: source.parentId ? sourceById.get(source.parentId)?.childIds.indexOf(source.id) ?? 0 : 0 };
-      snapshot.parentId = location.parentId;
-      snapshot.childIds = [];
+        : { parentId: snapshot.common.parentId, index: source.common.parentId ? sourceById.get(source.common.parentId)?.common.childIds.indexOf(source.id) ?? 0 : 0 };
+      snapshot.common.parentId = location.parentId;
+      snapshot.common.childIds = [];
       const restored = await ls.restoreLayer(snapshot, location);
       if (!restored) continue;
       eng.links.createPasteLink(
         restored.id,
         { pageId: clipboard.sourcePageId, layerId: source.id },
-        { name: source.name, pageIndex: clipboard.sourcePageIndex },
+        { name: source.common.name, pageIndex: clipboard.sourcePageIndex },
       );
       // Redo must restore the values and direct source chosen at paste time. Keep the
       // original raster blob while refreshing all ordinary/link fields from the live copy.

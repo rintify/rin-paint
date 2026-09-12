@@ -9,6 +9,10 @@ import type {
   LocatedLayerSnapshot,
 } from '../history/historyTree';
 import { newLayerId } from '../layers';
+import { isLayerType } from '../../model';
+import { layerDefinition } from '../layer-types/registry';
+import type { LayerSnapshot } from '../layer-types/definition';
+import type { ShapeState } from '../../model';
 import {
   cloneShape,
   polygonArea,
@@ -87,7 +91,7 @@ export class PolygonSplitService {
     if (eng.isBusy()) return;
     const state = useStore.getState();
     const selectedIds = state.multiSelectMode ? state.selectedLayerIds : [ls.activeLayerId];
-    const targets = selectedIds.map(id => ls.shapeById(id)).filter((layer): layer is NonNullable<typeof layer> => !!layer && (layer.shape.kind === 'rect' || layer.shape.kind === 'polygon'));
+    const targets = selectedIds.map(id => ls.shapeById(id)).filter((layer): layer is NonNullable<typeof layer> => !!layer && (layer.state.shape.kind === 'rect' || layer.state.shape.kind === 'polygon'));
     if (!targets.length) return;
     const targetIds = new Set(targets.map(layer => layer.id));
     for (const target of targets) {
@@ -110,7 +114,7 @@ export class PolygonSplitService {
       const clipping = await import('polygon-clipping');
       const results: SplitResult[] = [];
       for (const layer of targets) {
-        const points = shapePoints(layer.shape as TargetShape);
+        const points = shapePoints(layer.state.shape as TargetShape);
         const fragments = clipPolygonByBand(clipping, points, a, b, width, Math.max(eng.artboard.w, eng.artboard.h));
         const originalArea = Math.abs(polygonArea(points));
         const resultArea = fragments.reduce((sum, fragment) => sum + Math.abs(polygonArea(fragment)), 0);
@@ -143,18 +147,34 @@ export class PolygonSplitService {
     return source.map(entry => {
       const original = entry.snapshot;
       const isRoot = original.id === rootId;
-      const snapshot = {
-        ...structuredClone({ ...original, canvas: undefined, blob: original.blob }),
+      const type = isLayerType(original.type) ? original.type : 'raster';
+      const def = layerDefinition(type);
+      const decoded = def.codec.decode(original.state) ?? def.state.initial();
+      const remapped = def.state.remapReferences
+        ? def.state.remapReferences(decoded as never, id => ids.get(id) ?? id)
+        : decoded;
+      const nextState = isRoot && type === 'shape'
+        ? { ...(remapped as ShapeState), shape: cloneShape(shape) }
+        : remapped;
+      const snapshot: LayerSnapshot = {
         id: ids.get(original.id)!,
-        name: isRoot ? name : original.name,
-        parentId: isRoot ? location.parentId : original.parentId ? ids.get(original.parentId) ?? original.parentId : null,
-        childIds: original.childIds.map(id => ids.get(id) ?? id),
-        maskLayerIds: original.maskLayerIds?.map(id => ids.get(id) ?? id),
-        shape: isRoot ? cloneShape(shape) : original.shape ? cloneShape(original.shape) : undefined,
+        type,
+        common: {
+          ...structuredClone(original.common),
+          name: isRoot ? name : original.common.name,
+          parentId: isRoot
+            ? location.parentId
+            : original.common.parentId
+              ? ids.get(original.common.parentId) ?? original.common.parentId
+              : null,
+          childIds: original.common.childIds.map(id => ids.get(id) ?? id),
+        },
+        state: def.codec.encode(nextState as never),
+        content: original.content,
         canvas: original.canvas,
       };
       return {
-        location: isRoot ? location : { parentId: snapshot.parentId, index: entry.location.index },
+        location: isRoot ? location : { parentId: snapshot.common.parentId, index: entry.location.index },
         snapshot,
       };
     });
@@ -180,15 +200,15 @@ export class PolygonSplitService {
         continue;
       }
       const style = {
-        color: layer.shape.color,
-        strokeWidth: layer.shape.strokeWidth,
-        paintMode: shapePaintMode(layer.shape),
-        strokeJoin: layer.shape.strokeJoin,
-        cornerRadius: layer.shape.kind === 'polygon' || layer.shape.kind === 'rect' ? layer.shape.cornerRadius : undefined,
+        color: layer.state.shape.color,
+        strokeWidth: layer.state.shape.strokeWidth,
+        paintMode: shapePaintMode(layer.state.shape),
+        strokeJoin: layer.state.shape.strokeJoin,
+        cornerRadius: layer.state.shape.kind === 'polygon' || layer.state.shape.kind === 'rect' ? layer.state.shape.cornerRadius : undefined,
       };
-      const beforeShape = cloneShape(layer.shape);
-      layer.shape = polygonFromWorldPoints(result.fragments[0], style);
-      ls.linkOpForUserChange(layer, { shape: beforeShape }, { shape: cloneShape(layer.shape) });
+      const beforeShape = cloneShape(layer.state.shape);
+      layer.state.shape = polygonFromWorldPoints(result.fragments[0], style);
+      ls.linkOpForUserChange(layer, { state: { shape: beforeShape } }, { state: { shape: cloneShape(layer.state.shape) } });
       ls.bumpLayer(layer.id);
       newRootIds.push(layer.id);
       const produced = [layer.id];
@@ -198,11 +218,11 @@ export class PolygonSplitService {
         await ls.restoreEntries(entries);
         const cloneId = entries[0].snapshot.id;
         const clone = ls.shapeById(cloneId);
-        const originalShape = sourceEntries[0]?.snapshot.shape;
-        if (clone && originalShape) ls.linkOpForUserChange(
+        const originalState = sourceEntries[0]?.snapshot.state as ShapeState | undefined;
+        if (clone && originalState) ls.linkOpForUserChange(
           clone,
-          { shape: cloneShape(originalShape) },
-          { shape: cloneShape(clone.shape) },
+          { state: { shape: cloneShape(originalState.shape) } },
+          { state: { shape: cloneShape(clone.state.shape) } },
         );
         produced.push(cloneId);
         newRootIds.push(cloneId);

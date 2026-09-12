@@ -1,7 +1,8 @@
 import type { Op, PersistedAtomicOp, PersistedOp, LayerSnapshot } from './historyTree';
 import type { TilePatch } from './tilePatch';
 
-function snapshotBytes(snapshot: LayerSnapshot | { blob?: Blob }): number {
+function snapshotBytes(snapshot: LayerSnapshot | { content?: Blob; blob?: Blob }): number {
+  if ('content' in snapshot && snapshot.content) return snapshot.content.size;
   if ('blob' in snapshot && snapshot.blob) return snapshot.blob.size;
   if ('canvas' in snapshot && snapshot.canvas) {
     return snapshot.canvas.width * snapshot.canvas.height * 4;

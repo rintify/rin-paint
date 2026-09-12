@@ -15,6 +15,7 @@ import { useMemo, useState } from 'react';
 import { useEngine } from '../EngineContext';
 import { useStore } from '../../state/store';
 import type { LayerMeta } from '../../model';
+import { layerMaskIds } from '../../engine/layer-types/definition';
 import { maskSourceLabel } from '../../engine/layer-types/registry';
 import { canUseLayerAsMask, maskCandidateRows } from './maskCandidates';
 import { focusLayerRow } from './layerPanelEvents';
@@ -24,25 +25,26 @@ export function MaskControls({ meta, mode = 'adjust' }: { meta: LayerMeta; mode?
   const engine = useEngine();
   const layers = useStore(s => s.layers);
   const rootLayerIds = useStore(s => s.rootLayerIds);
+  const maskIds = layerMaskIds(meta.state);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [draft, setDraft] = useState<string[]>(meta.maskLayerIds ?? []);
+  const [draft, setDraft] = useState<string[]>(maskIds);
   const [dropActive, setDropActive] = useState(false);
   const byId = useMemo(() => new Map(layers.map(layer => [layer.id, layer])), [layers]);
   const candidates = maskCandidateRows(rootLayerIds, layers, meta.id, query);
   const show = () => {
-    setDraft([...(meta.maskLayerIds ?? [])]);
+    setDraft([...maskIds]);
     setQuery('');
     setOpen(true);
   };
   const droppedLayerId = (event: React.DragEvent) => event.dataTransfer.getData('text/plain');
   const canDrop = (id: string) => canUseLayerAsMask(rootLayerIds, layers, meta.id, id);
   const addDroppedMask = (id: string) => {
-    if (!canDrop(id) || meta.maskLayerIds?.includes(id)) return;
+    if (!canDrop(id) || maskIds.includes(id)) return;
     engine.commitLayerProps(
       meta.id,
-      { maskLayerIds: meta.maskLayerIds ?? [] },
-      { maskLayerIds: [...(meta.maskLayerIds ?? []), id] },
+      { state: { maskLayerIds: maskIds } },
+      { state: { maskLayerIds: [...maskIds, id] } },
       'マスクを追加',
     );
   };
@@ -71,16 +73,16 @@ export function MaskControls({ meta, mode = 'adjust' }: { meta: LayerMeta; mode?
           <Box sx={{ flex: 1 }}>
             <Typography variant="caption" color="text.secondary">マスク</Typography>
             <Typography variant="body2">
-              {meta.maskLayerIds?.length
-                ? `選択した${meta.maskLayerIds.length}レイヤーのアルファをOR合成`
+              {maskIds.length
+                ? `選択した${maskIds.length}レイヤーのアルファをOR合成`
                 : mode === 'adjust' ? '全面を補正' : 'マスク未指定のため変化なし'}
             </Typography>
           </Box>
           <Button size="small" variant="outlined" onClick={show}>編集</Button>
         </Stack>
-        {!!meta.maskLayerIds?.length && (
+        {!!maskIds.length && (
           <Stack direction="row" sx={{ gap: 0.5, flexWrap: 'wrap' }}>
-            {meta.maskLayerIds.map(id => (
+            {maskIds.map(id => (
               <Chip
                 key={id}
                 size="small"
@@ -92,8 +94,8 @@ export function MaskControls({ meta, mode = 'adjust' }: { meta: LayerMeta; mode?
                   event.stopPropagation();
                   engine.commitLayerProps(
                     meta.id,
-                    { maskLayerIds: meta.maskLayerIds },
-                    { maskLayerIds: meta.maskLayerIds!.filter(value => value !== id) },
+                    { state: { maskLayerIds: maskIds } },
+                    { state: { maskLayerIds: maskIds.filter(value => value !== id) } },
                     'マスクを解除',
                   );
                 }}
@@ -194,8 +196,8 @@ export function MaskControls({ meta, mode = 'adjust' }: { meta: LayerMeta; mode?
             onClick={() => {
               engine.commitLayerProps(
                 meta.id,
-                { maskLayerIds: meta.maskLayerIds ?? [] },
-                { maskLayerIds: draft },
+                { state: { maskLayerIds: maskIds } },
+                { state: { maskLayerIds: draft } },
                 'マスクを変更',
               );
               setOpen(false);

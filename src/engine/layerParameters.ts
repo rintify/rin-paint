@@ -1,105 +1,100 @@
-import { BLEND_OPTIONS, type BlendMode } from '../model';
-import { mmToPx, pxToMm } from './units';
-import { layerTypeHandler } from './layer-types/registry';
-import type {
-  LayerParameterDescriptor,
-  LayerParameterLayer,
-  LayerParameterValue,
-} from './layer-types/types';
+import { commonParametersOf } from './parameters/intersect';
+import { hostFromLayer, linkableParameters, parameterById, parametersFor } from './parameters/host';
+import { fromCanonical, toCanonical } from './parameters/codec';
+import { parameterValuesEqual } from './parameters/catalog';
+import type { ParameterHost } from './parameters/host';
+import type { ParameterValue } from './parameters/types';
 
-export type {
-  LayerParameterDescriptor,
-  LayerParameterLayer,
-  LayerParameterValue,
-} from './layer-types/types';
+export type LayerParameterValue = ParameterValue;
+export type LayerParameterLayer = ParameterHost;
 
-export function parameterSemanticId(descriptor: LayerParameterDescriptor): string {
+/** @deprecated Use Parameter Catalog ids. Kept as a semantic alias during UI migration. */
+export interface LayerParameterDescriptor {
+  key: string;
+  semanticId?: string;
+  label: string;
+  control: 'number' | 'color' | 'select' | 'switch';
+  min?: number;
+  max?: number;
+  options?: { value: string; label: string }[];
+  allowTransparent?: boolean;
+  nullable?: boolean;
+  trueLabel?: string;
+  falseLabel?: string;
+  canvasLength?: boolean;
+  linkable?: boolean;
+  multiSelectable?: boolean;
+  read(layer: LayerParameterLayer): ParameterValue;
+  write(layer: LayerParameterLayer, value: ParameterValue): object;
+}
+
+function asDescriptor(layer: LayerParameterLayer, id: string): LayerParameterDescriptor | undefined {
+  const host = hostFromLayer(layer);
+  const item = parameterById(host, id);
+  if (!item) return undefined;
+  return {
+    key: item.id,
+    semanticId: item.semanticId,
+    label: item.label,
+    control: item.editor.kind === 'slider' ? 'number' : item.editor.kind,
+    min: item.editor.kind === 'slider' || item.editor.kind === 'number' ? item.editor.min : undefined,
+    max: item.editor.kind === 'slider' || item.editor.kind === 'number' ? item.editor.max : undefined,
+    options: item.editor.kind === 'select' && item.editor.options.kind === 'static'
+      ? [...item.editor.options.options]
+      : undefined,
+    allowTransparent: item.editor.kind === 'color' ? item.editor.transparent : undefined,
+    nullable: item.editor.kind === 'number' || item.editor.kind === 'slider' ? item.editor.nullable : undefined,
+    trueLabel: item.editor.kind === 'switch' ? item.editor.trueLabel : undefined,
+    falseLabel: item.editor.kind === 'switch' ? item.editor.falseLabel : undefined,
+    canvasLength: (item.editor.kind === 'slider' || item.editor.kind === 'number') && item.editor.unit?.kind === 'canvas-mm',
+    linkable: item.surfaces.includes('link'),
+    multiSelectable: item.surfaces.includes('multi'),
+    read: value => item.read(value, (value as LayerParameterLayer).state),
+    write: (value, next) => item.write(value, (value as LayerParameterLayer).state, next),
+  };
+}
+
+export function parameterSemanticId(descriptor: { semanticId?: string; key: string }): string {
   return descriptor.semanticId ?? descriptor.key;
+}
+
+export function layerParameterDescriptors(layer: LayerParameterLayer): LayerParameterDescriptor[] {
+  return parametersFor(hostFromLayer(layer)).map(item => asDescriptor(layer, item.id)!);
+}
+
+export function commonLayerParameterDescriptors(layers: LayerParameterLayer[], _ppi = 300): LayerParameterDescriptor[] {
+  const hosts = layers.map(hostFromLayer);
+  return commonParametersOf(hosts, 'multi').map(item => asDescriptor(layers[0], item.semanticId)!).filter(Boolean);
+}
+
+export function linkableParameterMap(layer: LayerParameterLayer): Map<string, LayerParameterDescriptor> {
+  const map = new Map<string, LayerParameterDescriptor>();
+  for (const [id, item] of linkableParameters(hostFromLayer(layer))) {
+    const descriptor = asDescriptor(layer, item.id);
+    if (descriptor) map.set(id, descriptor);
+  }
+  return map;
 }
 
 export function readCanonicalParameter(
   descriptor: LayerParameterDescriptor,
   layer: LayerParameterLayer,
   ppi: number,
-): LayerParameterValue | null {
-  if (descriptor.readCanonical) return descriptor.readCanonical(layer, ppi);
-  const value = descriptor.read(layer);
-  return descriptor.canvasLength && typeof value === 'number' ? pxToMm(value, ppi) : value;
+): ParameterValue {
+  const item = parameterById(hostFromLayer(layer), descriptor.semanticId ?? descriptor.key);
+  if (!item) return descriptor.read(layer);
+  return toCanonical(item, item.read(layer, layer.state), ppi);
 }
 
 export function writeCanonicalParameter(
   descriptor: LayerParameterDescriptor,
   layer: LayerParameterLayer,
-  value: LayerParameterValue,
+  value: ParameterValue,
   ppi: number,
 ) {
-  if (descriptor.writeCanonical) return descriptor.writeCanonical(layer, value, ppi);
-  return descriptor.write(layer, descriptor.canvasLength && typeof value === 'number' ? mmToPx(value, ppi) : value);
+  const item = parameterById(hostFromLayer(layer), descriptor.semanticId ?? descriptor.key);
+  if (!item) return descriptor.write(layer, value);
+  return item.write(layer, layer.state, fromCanonical(item, value, ppi));
 }
 
-export function parameterValuesEqual(a: LayerParameterValue | null, b: LayerParameterValue | null): boolean {
-  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(a), Math.abs(b));
-  return Object.is(a, b);
-}
-
-export function linkableParameterMap(layer: LayerParameterLayer): Map<string, LayerParameterDescriptor> {
-  return new Map(layerParameterDescriptors(layer)
-    .filter(descriptor => descriptor.linkable !== false)
-    .map(descriptor => [parameterSemanticId(descriptor), descriptor]));
-}
-
-/**
- * レイヤー種別を問わない汎用パラメータ。共通項のあとに、種別ハンドラが返す
- * 固有パラメータを並べる。
- */
-export function layerParameterDescriptors(layer: LayerParameterLayer): LayerParameterDescriptor[] {
-  const handler = layerTypeHandler(layer.type);
-  const result: LayerParameterDescriptor[] = [
-    {
-      key: 'visible', semanticId: 'layer.visible', label: '表示', control: 'switch',
-      trueLabel: '表示', falseLabel: '非表示',
-      read: value => value.visible,
-      write: (_value, next) => ({ visible: Boolean(next) }),
-    },
-    {
-      key: 'opacity', semanticId: 'layer.opacity', label: '不透明度', control: 'number', min: 0, max: 100,
-      read: value => Math.round(value.opacity * 100),
-      write: (_value, next) => ({ opacity: Math.max(0, Math.min(1, Number(next) / 100)) }),
-    },
-  ];
-  if (handler.supportsBlend) result.push({
-    key: 'blend', semanticId: 'layer.blend', label: '合成', control: 'select',
-    options: BLEND_OPTIONS.map(option => ({ ...option })),
-    read: value => value.blend,
-    write: (_value, next) => ({ blend: next as BlendMode }),
-  });
-  result.push(...handler.parameterDescriptors(layer));
-  return result;
-}
-
-export function commonLayerParameterDescriptors(layers: LayerParameterLayer[], ppi = 300): LayerParameterDescriptor[] {
-  if (!layers.length) return [];
-  const maps = layers.map(layer => new Map(layerParameterDescriptors(layer)
-    .filter(descriptor => descriptor.multiSelectable !== false)
-    .map(descriptor => [parameterSemanticId(descriptor), descriptor])));
-  return [...maps[0].values()]
-    .filter(descriptor => maps.every(map => map.get(parameterSemanticId(descriptor))?.control === descriptor.control))
-    .map(descriptor => {
-      const sameStorageKey = maps.every(map => map.get(parameterSemanticId(descriptor))?.key === descriptor.key);
-      return {
-        ...descriptor,
-        key: sameStorageKey ? descriptor.key : parameterSemanticId(descriptor),
-        semanticId: parameterSemanticId(descriptor),
-        canvasLength: sameStorageKey ? descriptor.canvasLength : false,
-        allowTransparent: maps.every(map => map.get(parameterSemanticId(descriptor))?.allowTransparent === true),
-        read: (layer: LayerParameterLayer) => {
-          const own = layerParameterDescriptors(layer).find(item => parameterSemanticId(item) === parameterSemanticId(descriptor));
-          return own ? (sameStorageKey ? own.read(layer) : readCanonicalParameter(own, layer, ppi)) : null;
-        },
-        write: (layer: LayerParameterLayer, value: LayerParameterValue) => {
-          const own = layerParameterDescriptors(layer).find(item => parameterSemanticId(item) === parameterSemanticId(descriptor));
-          return own ? (sameStorageKey ? own.write(layer, value) : writeCanonicalParameter(own, layer, value, ppi)) : {};
-        },
-      };
-    });
-}
+export { parameterValuesEqual };

@@ -1,8 +1,9 @@
 import { fitSizeInBox, type ImageParams } from '../../model';
 import type { RectShapeParams, ShapeParams } from '../../model/shape';
-import { cloneShape, shapeBounds } from '../shapes';
+import { shapeBounds } from '../shapes';
 import type { DirtyRect } from '../brush';
 import type { ImageLayer, ShapeLayer } from '../layers';
+import { layerHandler } from '../layer-types/registry';
 
 export type FrameEditableLayer = ShapeLayer | ImageLayer;
 
@@ -36,15 +37,11 @@ export function placedImage(source: { width: number; height: number }, x: number
 }
 
 export function frameShapeOf(layer: FrameEditableLayer): ShapeParams {
-  return layer.type === 'shape' ? layer.shape : imageFrameShape(layer.image);
+  return layerHandler(layer).capabilities.frameEdit!.toShape(layer as never);
 }
 
 export function writeFrameShape(layer: FrameEditableLayer, shape: ShapeParams): void {
-  if (layer.type === 'shape') {
-    layer.shape = cloneShape(shape);
-    return;
-  }
-  if (shape.kind === 'rect') layer.image = imageFromFrameShape(layer.image, shape);
+  layerHandler(layer).capabilities.frameEdit!.fromShape(layer as never, shape);
 }
 
 export function frameDirty(shape: ShapeParams): DirtyRect {

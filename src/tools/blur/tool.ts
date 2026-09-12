@@ -100,7 +100,7 @@ export class BlurTool implements Tool {
 
     this.srcCtx.save();
     this.srcCtx.clearRect(0, 0, s, s);
-    this.srcCtx.drawImage(layer.canvas, -ox, -oy);
+    this.srcCtx.drawImage(layer.runtime.canvas, -ox, -oy);
     this.srcCtx.restore();
 
     this.blurredCtx.save();
@@ -136,10 +136,10 @@ export class BlurTool implements Tool {
     this.mixCtx.drawImage(this.blurred, 0, 0);
     this.mixCtx.restore();
 
-    layer.ctx.save();
-    layer.ctx.clearRect(ox, oy, s, s);
-    layer.ctx.drawImage(this.mix, ox, oy);
-    layer.ctx.restore();
+    layer.runtime.ctx.save();
+    layer.runtime.ctx.clearRect(ox, oy, s, s);
+    layer.runtime.ctx.drawImage(this.mix, ox, oy);
+    layer.runtime.ctx.restore();
 
     expandRect(this.rect, cx, cy, r + pad);
     return { minX: ox, minY: oy, maxX: ox + s, maxY: oy + s };

@@ -48,20 +48,29 @@ function isLayerLink(value: unknown): boolean {
       || (typeof item === 'number' && Number.isFinite(item)));
 }
 
+function isCommon(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const c = value as Record<string, unknown>;
+  return (
+    typeof c.name === 'string' &&
+    typeof c.opacity === 'number' &&
+    typeof c.blend === 'string' &&
+    typeof c.visible === 'boolean' &&
+    (c.parentId === null || typeof c.parentId === 'string') &&
+    Array.isArray(c.childIds) &&
+    (c.parameterLink === undefined || isLayerLink(c.parameterLink))
+  );
+}
+
 function isLayerSnapshot(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const s = value as Record<string, unknown>;
   return (
     typeof s.id === 'string' &&
     typeof s.type === 'string' &&
-    typeof s.name === 'string' &&
-    typeof s.opacity === 'number' &&
-    typeof s.blend === 'string' &&
-    typeof s.visible === 'boolean' &&
-    (s.parentId === null || typeof s.parentId === 'string') &&
-    Array.isArray(s.childIds) &&
-    (s.parameterLink === undefined || isLayerLink(s.parameterLink)) &&
-    (s.blob === undefined || isBlob(s.blob))
+    isCommon(s.common) &&
+    'state' in s &&
+    (s.content === undefined || isBlob(s.content))
   );
 }
 
@@ -79,6 +88,12 @@ function isAtomicOp(value: unknown): value is PersistedAtomicOp {
       return typeof op.layerId === 'string' && isLocation(op.from) && isLocation(op.to);
     case 'layerProps':
       return typeof op.layerId === 'string' && !!op.before && !!op.after;
+    case 'layerParameter':
+      return typeof op.layerId === 'string' && typeof op.parameterId === 'string'
+        && (op.before === null || typeof op.before === 'string' || typeof op.before === 'boolean'
+          || (typeof op.before === 'number' && Number.isFinite(op.before)))
+        && (op.after === null || typeof op.after === 'string' || typeof op.after === 'boolean'
+          || (typeof op.after === 'number' && Number.isFinite(op.after)));
     case 'layerLink': {
       const target = op.target as Record<string, unknown> | undefined;
       return !!target && typeof target.pageId === 'string' && typeof target.layerId === 'string'

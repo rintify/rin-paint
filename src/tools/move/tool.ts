@@ -131,12 +131,12 @@ export class MoveTool implements Tool {
   private selectionBounds(): DirtyRect | null {
     let bounds: DirtyRect | null = null;
     for (const layer of this.eng.selectedRasters()) {
-      const opaque = opaqueBounds(layer.canvas);
+      const opaque = opaqueBounds(layer.runtime.canvas);
       if (opaque) bounds = bounds ? unionRect(bounds, opaque) : opaque;
     }
     const ids = new Set(useStore.getState().selectedLayerIds);
     for (const layer of this.eng.allLayers()) {
-      if (!ids.has(layer.id) || !layerHandler(layer).objectTransform) continue;
+      if (!ids.has(layer.id) || !layerHandler(layer).capabilities.objectTransform) continue;
       const box = this.eng.objectBounds(layer.id);
       if (!box) continue;
       const next = { minX: box.x, minY: box.y, maxX: box.x + box.w, maxY: box.y + box.h };

@@ -76,7 +76,7 @@ function shapeDirty(shape: ShapeParams): DirtyRect {
 }
 
 function editableDirty(layer: FrameEditableLayer): DirtyRect {
-  return layer.type === 'shape' ? shapeDirty(layer.shape) : frameDirty(imageFrameShape(layer.image));
+  return layer.type === 'shape' ? shapeDirty(layer.state.shape) : frameDirty(imageFrameShape(layer.state.placement));
 }
 
 export class ShapeEditController {
@@ -106,20 +106,20 @@ export class ShapeEditController {
   }
 
   private historyProps(layer: FrameEditableLayer, shape: ShapeParams): LayerProps {
-    if (layer.type === 'shape') return { shape: cloneShape(shape) };
-    if (shape.kind !== 'rect') return { image: cloneImageParams(layer.image) };
-    return { image: imageFromFrameShape(layer.image, shape) };
+    if (layer.type === 'shape') return { state: { shape: cloneShape(shape) } };
+    if (shape.kind !== 'rect') return { state: { placement: cloneImageParams(layer.state.placement) } };
+    return { state: { placement: imageFromFrameShape(layer.state.placement, shape) } };
   }
 
   private syncVertexState(): void {
     const selected = this.selectedHandle;
     const layer = selected ? this.engine.layerService.shapeById(selected.layerId) : null;
-    const vertices = layer ? shapeKindHandler(layer.shape).edit.vertexCount(layer.shape) : 0;
+    const vertices = layer ? shapeKindHandler(layer.state.shape).edit.vertexCount(layer.state.shape) : 0;
     const valid = !!layer
       && selected!.layerId === this.engine.layerService.activeLayerId
       && (selected!.mode === 'vertex'
         ? selected!.index !== undefined && selected!.index < vertices
-        : layer.shape.kind === 'rect' || layer.shape.kind === 'ellipse');
+        : layer.state.shape.kind === 'rect' || layer.state.shape.kind === 'ellipse');
     if (!valid) this.selectedHandle = null;
     useStore.getState().set({
       shapeHandleSelected: valid,
@@ -137,8 +137,8 @@ export class ShapeEditController {
   private collectMoveSnapLines(editingId: string): SnapLines {
     const others = this.engine.layerService.layers.flatMap(layer => {
       if (layer.id === editingId || !layer.visible) return [];
-      if (layer.type === 'shape') return [shapeBounds(layer.shape)];
-      if (layer.type === 'image') return [shapeBounds(imageFrameShape(layer.image))];
+      if (layer.type === 'shape') return [shapeBounds(layer.state.shape)];
+      if (layer.type === 'image') return [shapeBounds(imageFrameShape(layer.state.placement))];
       return [];
     });
     return collectSnapLines(this.engine.artboard, others);
@@ -146,8 +146,8 @@ export class ShapeEditController {
 
   private collectVertexSnapPoints(editingId: string, selectedIndex: number): ShapePoint[] {
     return this.engine.layerService.layers.flatMap(layer => {
-      if (layer.type !== 'shape' || !layer.visible || layer.shape.kind !== 'polygon') return [];
-      return shapePoints(layer.shape).filter((_, index) => layer.id !== editingId || index !== selectedIndex);
+      if (layer.type !== 'shape' || !layer.visible || layer.state.shape.kind !== 'polygon') return [];
+      return shapePoints(layer.state.shape).filter((_, index) => layer.id !== editingId || index !== selectedIndex);
     });
   }
 
@@ -247,7 +247,7 @@ export class ShapeEditController {
     if (edit.mode === 'move') {
       const dx = point.x - edit.start.x;
       const dy = point.y - edit.start.y;
-      if (!layer.snapEnabled) {
+      if (!layer.state.snapEnabled) {
         next = translateShape(edit.before, dx, dy);
       } else {
         const snapped = snapTranslation(
@@ -265,7 +265,7 @@ export class ShapeEditController {
       const center = shapeCenter(edit.before);
       const initial = Math.atan2(edit.start.y - center.y, edit.start.x - center.x);
       const rawDelta = Math.atan2(point.y - center.y, point.x - center.x) - initial;
-      if (!layer.snapEnabled) {
+      if (!layer.state.snapEnabled) {
         next = rotateShape(edit.before, rawDelta);
       } else {
         const startAbs = shapeRotation(edit.before);
@@ -278,7 +278,7 @@ export class ShapeEditController {
         const constrained = constrainVertexToEdges(point, edit.vertexWorld.prev, edit.vertexWorld.selected, edit.vertexWorld.next);
         target = { ...point, x: constrained.x, y: constrained.y };
       }
-      if (edit.mode === 'vertex' && layer.snapEnabled && edit.vertexSnapPoints) {
+      if (edit.mode === 'vertex' && layer.state.snapEnabled && edit.vertexSnapPoints) {
         const snapped = snapPointToPoints(target, edit.vertexSnapPoints, SNAP_SCREEN_PX * this.engine.uiScale());
         target = { ...target, x: snapped.point.x, y: snapped.point.y };
         edit.snappedPoint = snapped.snappedTo;
@@ -313,7 +313,7 @@ export class ShapeEditController {
       }
       if (
         layer.type === 'image'
-        && layer.constrainAspect !== false
+        && layer.state.constrainAspect !== false
         && edit.before.kind === 'rect'
         && (edit.mode === 'nw' || edit.mode === 'ne' || edit.mode === 'se' || edit.mode === 'sw')
       ) {
@@ -359,19 +359,19 @@ export class ShapeEditController {
       this.engine.requestOverlayRender();
       this.engine.syncStore();
     }
-    if (layer?.type === 'shape' && edit.mergeVertexOnFinish && edit.vertexIndex !== undefined && layer.shape.kind === 'polygon') {
-      const merged = shapeKindHandler(layer.shape).edit.deleteVertex(layer.shape, edit.vertexIndex);
+    if (layer?.type === 'shape' && edit.mergeVertexOnFinish && edit.vertexIndex !== undefined && layer.state.shape.kind === 'polygon') {
+      const merged = shapeKindHandler(layer.state.shape).edit.deleteVertex(layer.state.shape, edit.vertexIndex);
       if (merged?.shape) {
-        layer.shape = merged.shape;
+        layer.state.shape = merged.shape;
         this.selectedHandle = null;
-        this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(edit.before), shapeDirty(layer.shape)));
+        this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(edit.before), shapeDirty(layer.state.shape)));
         this.engine.requestOverlayRender();
         this.engine.syncStore();
-      } else if (layer.shape.points.length <= 3) {
-        const rejected = cloneShape(layer.shape);
-        layer.shape = cloneShape(edit.before);
+      } else if (layer.state.shape.points.length <= 3) {
+        const rejected = cloneShape(layer.state.shape);
+        layer.state.shape = cloneShape(edit.before);
         this.engine.notify('多角形は3頂点未満にできないため、頂点を統合できません');
-        this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(rejected), shapeDirty(layer.shape)));
+        this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(rejected), shapeDirty(layer.state.shape)));
         this.engine.requestOverlayRender();
         this.engine.syncStore();
       }
@@ -398,14 +398,14 @@ export class ShapeEditController {
     const selected = this.selectedHandle;
     const layer = selected ? this.engine.layerService.shapeById(selected.layerId) : null;
     if (!selected || selected.mode !== 'vertex' || selected.index === undefined || !layer) return;
-    const before = cloneShape(layer.shape);
+    const before = cloneShape(layer.state.shape);
     const result = shapeKindHandler(before).edit.deleteVertex(before, selected.index);
     if (!result) return;
     if (!result.shape) { if (result.error) this.engine.notify(result.error); return; }
-    this.engine.layerService.assignProps(layer, { shape: result.shape });
+    this.engine.layerService.assignProps(layer, { state: { shape: result.shape } });
     this.selectedHandle = null;
     this.syncVertexState();
-    const propsOp = { kind: 'layerProps' as const, layerId: layer.id, before: { shape: before }, after: { shape: cloneShape(layer.shape) } };
+    const propsOp = { kind: 'layerProps' as const, layerId: layer.id, before: { state: { shape: before } }, after: { state: { shape: cloneShape(layer.state.shape) } } };
     const linkOp = this.engine.layerService.linkOpForUserChange(layer, propsOp.before, propsOp.after);
     this.engine.history.push(linkOp ? { kind: 'batch', ops: [propsOp, linkOp] } : propsOp, '多角形の頂点を削除');
     this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });

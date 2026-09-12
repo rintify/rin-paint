@@ -30,7 +30,7 @@ export class ObjectTransform {
     const env = eng.compositor.measureEnv();
     return eng.layerService.layers.flatMap(layer => {
       if (!ids.has(layer.id)) return [];
-      const bounds = layerHandler(layer).objectTransform?.bounds(layer, env);
+      const bounds = layerHandler(layer).capabilities.objectTransform?.bounds(layer as never, env);
       if (!bounds) return [];
       if (bounds.x > rect.maxX || bounds.y > rect.maxY || bounds.x + bounds.w < rect.minX || bounds.y + bounds.h < rect.minY || !intersectsPolygon(bounds)) return [];
       return [{ id: layer.id, before: objectTransformProps(layer), width: bounds.width, height: bounds.height }];
@@ -57,17 +57,18 @@ export class ObjectTransform {
     for (const entry of entries) {
       const layer = eng.layerService.byId(entry.id);
       if (layer) {
-        const objectTransform = layerHandler(layer).objectTransform;
-        const beforeBounds = dirtyFor(objectTransform?.bounds(layer, env) ?? null);
-        objectTransform?.apply(layer, {
-          before: entry.before,
+        const objectTransform = layerHandler(layer).capabilities.objectTransform;
+        const beforeBounds = dirtyFor(objectTransform?.bounds(layer as never, env) ?? null);
+        const beforeState = (entry.before.state ?? layerHandler(layer).state.clone(layer.state as never)) as never;
+        objectTransform?.apply(layer as never, {
+          before: beforeState,
           transform,
           scale,
           angle,
           width: entry.width,
           height: entry.height,
         });
-        const afterBounds = dirtyFor(objectTransform?.bounds(layer, env) ?? null);
+        const afterBounds = dirtyFor(objectTransform?.bounds(layer as never, env) ?? null);
         const dirty = beforeBounds && afterBounds ? unionRect(beforeBounds, afterBounds) : beforeBounds ?? afterBounds;
         eng.layerService.bumpLayer(entry.id, dirty ?? undefined);
         eng.links.propagateFrom({ pageId: eng.pages.activePageId, layerId: entry.id }, true);

@@ -1,11 +1,8 @@
-import type { AdjustParams } from './adjust';
 import type { BlendMode } from './blend';
-import type { ImageParams } from './image';
-import type { OutlineParams } from './outline';
-import type { ShapeParams } from './shape';
-import type { TextParams } from './text';
+import type { LayerCommon, LayerKindMap, LayerType } from './layerKind';
 
-export type LayerType = 'raster' | 'adjust' | 'outline' | 'clip' | 'shape' | 'text' | 'image';
+export type { LayerType } from './layerKind';
+export * from './layerKind';
 
 export interface LayerAddress {
   pageId: string;
@@ -31,25 +28,7 @@ export interface LayerLinkEndpointSummary {
   missing?: boolean;
 }
 
-/** React 側に渡すレイヤーの読み取り専用メタデータ */
-export interface LayerMeta {
-  id: string;
-  type: LayerType;
-  name: string;
-  opacity: number;
-  blend: BlendMode;
-  visible: boolean;
-  parentId: string | null;
-  childIds: string[];
-  params?: AdjustParams;
-  outline?: OutlineParams;
-  maskLayerIds?: string[];
-  shape?: ShapeParams;
-  snapEnabled?: boolean;
-  constrainAspect?: boolean;
-  text?: TextParams;
-  image?: ImageParams;
-  parameterLink?: LayerParameterLink;
+interface LayerMetaFlags {
   linkSource?: LayerLinkEndpointSummary;
   directLinkTargets?: LayerLinkEndpointSummary[];
   compatibleLinkParameterIds?: string[];
@@ -60,7 +39,50 @@ export interface LayerMeta {
   canTransferShape: boolean;
 }
 
+export type LayerMeta = {
+  [K in LayerType]: LayerCommon & LayerMetaFlags & {
+    type: K;
+    state: LayerKindMap[K]['state'];
+  }
+}[LayerType];
+
 export interface PageMeta {
   id: string;
   thumbnailVersion: number;
+}
+
+export function cloneLayerCommon(layer: LayerCommon): LayerCommon {
+  return {
+    id: layer.id,
+    name: layer.name,
+    opacity: layer.opacity,
+    blend: layer.blend,
+    visible: layer.visible,
+    parentId: layer.parentId,
+    childIds: [...layer.childIds],
+    ...(layer.parameterLink ? { parameterLink: structuredClone(layer.parameterLink) } : {}),
+  };
+}
+
+export function defaultLayerCommon(id: string, name: string): LayerCommon {
+  return {
+    id,
+    name,
+    opacity: 1,
+    blend: 'source-over',
+    visible: true,
+    parentId: null,
+    childIds: [],
+  };
+}
+
+export function isBlendMode(value: unknown): value is BlendMode {
+  return value === 'source-over'
+    || value === 'multiply'
+    || value === 'screen'
+    || value === 'overlay'
+    || value === 'darken'
+    || value === 'lighten'
+    || value === 'lighter'
+    || value === 'difference';
 }

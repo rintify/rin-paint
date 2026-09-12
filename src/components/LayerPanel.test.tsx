@@ -71,6 +71,10 @@ const mockEngine = vi.hoisted(() => ({
   renameLayer: actions.rename,
   commitLayerProps: vi.fn(),
   updateSelectedParameter: vi.fn(),
+  previewSelectedParameter: vi.fn(),
+  commitSelectedParameterPreview: vi.fn(),
+  unlinkLayerParameter: vi.fn(),
+  relinkLayerParameter: vi.fn(),
   addRasterLayer: actions.addRaster,
   addAdjustLayer: actions.addAdjust,
   addOutlineLayer: actions.addOutline,
@@ -94,7 +98,7 @@ const base = {
   ...caps,
 };
 const layers: LayerMeta[] = [
-  { ...base, id: 'raster', type: 'raster', canRemove: false, canMergeDown: false },
+  { ...base, id: 'raster', type: 'raster', canRemove: false, canMergeDown: false, state: {} },
   {
     ...base,
     id: 'shape',
@@ -102,7 +106,7 @@ const layers: LayerMeta[] = [
     type: 'shape',
     canRemove: true,
     canMergeDown: true,
-    shape: { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 1, color: '#123456' },
+    state: { snapEnabled: true, shape: { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 1, color: '#123456' } },
   },
 ];
 let container: HTMLDivElement;
@@ -205,15 +209,16 @@ describe('layer settings entry points', () => {
     await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
     expect(actions.rename).toHaveBeenCalledWith('raster', '新しい名称');
   });
-  it('keeps raster settings hidden until requested, and allows closing with X', async () => {
+  it('opens raster settings by default and allows closing with X', async () => {
     await renderPanel();
-    expect(container.querySelector('.layer-controls-palette')).toBeNull();
+    expect(container.querySelector('.layer-controls-palette')).not.toBeNull();
     await click(container.querySelector('[aria-label="ラスターのメニュー"]'));
     expect(menuItem('削除')?.getAttribute('aria-disabled')).toBe('true');
-    await click(menuItem('レイヤーの設定'));
-    expect(container.querySelector('.layer-controls-palette')).not.toBeNull();
     await click(container.querySelector('[aria-label="レイヤーの設定を閉じる"]'));
     expect(container.querySelector('.layer-controls-palette')).toBeNull();
+    await click(container.querySelector('[aria-label="ラスターのメニュー"]'));
+    await click(menuItem('レイヤーの設定'));
+    expect(container.querySelector('.layer-controls-palette')).not.toBeNull();
   });
   it('opens shape settings on selection once, respects closing, and targets the clicked menu', async () => {
     await renderPanel();
@@ -245,8 +250,8 @@ describe('layer settings entry points', () => {
     actions.beginMultiSelect.mockClear();
     actions.toggleDescendantSelection.mockClear();
     const nested: LayerMeta[] = [
-      { ...base, id: 'parent', name: '親', type: 'raster', childIds: ['child'] },
-      { ...base, id: 'child', name: '子', type: 'shape', parentId: 'parent', canRemove: true, shape: { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 1, color: '#123456' } },
+      { ...base, id: 'parent', name: '親', type: 'raster', childIds: ['child'], state: {} },
+      { ...base, id: 'child', name: '子', type: 'shape', parentId: 'parent', canRemove: true, state: { snapEnabled: true, shape: { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 1, color: '#123456' } } },
     ];
     useStore.getState().set({
       layers: nested,
@@ -295,9 +300,8 @@ describe('layer settings entry points', () => {
       id: 'shape-off',
       name: '四角形',
       type: 'shape',
-      snapEnabled: false,
       canRemove: true,
-      shape: { kind: 'rect', x: 0, y: 0, width: 8, height: 8, color: '#000', strokeWidth: 1, paintMode: 'stroke' },
+      state: { snapEnabled: false, shape: { kind: 'rect', x: 0, y: 0, width: 8, height: 8, color: '#000', strokeWidth: 1, paintMode: 'stroke' } },
     };
     useStore.getState().set({
       layers: [...layers, extra],
@@ -322,15 +326,14 @@ describe('layer settings entry points', () => {
 describe('mask candidates', () => {
   it('keeps matching layers in hierarchy order with their ancestors', () => {
     const nested: LayerMeta[] = [
-      { ...base, id: 'parent', name: '親', type: 'raster', childIds: ['child'] },
-      { ...base, id: 'child', name: '対象文字', type: 'text', parentId: 'parent', text: {} as never },
+      { ...base, id: 'parent', name: '親', type: 'raster', childIds: ['child'], state: {} },
+      { ...base, id: 'child', name: '対象文字', type: 'text', parentId: 'parent', state: { snapEnabled: true, text: {} as never } },
       {
         ...base,
         id: 'adjust',
         name: '補正',
         type: 'adjust',
-        params: { brightness: 100, contrast: 100, hue: 0, saturation: 100 },
-        maskLayerIds: [],
+        state: { params: { brightness: 100, contrast: 100, hue: 0, saturation: 100 }, maskLayerIds: [] },
       },
     ];
     const result = maskCandidateRows(['parent', 'adjust'], nested, 'adjust', '対象');
@@ -345,8 +348,7 @@ describe('mask interactions', () => {
     name: '補正',
     type: 'adjust',
     canRemove: true,
-    params: { brightness: 100, contrast: 100, hue: 0, saturation: 100 },
-    maskLayerIds: [],
+    state: { params: { brightness: 100, contrast: 100, hue: 0, saturation: 100 }, maskLayerIds: [] },
   };
 
   it('adds a dragged layer to the active effect mask without moving it', async () => {
@@ -370,8 +372,8 @@ describe('mask interactions', () => {
     });
     expect(mockEngine.commitLayerProps).toHaveBeenCalledWith(
       'adjust',
-      { maskLayerIds: [] },
-      { maskLayerIds: ['shape'] },
+      { state: { maskLayerIds: [] } },
+      { state: { maskLayerIds: ['shape'] } },
       'マスクを追加',
     );
   });
@@ -380,7 +382,7 @@ describe('mask interactions', () => {
     const animate = vi.fn(() => ({ cancel() {} }));
     Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: animate });
     useStore.getState().set({
-      layers: [...layers, { ...adjust, maskLayerIds: ['shape'] }],
+      layers: [...layers, { ...adjust, state: { ...adjust.state, maskLayerIds: ['shape'] } }],
       rootLayerIds: ['raster', 'shape', 'adjust'],
       activeLayerId: 'adjust',
       selectedLayerIds: ['adjust'],

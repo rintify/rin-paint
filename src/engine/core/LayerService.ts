@@ -17,12 +17,15 @@ import {
 } from '../history/historyTree';
 import { extractTiles } from '../history/tilePatch';
 import {
+  applyLayerProps,
   buildLayerSnapshot,
+  hostWithProps,
   layerHandler,
   layerTypeHandler,
   layerTypeProps,
   restoreLayerFrom,
 } from '../layer-types/registry';
+import { layerMaskIds } from '../layer-types/definition';
 import { shapeLayerName } from '../layer-types/shape';
 import { textFrame } from '../layer-types/text';
 import {
@@ -44,7 +47,7 @@ import { placedImage } from '../image/frame';
 import { isEmptyText } from '../text/model';
 import type { PaintEngine } from '../PaintEngine';
 import { cloneShape, polygonFromWorldPoints, shapeCorners } from '../shapes';
-import { layerParameterDescriptors, parameterSemanticId, type LayerParameterValue } from '../layerParameters';
+import type { LayerParameterValue } from '../parameters/types';
 import type { DirtyRect } from '../brush';
 
 /** Owns layer tree state and layer CRUD / tree mutation helpers. */
@@ -64,7 +67,7 @@ export class LayerService {
   nextLayerName(type: LayerType): string {
     const index = (this.nameCounters.get(type) ?? 0) + 1;
     this.nameCounters.set(type, index);
-    return layerTypeHandler(type).defaultName(index);
+    return layerTypeHandler(type).info.defaultName(index);
   }
 
   byId(id: string): Layer | null {
@@ -184,13 +187,8 @@ export class LayerService {
   }
 
   assignProps(l: Layer, p: LayerProps): void {
-    const affectsMask = p.opacity !== undefined || p.shape !== undefined || p.text !== undefined || p.outline !== undefined || p.image !== undefined;
-    if (p.name !== undefined) l.name = p.name;
-    if (p.opacity !== undefined) l.opacity = p.opacity;
-    if (p.blend !== undefined) l.blend = p.blend;
-    if (p.visible !== undefined) l.visible = p.visible;
-    if (p.parameterLink !== undefined) l.parameterLink = p.parameterLink ? structuredClone(p.parameterLink) : undefined;
-    layerHandler(l).applyProps(l, p);
+    const affectsMask = p.opacity !== undefined || p.state !== undefined;
+    applyLayerProps(l, p);
     this.versions.set(l.id, (this.versions.get(l.id) ?? 0) + 1);
     if (affectsMask) this.bumpMaskVersion(l.id);
   }
@@ -198,7 +196,7 @@ export class LayerService {
   /** 削除されるレイヤーを参照しているマスク設定を外す */
   maskReferenceOps(removedIds: Set<string>): { layerId: string; before: string[]; after: string[] }[] {
     return this.layers.flatMap(layer => {
-      const before = layerTypeProps(layer).maskLayerIds;
+      const before = layerMaskIds(layer.state);
       if (!before || removedIds.has(layer.id) || !before.some(id => removedIds.has(id))) return [];
       return [{ layerId: layer.id, before, after: before.filter(id => !removedIds.has(id)) }];
     });
@@ -208,7 +206,7 @@ export class LayerService {
     const changes = this.maskReferenceOps(removedIds);
     for (const change of changes) {
       const layer = this.byId(change.layerId);
-      if (layer) this.assignProps(layer, { maskLayerIds: change.after });
+      if (layer) this.assignProps(layer, { state: { maskLayerIds: change.after } });
     }
     return changes;
   }
@@ -230,7 +228,7 @@ export class LayerService {
   }
 
   private mergeTargetFor(layer: Layer): RasterLayer | null {
-    if (!layerHandler(layer).effect) return this.mergeTarget(layer);
+    if (!layerHandler(layer).renderer.effect) return this.mergeTarget(layer);
     if (layer.childIds.length) return null;
     if (layer.parentId) {
       const parent = this.rasterById(layer.parentId);
@@ -245,10 +243,8 @@ export class LayerService {
   canTransferShape(id = this.activeLayerId): boolean {
     const layer = this.byId(id);
     return !!layer
-      && (layer.type === 'shape' || layer.type === 'image')
-      && layer.childIds.length === 0
-      && !!layer.parentId
-      && !!this.rasterById(layer.parentId);
+      && !!layerHandler(layer).capabilities.transferToRaster?.canTransfer(layer as never)
+      && !!this.rasterById(layer.parentId!);
   }
 
   canMoveLayer(id: string, parentId: string | null): boolean {
@@ -265,17 +261,17 @@ export class LayerService {
 
   getLayerCanvas(id: string): HTMLCanvasElement | null {
     const l = this.byId(id);
-    return l ? layerHandler(l).contentCanvas(l, this.engine.compositor.measureEnv()) : null;
+    return l ? layerHandler(l).renderer.contentCanvas(l as never, this.engine.compositor.measureEnv()) : null;
   }
 
   getShape(id: string): ShapeParams | null {
     const layer = this.shapeById(id);
-    return layer ? cloneShape(layer.shape) : null;
+    return layer ? cloneShape(layer.state.shape) : null;
   }
 
   getText(id: string): TextParams | null {
     const layer = this.byId(id);
-    return layer?.type === 'text' ? structuredClone(layer.text) : null;
+    return layer?.type === 'text' ? structuredClone(layer.state.text) : null;
   }
 
   activeRaster(): RasterLayer | null {
@@ -291,7 +287,7 @@ export class LayerService {
 
   hasSelectedObjects(): boolean {
     const ids = new Set(useStore.getState().selectedLayerIds);
-    return this.layers.some(layer => ids.has(layer.id) && !!layerHandler(layer).objectTransform);
+    return this.layers.some(layer => ids.has(layer.id) && !!layerHandler(layer).capabilities.objectTransform);
   }
 
   finishFloating(): void {
@@ -306,7 +302,7 @@ export class LayerService {
     useStore.getState().set({ textEditingId: null });
     this.engine.requestRender();
     const layer = this.byId(id);
-    if (layer?.type !== 'text' || layer.childIds.length > 0 || !isEmptyText(layer.text)) return false;
+    if (layer?.type !== 'text' || layer.childIds.length > 0 || !isEmptyText(layer.state.text)) return false;
     const location = this.locationOf(id);
     if (!location) return false;
     const snapshots = this.descendantIds(id).map(layerId => this.snapshotLayer(this.byId(layerId)!, true));
@@ -322,10 +318,10 @@ export class LayerService {
     if (this.engine.isBusy() || layer?.type !== 'text') return;
     const linkChange = !preview ? this.engine.links.detachChanged(
       layer,
-      { ...layer, text: structuredClone(before) },
-      { ...layer, text: structuredClone(after) },
+      { ...layer, state: { ...layer.state, text: structuredClone(before) } },
+      { ...layer, state: { ...layer.state, text: structuredClone(after) } },
     ) : null;
-    layer.text = structuredClone(after);
+    layer.state.text = structuredClone(after);
     if (linkChange) layer.parameterLink = structuredClone(linkChange.after);
     this.bumpLayer(id);
     const contentBefore = { ...before, x: 0, y: 0, width: null, height: null };
@@ -333,7 +329,7 @@ export class LayerService {
     const frameOnlyPreview = preview && JSON.stringify(contentBefore) === JSON.stringify(contentAfter);
     if (!frameOnlyPreview) this.engine.syncTextRendersPublic();
     if (!preview && JSON.stringify(before) !== JSON.stringify(after)) {
-      const propsOp = { kind: 'layerProps' as const, layerId: id, before: { text: structuredClone(before) }, after: { text: structuredClone(after) } };
+      const propsOp = { kind: 'layerProps' as const, layerId: id, before: { state: { text: structuredClone(before) } }, after: { state: { text: structuredClone(after) } } };
       this.engine.history.push(linkChange ? { kind: 'batch', ops: [propsOp, {
         kind: 'layerLink',
         target: { pageId: this.engine.pages.activePageId, layerId: id },
@@ -370,7 +366,7 @@ export class LayerService {
         if (child) return child;
         if (layer.type !== 'text' || !layer.visible) continue;
         const frame = textFrame(layer, this.engine.compositor.textRenderer);
-        const cx = frame.x + frame.w / 2, cy = frame.y + frame.h / 2, angle = -(layer.text.rotation ?? 0);
+        const cx = frame.x + frame.w / 2, cy = frame.y + frame.h / 2, angle = -(layer.state.text.rotation ?? 0);
         const dx = x - cx, dy = y - cy;
         const localX = dx * Math.cos(angle) - dy * Math.sin(angle) + cx;
         const localY = dx * Math.sin(angle) + dy * Math.cos(angle) + cy;
@@ -524,8 +520,8 @@ export class LayerService {
     const maskOps = this.detachMaskReferences(removeIds).map(change => ({
       kind: 'layerProps' as const,
       layerId: change.layerId,
-      before: { maskLayerIds: change.before },
-      after: { maskLayerIds: change.after },
+      before: { state: { maskLayerIds: change.before } },
+      after: { state: { maskLayerIds: change.after } },
     }));
     this.removeLayerInternal(id);
     const removeOp = { kind: 'layerRemove' as const, location, snapshots };
@@ -551,12 +547,12 @@ export class LayerService {
   bakeAndMerge(upper: Layer, lower: RasterLayer, label: string, beforeActiveId: string): void {
     const beforeCanvas = makeCanvas(this.engine.artboard.w, this.engine.artboard.h);
     const beforeCtx = beforeCanvas.getContext('2d', { willReadFrequently: true })!;
-    beforeCtx.drawImage(lower.canvas, 0, 0);
+    beforeCtx.drawImage(lower.runtime.canvas, 0, 0);
     const removedLocation = this.locationOf(upper.id);
     if (!removedLocation) return;
     const removedSnapshot = this.snapshotLayer(upper, true);
     const maskChanges = this.detachMaskReferences(new Set(this.descendantIds(upper.id)));
-    const effectMerge = !!layerHandler(upper).effect;
+    const effectMerge = !!layerHandler(upper).renderer.effect;
     const targetProps = effectMerge
       ? { before: { opacity: lower.opacity, blend: lower.blend }, after: { opacity: 1, blend: 'source-over' as const } }
       : undefined;
@@ -567,7 +563,7 @@ export class LayerService {
     this.bumpLayer(lower.id);
     const extraction = extractTiles(
       beforeCtx,
-      lower.ctx,
+      lower.runtime.ctx,
       { minX: 0, minY: 0, maxX: this.engine.artboard.w, maxY: this.engine.artboard.h },
       this.engine.artboard.w,
       this.engine.artboard.h,
@@ -622,11 +618,8 @@ export class LayerService {
     const restored = await restoreLayerFrom(snapshot, { artboard: this.engine.artboard });
     if (!restored || restored.type !== current.type) return;
     if (current.type === 'image' && restored.type === 'image') {
-      current.canvas = restored.canvas;
-      current.ctx = restored.ctx;
-      current.image = restored.image;
-      current.snapEnabled = restored.snapEnabled;
-      current.constrainAspect = restored.constrainAspect;
+      current.runtime = restored.runtime;
+      current.state = restored.state;
     } else {
       this.assignProps(current, layerTypeProps(restored));
     }
@@ -638,8 +631,7 @@ export class LayerService {
     const layer = this.imageById(id);
     if (!layer || canvas.width <= 0 || canvas.height <= 0) return;
     const before = this.snapshotLayer(layer, true, true);
-    layer.canvas = canvas;
-    layer.ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+    layer.runtime = { canvas, ctx: canvas.getContext('2d', { willReadFrequently: true })! };
     this.bumpLayer(layer.id);
     const after = this.snapshotLayer(layer, true, true);
     this.engine.history.push({ kind: 'layerContent', layerId: layer.id, before, after }, '画像を差し替え');
@@ -650,12 +642,12 @@ export class LayerService {
     if (this.engine.isBusy()) return;
     const layer = this.imageById(id);
     if (!layer) return;
-    const afterImage = fitImageParamsToSource(layer.image, layer.canvas.width, layer.canvas.height);
-    if (afterImage.width === layer.image.width && afterImage.height === layer.image.height) return;
+    const afterImage = fitImageParamsToSource(layer.state.placement, layer.runtime.canvas.width, layer.runtime.canvas.height);
+    if (afterImage.width === layer.state.placement.width && afterImage.height === layer.state.placement.height) return;
     this.commitLayerProps(
       id,
-      { image: cloneImageParams(layer.image) },
-      { image: afterImage },
+      { state: { placement: cloneImageParams(layer.state.placement) } },
+      { state: { placement: afterImage } },
       '比率を画像に合わせる',
     );
   }
@@ -705,8 +697,8 @@ export class LayerService {
   linkOpForUserChange(layer: Layer, before: LayerProps, after: LayerProps, preserveIfSourceMatches = false): LayerLinkOp | null {
     const change = this.engine.links.detachChanged(
       layer,
-      { ...layer, ...structuredClone(before), parameterLink: layer.parameterLink } as import('../layer-types/types').LayerParameterLayer,
-      { ...layer, ...structuredClone(after), parameterLink: layer.parameterLink } as import('../layer-types/types').LayerParameterLayer,
+      hostWithProps(layer, before),
+      hostWithProps(layer, after),
       preserveIfSourceMatches,
     );
     if (!change) return null;
@@ -736,28 +728,28 @@ export class LayerService {
   }
 
   updateShapeParams(id: string, before: ShapeParams, after: ShapeParams, preview = false): void {
-    if (preview) this.previewLayerProps(id, { shape: after });
-    else this.commitLayerProps(id, { shape: before }, { shape: after }, '図形を編集');
+    if (preview) this.previewLayerProps(id, { state: { shape: after } });
+    else this.commitLayerProps(id, { state: { shape: before } }, { state: { shape: after } }, '図形を編集');
   }
 
   convertRectToPolygon(id = this.activeLayerId): void {
     if (this.engine.isBusy()) return;
     const layer = this.shapeById(id);
-    if (!layer || layer.shape.kind !== 'rect') return;
-    const beforeShape = cloneShape(layer.shape);
+    if (!layer || layer.state.shape.kind !== 'rect') return;
+    const beforeShape = cloneShape(layer.state.shape);
     const beforeName = layer.name;
-    const center = { x: layer.shape.x + layer.shape.width / 2, y: layer.shape.y + layer.shape.height / 2 };
-    const world = shapeCorners(layer.shape);
-    const polygon = polygonFromWorldPoints(world, layer.shape);
+    const center = { x: layer.state.shape.x + layer.state.shape.width / 2, y: layer.state.shape.y + layer.state.shape.height / 2 };
+    const world = shapeCorners(layer.state.shape);
+    const polygon = polygonFromWorldPoints(world, layer.state.shape);
     polygon.cx = center.x; polygon.cy = center.y;
     polygon.rotation = 0;
     polygon.points = world.map(point => ({ x: point.x - center.x, y: point.y - center.y }));
-    this.assignProps(layer, { shape: polygon });
+    this.assignProps(layer, { state: { shape: polygon } });
     if (layer.name === '四角形') layer.name = '多角形';
     const propsOp = {
       kind: 'layerProps', layerId: layer.id,
-      before: { shape: beforeShape, name: beforeName },
-      after: { shape: cloneShape(layer.shape), name: layer.name },
+      before: { state: { shape: beforeShape }, name: beforeName },
+      after: { state: { shape: cloneShape(layer.state.shape) }, name: layer.name },
     } as const;
     const linkOp = this.linkOpForUserChange(layer, propsOp.before, propsOp.after);
     const downstreamLinkOps = this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });
@@ -871,12 +863,12 @@ export class LayerService {
     const ops: import('../history/historyTree').AtomicOp[] = useStore.getState().selectedLayerIds.flatMap(layerId => {
       const layer = this.byId(layerId);
       if (layer?.type !== 'shape') return [];
-      const before = cloneShape(layer.shape);
+      const before = cloneShape(layer.state.shape);
       const after = update(cloneShape(before));
       if (JSON.stringify(before) === JSON.stringify(after)) return [];
-      layer.shape = after;
+      layer.state.shape = after;
       this.bumpLayer(layerId);
-      const propsOp = { kind: 'layerProps' as const, layerId, before: { shape: before }, after: { shape: after } };
+      const propsOp = { kind: 'layerProps' as const, layerId, before: { state: { shape: before } }, after: { state: { shape: after } } };
       const linkOp = this.linkOpForUserChange(layer, propsOp.before, propsOp.after);
       this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId });
       return linkOp ? [propsOp, linkOp] : [propsOp];
@@ -887,72 +879,15 @@ export class LayerService {
   }
 
   updateSelectedParameter(key: string, value: LayerParameterValue): void {
-    if (this.engine.isBusy()) return;
-    this.engine.events.emit('textCommitRequest');
-    const state = useStore.getState();
-    const ids = state.multiSelectMode ? state.selectedLayerIds : [this.activeLayerId];
-    const changes = ids.flatMap(layerId => {
-      const layer = this.byId(layerId);
-      if (!layer) return [];
-      const descriptor = layerParameterDescriptors(layer).find(item => item.key === key || parameterSemanticId(item) === key);
-      if (!descriptor) return [];
-      const before: LayerProps = {
-        opacity: layer.opacity, visible: layer.visible, blend: layer.blend,
-        ...layerTypeProps(layer),
-      };
-      const after = descriptor.write(layer, value);
-      return [{ layer, layerId, before, after }];
-    });
-    for (const change of changes) {
-      this.assignProps(change.layer, change.after);
-      this.bumpLayer(change.layer.id);
-    }
-    const ops: import('../history/historyTree').AtomicOp[] = changes.flatMap(({ layer, layerId, before, after }) => {
-      const propsOp = { kind: 'layerProps' as const, layerId, before, after };
-      const linkOp = this.linkOpForUserChange(layer, before, after, true);
-      return linkOp ? [propsOp, linkOp] : [propsOp];
-    });
-    if (!ops.length) return;
-    this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, key === 'snapEnabled' ? 'スナップを変更' : key === 'constrainAspect' ? '比率の維持を変更' : '共通パラメータを変更');
-    for (const { layerId } of changes) this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId });
-    this.engine.committed();
+    this.engine.parameters.commit(key, value, key === 'snapEnabled' ? 'スナップを変更' : key === 'constrainAspect' ? '比率の維持を変更' : '共通パラメータを変更');
   }
 
   previewSelectedParameter(key: string, value: LayerParameterValue): void {
-    const state = useStore.getState();
-    const ids = state.multiSelectMode ? state.selectedLayerIds : [this.activeLayerId];
-    for (const layerId of ids) {
-      const layer = this.byId(layerId);
-      if (!layer) continue;
-      const descriptor = layerParameterDescriptors(layer).find(item => item.key === key || parameterSemanticId(item) === key);
-      if (!descriptor) continue;
-      this.assignProps(layer, descriptor.write(layer, value));
-      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId }, true);
-    }
-    this.engine.requestRender();
-    this.engine.syncStore();
+    this.engine.parameters.preview(key, value);
   }
 
   commitSelectedParameterPreview(key: string, beforeValue: LayerParameterValue, value: LayerParameterValue): void {
-    const state = useStore.getState();
-    const ids = state.multiSelectMode ? state.selectedLayerIds : [this.activeLayerId];
-    const changes = ids.flatMap(layerId => {
-      const layer = this.byId(layerId);
-      if (!layer) return [];
-      const descriptor = layerParameterDescriptors(layer).find(item => item.key === key || parameterSemanticId(item) === key);
-      if (!descriptor) return [];
-      return [{ layer, layerId, before: descriptor.write(layer, beforeValue), after: descriptor.write(layer, value) }];
-    });
-    const ops: import('../history/historyTree').AtomicOp[] = changes.flatMap(({ layer, layerId, before, after }) => {
-      this.assignProps(layer, after);
-      const propsOp = { kind: 'layerProps' as const, layerId, before, after };
-      const linkOp = this.linkOpForUserChange(layer, before, after, true);
-      return linkOp ? [propsOp, linkOp] : [propsOp];
-    });
-    if (!ops.length) return;
-    this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, '共通パラメータを変更');
-    for (const { layerId } of changes) this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId });
-    this.engine.committed();
+    this.engine.parameters.commitRange(key, beforeValue, value);
   }
 
   commitSelectedLayerOpacity(beforeById: Record<string, number>, opacity: number): void {

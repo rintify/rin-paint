@@ -65,8 +65,8 @@ function compositorFor(layers: Layer[]): Compositor {
 describe('Compositor eyedropper sampling', () => {
   it('samples vector shapes from the selected layer and the final composite independently', () => {
     const raster = createRasterLayer('背景', 16, 16, 'background');
-    raster.ctx.fillStyle = '#0000ff';
-    raster.ctx.fillRect(0, 0, 16, 16);
+    raster.runtime.ctx.fillStyle = '#0000ff';
+    raster.runtime.ctx.fillRect(0, 0, 16, 16);
     const shape = createShapeLayer('図形', {
       kind: 'rect', x: 2, y: 2, width: 8, height: 8, color: '#ff0000',
       strokeWidth: 1, paintMode: 'fill-inside',
@@ -95,10 +95,10 @@ describe('Compositor eyedropper sampling', () => {
 
   it('samples only the generated border from a selected outline layer', () => {
     const raster = createRasterLayer('元画像', 16, 16, 'source');
-    raster.ctx.fillStyle = '#ff0000';
-    raster.ctx.fillRect(5, 5, 4, 4);
+    raster.runtime.ctx.fillStyle = '#ff0000';
+    raster.runtime.ctx.fillRect(5, 5, 4, 4);
     const outline = createOutlineLayer('縁どり', 'outline');
-    outline.outline = { color: '#00ff00', widthMm: 2, alphaThreshold: .5, cornerStyle: 'round' };
+    outline.state.outline = { color: '#00ff00', widthMm: 2, alphaThreshold: .5, cornerStyle: 'round' };
     const compositor = compositorFor([raster, outline]);
 
     expect([...compositor.samplePixel(3, 6, outline.id)]).toEqual([0, 255, 0, 128]);
@@ -107,12 +107,12 @@ describe('Compositor eyedropper sampling', () => {
 
   it('uses an outline layer contribution as a clip mask', () => {
     const raster = createRasterLayer('元画像', 16, 16, 'source');
-    raster.ctx.fillStyle = '#ff0000';
-    raster.ctx.fillRect(5, 5, 4, 4);
+    raster.runtime.ctx.fillStyle = '#ff0000';
+    raster.runtime.ctx.fillRect(5, 5, 4, 4);
     const outline = createOutlineLayer('縁どり', 'outline');
-    outline.outline = { color: '#00ff00', widthMm: 2, alphaThreshold: .5, cornerStyle: 'round' };
+    outline.state.outline = { color: '#00ff00', widthMm: 2, alphaThreshold: .5, cornerStyle: 'round' };
     const clip = createClipLayer('クリップ', 'clip');
-    clip.maskLayerIds = [outline.id];
+    clip.state.maskLayerIds = [outline.id];
     const compositor = compositorFor([raster, outline, clip]);
 
     expect([...compositor.samplePixel(3, 6, null)]).toEqual([0, 255, 0, 64]);

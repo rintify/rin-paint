@@ -11,9 +11,10 @@ import {
   readCanonicalParameter,
   writeCanonicalParameter,
 } from '../layerParameters';
-import type { LayerParameterLayer } from '../layer-types/types';
 import type { Layer } from '../layers';
-import { layerTypeProps } from '../layer-types/registry';
+import { applyRecordProps, layerTypeProps } from '../layer-types/registry';
+import type { LayerProps } from '../layer-types/definition';
+import { hostFromRecord, type ParameterHost } from '../parameters/host';
 import { loadPage, savePage, type SavedLayer, type SavedPage } from '../persistence/db';
 import type { PaintEngine } from '../PaintEngine';
 
@@ -29,9 +30,15 @@ export interface LayerLinkCandidate {
 
 interface RecordEntry {
   address: LayerAddress;
-  layer: LayerParameterLayer;
+  host: ParameterHost;
   ppi: number;
   live: boolean;
+  liveLayer?: Layer;
+  stored?: SavedLayer;
+}
+
+function addrKey(address: LayerAddress): string {
+  return `${address.pageId}:${address.layerId}`;
 }
 
 function sameAddress(a: LayerAddress, b: LayerAddress): boolean {
@@ -42,32 +49,30 @@ function cloneLink(link: LayerParameterLink | undefined | null): LayerParameterL
   return link ? structuredClone(link) : null;
 }
 
-function assignStored(layer: SavedLayer, props: Record<string, unknown>): void {
-      for (const key of ['name', 'opacity', 'blend', 'visible', 'params', 'outline', 'maskLayerIds', 'shape', 'snapEnabled', 'constrainAspect', 'text', 'image'] as const) {
-    if (props[key] !== undefined) (layer as unknown as Record<string, unknown>)[key] = structuredClone(props[key]);
-  }
-  if (props.parameterLink !== undefined) {
-    layer.parameterLink = props.parameterLink ? structuredClone(props.parameterLink as LayerParameterLink) : undefined;
-  }
-}
-
 /** Owns the project-wide one-way parameter-link graph and materialized values. */
 export class ParameterLinkService {
   private pages = new Map<string, SavedPage>();
   private pending: Promise<void> = Promise.resolve();
+  private entriesByKey = new Map<string, RecordEntry>();
+  private targetsBySource = new Map<string, string[]>();
 
   constructor(private engine: PaintEngine) {}
 
   async refreshCatalog(): Promise<void> {
     const loaded = await Promise.all(this.engine.pages.pageOrder.map(id => loadPage(id)));
     this.pages = new Map(loaded.filter((page): page is SavedPage => !!page).map(page => [page.id, page]));
+    this.rebuildIndex();
   }
 
   noteSavedPage(page: SavedPage): void {
     this.pages.set(page.id, structuredClone(page));
+    this.rebuildIndex();
   }
 
-  removePage(pageId: string): void { this.pages.delete(pageId); }
+  removePage(pageId: string): void {
+    this.pages.delete(pageId);
+    this.rebuildIndex();
+  }
 
   flush(): Promise<void> { return this.pending; }
 
@@ -75,31 +80,82 @@ export class ParameterLinkService {
     return { pageId: this.engine.pages.activePageId, layerId };
   }
 
-  private records(): RecordEntry[] {
+  private rebuildIndex(): void {
+    this.entriesByKey.clear();
+    this.targetsBySource.clear();
+    for (const entry of this.collectRecords()) {
+      const key = addrKey(entry.address);
+      this.entriesByKey.set(key, entry);
+      const source = entry.host.parameterLink?.source;
+      if (!source) continue;
+      const list = this.targetsBySource.get(addrKey(source)) ?? [];
+      list.push(key);
+      this.targetsBySource.set(addrKey(source), list);
+    }
+  }
+
+  private collectRecords(): RecordEntry[] {
     const result: RecordEntry[] = [];
     for (const pageId of this.engine.pages.pageOrder) {
       if (pageId === this.engine.pages.activePageId) {
         for (const layer of this.engine.layerService.layers) {
-          result.push({ address: { pageId, layerId: layer.id }, layer, ppi: this.engine.getCanvasSpec().ppi, live: true });
+          result.push({
+            address: { pageId, layerId: layer.id },
+            host: layer,
+            ppi: this.engine.getCanvasSpec().ppi,
+            live: true,
+            liveLayer: layer,
+          });
         }
       } else {
         const page = this.pages.get(pageId);
         if (!page) continue;
         for (const layer of page.layers) {
-          result.push({ address: { pageId, layerId: layer.id }, layer: layer as unknown as LayerParameterLayer, ppi: page.canvasSpec.ppi, live: false });
+          result.push({
+            address: { pageId, layerId: layer.id },
+            host: hostFromRecord(layer),
+            ppi: page.canvasSpec.ppi,
+            live: false,
+            stored: layer,
+          });
         }
       }
     }
     return result;
   }
 
-  private find(address: LayerAddress): RecordEntry | undefined {
-    return this.records().find(entry => sameAddress(entry.address, address));
+  private records(): RecordEntry[] {
+    if (!this.entriesByKey.size) this.rebuildIndex();
+    const livePage = this.engine.pages.activePageId;
+    const stale = [...this.entriesByKey.values()].some(entry =>
+      entry.address.pageId === livePage ? !entry.live : entry.live,
+    );
+    if (stale) this.rebuildIndex();
+    else {
+      for (const layer of this.engine.layerService.layers) {
+        const key = addrKey({ pageId: livePage, layerId: layer.id });
+        const existing = this.entriesByKey.get(key);
+        if (existing?.live) {
+          existing.host = layer;
+          existing.liveLayer = layer;
+        }
+      }
+    }
+    return [...this.entriesByKey.values()];
   }
 
-  private apply(entry: RecordEntry, props: object): void {
-    if (entry.live) this.engine.layerService.assignProps(entry.layer as Layer, props);
-    else assignStored(entry.layer as unknown as SavedLayer, props as Record<string, unknown>);
+  private find(address: LayerAddress): RecordEntry | undefined {
+    if (!this.entriesByKey.size) this.rebuildIndex();
+    return this.entriesByKey.get(addrKey(address)) ?? this.records().find(entry => sameAddress(entry.address, address));
+  }
+
+  private apply(entry: RecordEntry, props: LayerProps): void {
+    if (entry.live && entry.liveLayer) this.engine.layerService.assignProps(entry.liveLayer, props);
+    else if (entry.stored) {
+      applyRecordProps(entry.stored, props);
+      entry.host = hostFromRecord(entry.stored);
+    }
+    this.rebuildIndex();
   }
 
   private enqueueSaves(pageIds: Set<string>): void {
@@ -113,10 +169,10 @@ export class ParameterLinkService {
   }
 
   private common(source: RecordEntry, target: RecordEntry): string[] {
-    const sourceMap = linkableParameterMap(source.layer);
-    const targetMap = linkableParameterMap(target.layer);
+    const sourceMap = linkableParameterMap(source.host);
+    const targetMap = linkableParameterMap(target.host);
     return [...sourceMap.keys()].filter(id => {
-      const value = readCanonicalParameter(sourceMap.get(id)!, source.layer, source.ppi);
+      const value = readCanonicalParameter(sourceMap.get(id)!, source.host, source.ppi);
       return targetMap.has(id) && (value !== null || targetMap.get(id)!.nullable === true);
     });
   }
@@ -126,10 +182,10 @@ export class ParameterLinkService {
     const visited = new Set<string>();
     while (current) {
       if (sameAddress(current, target)) return true;
-      const key = `${current.pageId}:${current.layerId}`;
+      const key = addrKey(current);
       if (visited.has(key)) return true;
       visited.add(key);
-      current = this.find(current)?.layer.parameterLink?.source;
+      current = this.find(current)?.host.parameterLink?.source;
     }
     return false;
   }
@@ -144,19 +200,19 @@ export class ParameterLinkService {
     const sourcePageIndex = Math.max(0, this.engine.pages.pageOrder.indexOf(sourceAddress.pageId));
     const link: LayerParameterLink = {
       source: { ...sourceAddress },
-      sourceNameHint: source?.layer.name ?? hint?.name ?? '削除済みレイヤー',
+      sourceNameHint: source?.host.name ?? hint?.name ?? '削除済みレイヤー',
       sourcePageIndexHint: source ? sourcePageIndex : hint?.pageIndex ?? sourcePageIndex,
       linkedParameterIds: [],
       fallbackValues: {},
     };
-    const sourceMap = source ? linkableParameterMap(source.layer) : new Map();
-    const targetMap = linkableParameterMap(target.layer);
+    const sourceMap = source ? linkableParameterMap(source.host) : new Map();
+    const targetMap = linkableParameterMap(target.host);
     const ids = source ? this.common(source, target) : [...targetMap.keys()];
     for (const id of ids) {
       const sourceValue = source && sourceMap.get(id)
-        ? readCanonicalParameter(sourceMap.get(id)!, source.layer, source.ppi)
-        : readCanonicalParameter(targetMap.get(id)!, target.layer, target.ppi);
-      const targetValue = readCanonicalParameter(targetMap.get(id)!, target.layer, target.ppi);
+        ? readCanonicalParameter(sourceMap.get(id)!, source.host, source.ppi)
+        : readCanonicalParameter(targetMap.get(id)!, target.host, target.ppi);
+      const targetValue = readCanonicalParameter(targetMap.get(id)!, target.host, target.ppi);
       if (sourceValue === null && targetMap.get(id)!.nullable !== true) continue;
       if (onlyEqual && !parameterValuesEqual(sourceValue, targetValue)) continue;
       link.linkedParameterIds.push(id);
@@ -166,6 +222,7 @@ export class ParameterLinkService {
   }
 
   createPasteLink(targetLayerId: string, source: LayerAddress, hint?: { name: string; pageIndex: number }): void {
+    this.rebuildIndex();
     const target = this.find(this.currentAddress(targetLayerId));
     if (!target) return;
     const link = this.makeLink(target, source, false, hint);
@@ -175,10 +232,11 @@ export class ParameterLinkService {
 
   async changeSource(targetLayerId: string, source: LayerAddress): Promise<void> {
     await this.flush();
+    this.rebuildIndex();
     const targetAddress = this.currentAddress(targetLayerId);
     const target = this.find(targetAddress);
     if (!target || this.wouldCycle(targetAddress, source)) return;
-    const before = cloneLink(target.layer.parameterLink);
+    const before = cloneLink(target.host.parameterLink);
     const after = this.makeLink(target, source, true);
     this.apply(target, { parameterLink: after });
     this.engine.history.push({ kind: 'layerLink', target: targetAddress, before, after: cloneLink(after) }, 'リンク元を変更');
@@ -189,8 +247,8 @@ export class ParameterLinkService {
   removeLink(targetLayerId: string): void {
     const targetAddress = this.currentAddress(targetLayerId);
     const target = this.find(targetAddress);
-    if (!target?.layer.parameterLink) return;
-    const before = cloneLink(target.layer.parameterLink);
+    if (!target?.host.parameterLink) return;
+    const before = cloneLink(target.host.parameterLink);
     this.apply(target, { parameterLink: null });
     this.engine.history.push({ kind: 'layerLink', target: targetAddress, before, after: null }, 'パラメータリンクを解除');
     this.engine.committed();
@@ -204,7 +262,7 @@ export class ParameterLinkService {
     const ops = targetLayerIds.flatMap(targetLayerId => {
       const targetAddress = this.currentAddress(targetLayerId);
       const target = this.find(targetAddress);
-      const current = target?.layer.parameterLink;
+      const current = target?.host.parameterLink;
       if (!target || !current?.linkedParameterIds.includes(semanticId)) return [];
       const before = cloneLink(current)!;
       const after = cloneLink(current)!;
@@ -219,37 +277,38 @@ export class ParameterLinkService {
 
   async relink(targetLayerId: string, semanticId?: string): Promise<void> {
     await this.flush();
+    this.rebuildIndex();
     const targetAddress = this.currentAddress(targetLayerId);
     const target = this.find(targetAddress);
-    const current = target?.layer.parameterLink;
+    const current = target?.host.parameterLink;
     const source = current ? this.find(current.source) : undefined;
     if (!target || !current || !source) return;
     const before = cloneLink(current);
-    const beforeProps = target.live ? {
-      opacity: target.layer.opacity,
-      visible: target.layer.visible,
-      blend: target.layer.blend,
-      ...layerTypeProps(target.layer as Layer),
+    const beforeProps = target.live && target.liveLayer ? {
+      opacity: target.liveLayer.opacity,
+      visible: target.liveLayer.visible,
+      blend: target.liveLayer.blend,
+      ...layerTypeProps(target.liveLayer),
     } : {};
     const next = cloneLink(current)!;
     const ids = semanticId ? [semanticId] : this.common(source, target);
-    const sourceMap = linkableParameterMap(source.layer);
-    const targetMap = linkableParameterMap(target.layer);
+    const sourceMap = linkableParameterMap(source.host);
+    const targetMap = linkableParameterMap(target.host);
     for (const id of ids) {
       const sourceDescriptor = sourceMap.get(id), targetDescriptor = targetMap.get(id);
       if (!sourceDescriptor || !targetDescriptor) continue;
-      const value = readCanonicalParameter(sourceDescriptor, source.layer, source.ppi);
+      const value = readCanonicalParameter(sourceDescriptor, source.host, source.ppi);
       if (value === null && targetDescriptor.nullable !== true) continue;
-      this.apply(target, writeCanonicalParameter(targetDescriptor, target.layer, value, target.ppi));
+      this.apply(target, writeCanonicalParameter(targetDescriptor, target.host, value, target.ppi));
       if (!next.linkedParameterIds.includes(id)) next.linkedParameterIds.push(id);
       next.fallbackValues[id] = value as SemanticParameterValue;
     }
     this.apply(target, { parameterLink: next });
-    const afterProps = target.live ? {
-      opacity: target.layer.opacity,
-      visible: target.layer.visible,
-      blend: target.layer.blend,
-      ...layerTypeProps(target.layer as Layer),
+    const afterProps = target.live && target.liveLayer ? {
+      opacity: target.liveLayer.opacity,
+      visible: target.liveLayer.visible,
+      blend: target.liveLayer.blend,
+      ...layerTypeProps(target.liveLayer),
     } : {};
     this.engine.history.push({ kind: 'batch', ops: [
       { kind: 'layerProps', layerId: targetLayerId, before: beforeProps, after: afterProps },
@@ -259,7 +318,7 @@ export class ParameterLinkService {
     this.engine.committed();
   }
 
-  detachChanged(layer: Layer, before: LayerParameterLayer, after: LayerParameterLayer, preserveIfSourceMatches = false): { before: LayerParameterLink; after: LayerParameterLink } | null {
+  detachChanged(layer: Layer, before: ParameterHost, after: ParameterHost, preserveIfSourceMatches = false): { before: LayerParameterLink; after: LayerParameterLink } | null {
     if (!layer.parameterLink) return null;
     const ppi = this.engine.getCanvasSpec().ppi;
     const beforeMap = linkableParameterMap(before), afterMap = linkableParameterMap(after);
@@ -272,9 +331,9 @@ export class ParameterLinkService {
       let changed = !parameterValuesEqual(readCanonicalParameter(a, before, ppi), afterValue);
       if (changed && preserveIfSourceMatches) {
         const source = this.find(old.source);
-        const sourceDescriptor = source && linkableParameterMap(source.layer).get(id);
+        const sourceDescriptor = source && linkableParameterMap(source.host).get(id);
         if (source && sourceDescriptor) changed = !parameterValuesEqual(
-          readCanonicalParameter(sourceDescriptor, source.layer, source.ppi),
+          readCanonicalParameter(sourceDescriptor, source.host, source.ppi),
           afterValue,
         );
       }
@@ -285,7 +344,7 @@ export class ParameterLinkService {
   }
 
   propagateFrom(sourceAddress: LayerAddress, preview = false): import('../history/historyTree').LayerLinkOp[] {
-    const all = this.records();
+    this.rebuildIndex();
     const dirtyPages = new Set<string>();
     const linkChanges: import('../history/historyTree').LayerLinkOp[] = [];
     const queue = [sourceAddress];
@@ -294,30 +353,32 @@ export class ParameterLinkService {
       const sourceAddressNow = queue.shift()!;
       const source = this.find(sourceAddressNow);
       if (!source) continue;
-      for (const target of all) {
-        const link = target.layer.parameterLink;
-        if (!link || !sameAddress(link.source, sourceAddressNow)) continue;
-        const edge = `${sourceAddressNow.pageId}:${sourceAddressNow.layerId}>${target.address.pageId}:${target.address.layerId}`;
+      const targetKeys = this.targetsBySource.get(addrKey(sourceAddressNow)) ?? [];
+      for (const targetKey of targetKeys) {
+        const target = this.entriesByKey.get(targetKey);
+        const link = target?.host.parameterLink;
+        if (!target || !link || !sameAddress(link.source, sourceAddressNow)) continue;
+        const edge = `${addrKey(sourceAddressNow)}>${addrKey(target.address)}`;
         if (visitedEdges.has(edge)) {
           if (!preview) useStore.getState().set({ toolNotice: '破損した循環パラメータリンクを検出し、伝播を停止しました。' });
           continue;
         }
         visitedEdges.add(edge);
         if (preview && !target.live) continue;
-        const sourceMap = linkableParameterMap(source.layer), targetMap = linkableParameterMap(target.layer);
+        const sourceMap = linkableParameterMap(source.host), targetMap = linkableParameterMap(target.host);
         const beforeLink = cloneLink(link)!;
         const next = cloneLink(link)!;
-        next.sourceNameHint = source.layer.name;
+        next.sourceNameHint = source.host.name;
         next.sourcePageIndexHint = this.engine.pages.pageOrder.indexOf(source.address.pageId);
         let changed = false;
         next.linkedParameterIds = next.linkedParameterIds.filter(id => {
           const sourceDescriptor = sourceMap.get(id), targetDescriptor = targetMap.get(id);
           if (!sourceDescriptor || !targetDescriptor) { delete next.fallbackValues[id]; changed = true; return false; }
-          const value = readCanonicalParameter(sourceDescriptor, source.layer, source.ppi);
+          const value = readCanonicalParameter(sourceDescriptor, source.host, source.ppi);
           if (value === null && targetDescriptor.nullable !== true) { delete next.fallbackValues[id]; changed = true; return false; }
-          const current = readCanonicalParameter(targetDescriptor, target.layer, target.ppi);
+          const current = readCanonicalParameter(targetDescriptor, target.host, target.ppi);
           if (!parameterValuesEqual(current, value)) {
-            this.apply(target, writeCanonicalParameter(targetDescriptor, target.layer, value, target.ppi));
+            this.apply(target, writeCanonicalParameter(targetDescriptor, target.host, value, target.ppi));
             changed = true;
           }
           next.fallbackValues[id] = value as SemanticParameterValue;
@@ -342,8 +403,9 @@ export class ParameterLinkService {
   }
 
   reconcileAll(): void {
-    for (const entry of this.records()) if (entry.layer.parameterLink && this.find(entry.layer.parameterLink.source)) {
-      this.propagateFrom(entry.layer.parameterLink.source);
+    this.rebuildIndex();
+    for (const entry of this.records()) if (entry.host.parameterLink && this.find(entry.host.parameterLink.source)) {
+      this.propagateFrom(entry.host.parameterLink.source);
     }
   }
 
@@ -355,21 +417,22 @@ export class ParameterLinkService {
   }
 
   candidates(targetLayerId: string): LayerLinkCandidate[] {
+    this.rebuildIndex();
     const targetAddress = this.currentAddress(targetLayerId);
     const target = this.find(targetAddress);
     if (!target) return [];
     return this.records().map(source => {
       const compatible = this.common(source, target);
-      const sourceMap = linkableParameterMap(source.layer), targetMap = linkableParameterMap(target.layer);
+      const sourceMap = linkableParameterMap(source.host), targetMap = linkableParameterMap(target.host);
       const equalCount = compatible.filter(id => parameterValuesEqual(
-        readCanonicalParameter(sourceMap.get(id)!, source.layer, source.ppi),
-        readCanonicalParameter(targetMap.get(id)!, target.layer, target.ppi),
+        readCanonicalParameter(sourceMap.get(id)!, source.host, source.ppi),
+        readCanonicalParameter(targetMap.get(id)!, target.host, target.ppi),
       )).length;
       return {
         address: source.address,
-        name: source.layer.name,
+        name: source.host.name,
         pageIndex: this.engine.pages.pageOrder.indexOf(source.address.pageId),
-        type: source.layer.type,
+        type: source.host.type,
         compatibleCount: compatible.length,
         equalCount,
         disabledReason: sameAddress(source.address, targetAddress) ? '自分自身です'
@@ -383,23 +446,28 @@ export class ParameterLinkService {
     targets: LayerLinkEndpointSummary[];
     compatibleIds: string[];
   } {
+    this.rebuildIndex();
     const address = this.currentAddress(layerId);
     const target = this.find(address);
-    const link = target?.layer.parameterLink;
+    const link = target?.host.parameterLink;
     const sourceEntry = link ? this.find(link.source) : undefined;
     const source = link ? {
       address: { ...link.source },
-      name: sourceEntry?.layer.name ?? link.sourceNameHint,
+      name: sourceEntry?.host.name ?? link.sourceNameHint,
       pageIndex: sourceEntry ? this.engine.pages.pageOrder.indexOf(sourceEntry.address.pageId) : link.sourcePageIndexHint,
       linkedCount: link.linkedParameterIds.length,
       missing: !sourceEntry,
     } : undefined;
-    const targets = this.records().filter(entry => entry.layer.parameterLink && sameAddress(entry.layer.parameterLink.source, address)).map(entry => ({
-      address: { ...entry.address },
-      name: entry.layer.name,
-      pageIndex: this.engine.pages.pageOrder.indexOf(entry.address.pageId),
-      linkedCount: entry.layer.parameterLink!.linkedParameterIds.length,
-    }));
+    const targetKeys = this.targetsBySource.get(addrKey(address)) ?? [];
+    const targets = targetKeys.flatMap(key => {
+      const entry = this.entriesByKey.get(key);
+      return entry?.host.parameterLink ? [{
+        address: { ...entry.address },
+        name: entry.host.name,
+        pageIndex: this.engine.pages.pageOrder.indexOf(entry.address.pageId),
+        linkedCount: entry.host.parameterLink.linkedParameterIds.length,
+      }] : [];
+    });
     return { source, targets, compatibleIds: sourceEntry && target ? this.common(sourceEntry, target) : [] };
   }
 }

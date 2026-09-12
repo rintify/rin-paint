@@ -100,7 +100,7 @@ export class HistoryService {
       case 'layerRemove': {
         if (dir === 'undo') {
           const entries = op.snapshots.map((snapshot) => ({
-            location: snapshot.id === op.snapshots[0].id ? op.location : { parentId: snapshot.parentId, index: 0 },
+            location: snapshot.id === op.snapshots[0].id ? op.location : { parentId: snapshot.common.parentId, index: 0 },
             snapshot,
           }));
           await ls.restoreEntries(entries);
@@ -116,6 +116,10 @@ export class HistoryService {
       case 'layerProps': {
         const l = ls.byId(op.layerId);
         if (l) ls.assignProps(l, dir === 'undo' ? op.before : op.after);
+        break;
+      }
+      case 'layerParameter': {
+        eng.parameters.applyHistory(op, dir === 'undo' ? op.before : op.after);
         break;
       }
       case 'layerLink': {
@@ -135,7 +139,7 @@ export class HistoryService {
         });
         for (const change of op.maskChanges ?? []) {
           const layer = ls.byId(change.layerId);
-          if (layer) ls.assignProps(layer, { maskLayerIds: [...(dir === 'undo' ? change.before : change.after)] });
+          if (layer) ls.assignProps(layer, { state: { maskLayerIds: [...(dir === 'undo' ? change.before : change.after)] } });
         }
         break;
       }
@@ -143,7 +147,7 @@ export class HistoryService {
         const applyMaskChanges = () => {
           for (const change of op.maskChanges ?? []) {
             const layer = ls.byId(change.layerId);
-            if (layer) ls.assignProps(layer, { maskLayerIds: [...(dir === 'undo' ? change.before : change.after)] });
+            if (layer) ls.assignProps(layer, { state: { maskLayerIds: [...(dir === 'undo' ? change.before : change.after)] } });
           }
         };
         const target = ls.rasterById(op.targetLayerId);
@@ -184,7 +188,7 @@ export class HistoryService {
     for (const entry of entries) {
       if (!rectValid(entry.rect)) continue;
       const before = entry.before.getContext('2d', { willReadFrequently: true })!;
-      const extraction = extractTiles(before, entry.layer.ctx, entry.rect, eng.artboard.w, eng.artboard.h);
+      const extraction = extractTiles(before, entry.layer.runtime.ctx, entry.rect, eng.artboard.w, eng.artboard.h);
       if (extraction.tileCount === 0) continue;
       const rasterOp: Extract<Op, { kind: 'raster' }> = { kind: 'raster', layerId: entry.layer.id, tiles: [] };
       operations.push(rasterOp);
@@ -211,7 +215,7 @@ export class HistoryService {
   commitRasterEdit(layer: RasterLayer, rect: DirtyRect, label: string): void {
     const eng = this.engine;
     if (!rectValid(rect)) return;
-    const extraction = extractTiles(eng.compositor.scratchCtx, layer.ctx, rect, eng.artboard.w, eng.artboard.h);
+    const extraction = extractTiles(eng.compositor.scratchCtx, layer.runtime.ctx, rect, eng.artboard.w, eng.artboard.h);
     if (extraction.tileCount === 0) return;
     const op: Extract<Op, { kind: 'raster' }> = { kind: 'raster', layerId: layer.id, tiles: [] };
     const node = this.history.push(op, label);

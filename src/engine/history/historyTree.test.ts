@@ -5,13 +5,15 @@ import { HISTORY_VERSION } from '../persistence/version';
 const shapeSnapshot: LayerSnapshot = {
   id: 'shape-1',
   type: 'shape',
-  name: '直線',
-  opacity: 1,
-  blend: 'source-over',
-  visible: true,
-  parentId: 'raster-1',
-  childIds: [],
-  shape: { kind: 'line', x1: 1, y1: 2, x2: 30, y2: 40, color: '#123456', strokeWidth: 5 },
+  common: {
+    name: '直線',
+    opacity: 1,
+    blend: 'source-over',
+    visible: true,
+    parentId: 'raster-1',
+    childIds: [],
+  },
+  state: { shape: { kind: 'line', x1: 1, y1: 2, x2: 30, y2: 40, color: '#123456', strokeWidth: 5 }, snapEnabled: true },
 };
 
 describe('shape history persistence', () => {
@@ -22,7 +24,11 @@ describe('shape history persistence', () => {
     expect(saved.version).toBe(HISTORY_VERSION);
     const restored = new HistoryTree();
     expect(restored.restore(saved)).toBe(true);
-    expect(restored.current.op).toMatchObject({ kind: 'layerAdd', location: { parentId: 'raster-1', index: 2 }, snapshot: { shape: shapeSnapshot.shape } });
+    expect(restored.current.op).toMatchObject({
+      kind: 'layerAdd',
+      location: { parentId: 'raster-1', index: 2 },
+      snapshot: { state: shapeSnapshot.state },
+    });
   });
 
   it('round-trips compact merge tiles and counts only their blobs', async () => {
@@ -76,7 +82,6 @@ describe('shape history persistence', () => {
         },
       ],
     })).toBe(true);
-    // Tree restores, but schema validation rejects such ops when loading projects.
     expect(restored.current.op?.kind).toBe('layerMerge');
   });
 

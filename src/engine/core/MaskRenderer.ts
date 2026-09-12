@@ -24,17 +24,15 @@ export class MaskRenderer {
   ): MaskCanvas | null {
     const sources = [...new Set(ids)].sort()
       .map(id => env.layerById(id))
-      .filter((layer): layer is Layer => !!layer && !!env.handlerFor(layer).drawMask);
+      .filter((layer): layer is Layer => !!layer && !!env.handlerFor(layer).renderer.drawMask);
     if (!sources.length) return null;
 
-    // 最頻出の単一ラスターマスクは複製もキャッシュCanvasも不要。
-    if (sources.length === 1 && sources[0].type === 'raster') {
-      return { canvas: sources[0].canvas, opacity: sources[0].opacity, release: noop };
+    const mask = env.handlerFor(sources[0]).capabilities.maskSource?.nativeCanvas?.(sources[0] as never);
+    if (sources.length === 1 && mask) {
+      return { canvas: mask, opacity: sources[0].opacity, release: noop };
     }
 
-    // 縁取りは、それ以前に合成された可視レイヤーを入力に持つ。入力側の変更を
-    // 個別キャッシュキーへ安全に畳み込めないため、含む場合は毎回生成する。
-    if (sources.some(source => source.type === 'outline')) {
+    if (sources.some(source => env.handlerFor(source).capabilities.maskSource?.uncacheable?.(source as never))) {
       const canvas = document.createElement('canvas');
       canvas.width = env.artboard.w;
       canvas.height = env.artboard.h;
@@ -42,9 +40,9 @@ export class MaskRenderer {
       for (const source of sources) {
         ctx.save();
         // 効果の contribution は適用時の不透明度をすでに含む。
-        ctx.globalAlpha = source.type === 'outline' ? 1 : source.opacity;
+        ctx.globalAlpha = env.handlerFor(source).capabilities.maskSource?.drawOpacity(source as never) ?? source.opacity;
         ctx.globalCompositeOperation = 'source-over';
-        env.handlerFor(source).drawMask!(ctx, source, env);
+        env.handlerFor(source).renderer.drawMask!(ctx, source as never, env);
         ctx.restore();
       }
       return {
@@ -72,9 +70,9 @@ export class MaskRenderer {
     const ctx = canvas.getContext('2d')!;
     for (const source of sources) {
       ctx.save();
-      ctx.globalAlpha = source.opacity;
+      ctx.globalAlpha = env.handlerFor(source).capabilities.maskSource?.drawOpacity(source as never) ?? source.opacity;
       ctx.globalCompositeOperation = 'source-over';
-      env.handlerFor(source).drawMask!(ctx, source, env);
+      env.handlerFor(source).renderer.drawMask!(ctx, source as never, env);
       ctx.restore();
     }
     const entry: CacheEntry = { canvas };

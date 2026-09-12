@@ -13,12 +13,12 @@ export function Thumb({ meta }: { meta: LayerMeta }) {
     ctx.fillRect(0, 0, c.width, c.height);
     const src = engine.getLayerCanvas(meta.id);
     if (src) ctx.drawImage(src, 0, 0, c.width, c.height);
-    else if (meta.shape) {
+    else if (meta.type === 'shape') {
       ctx.save();
       ctx.scale(c.width / engine.artboard.w, c.height / engine.artboard.h);
-      drawShape(ctx, meta.shape, false, engine.artboard);
+      drawShape(ctx, meta.state.shape, false, engine.artboard);
       ctx.restore();
     }
-  }, [engine, meta.id, meta.version, meta.shape]);
+  }, [engine, meta.id, meta.version, meta.type === 'shape' ? meta.state.shape : null]);
   return <canvas ref={ref} width={40} height={30} className="thumb" />;
 }

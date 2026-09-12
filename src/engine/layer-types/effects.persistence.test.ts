@@ -1,36 +1,59 @@
+/// <reference types="node" />
+// @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
-import { createClipLayer, createOutlineLayer } from '../layers';
+import { createClipLayer, createOutlineLayer, createAdjustLayer } from '../layers';
 import { buildLayerSnapshot, restoreLayerFrom, savedLayerFrom, scaleStoredLayer } from './registry';
+import { DEFAULT_ADJUST, DEFAULT_OUTLINE } from '../../model';
 
 const artboard = { w: 100, h: 80 };
+const env = { artboard, withContent: false, keepCanvas: false, onEncoded() {} };
 
 describe('effect layer persistence', () => {
   it('round-trips outline parameters through project and history representations', async () => {
     const layer = createOutlineLayer('縁どり 1', 'outline-1');
-    layer.outline = { color: '#123456', widthMm: 3.25, alphaThreshold: .72, cornerStyle: 'sharp' };
+    layer.state.outline = { color: '#123456', widthMm: 3.25, alphaThreshold: .72, cornerStyle: 'sharp' };
     layer.opacity = .4;
     layer.parentId = 'parent';
     const saved = await savedLayerFrom(layer, { artboard });
     expect(saved).toMatchObject({
-      type: 'outline', outline: layer.outline, opacity: .4, parentId: 'parent', blend: 'source-over',
+      type: 'outline',
+      common: { opacity: .4, parentId: 'parent', blend: 'source-over' },
+      state: { outline: layer.state.outline },
     });
-    const snapshot = buildLayerSnapshot(layer, {
-      artboard, withContent: false, keepCanvas: false, onEncoded() {},
-    });
-    expect(snapshot.outline).toEqual(layer.outline);
+    const snapshot = buildLayerSnapshot(layer, env);
+    expect(snapshot.state).toEqual({ outline: layer.state.outline });
     const restored = await restoreLayerFrom(saved, { artboard });
-    expect(restored).toMatchObject(saved);
+    expect(restored?.state).toEqual(saved.state);
+    expect(restored?.opacity).toBe(.4);
     await scaleStoredLayer(saved, { artboard, factor: 4 });
-    expect(saved.outline?.widthMm).toBe(3.25);
+    expect((saved.state as { outline: { widthMm: number } }).outline.widthMm).toBe(3.25);
   });
 
   it('round-trips clip masks and keeps blend only as the common saved field', async () => {
     const layer = createClipLayer('クリップ 1', 'clip-1');
-    layer.maskLayerIds = ['mask-a', 'mask-b'];
+    layer.state.maskLayerIds = ['mask-a', 'mask-b'];
     layer.opacity = .5;
     const saved = await savedLayerFrom(layer, { artboard });
-    expect(saved).toMatchObject({ type: 'clip', maskLayerIds: ['mask-a', 'mask-b'], opacity: .5 });
+    expect(saved).toMatchObject({
+      type: 'clip',
+      common: { opacity: .5 },
+      state: { maskLayerIds: ['mask-a', 'mask-b'] },
+    });
     const restored = await restoreLayerFrom(saved, { artboard });
-    expect(restored).toMatchObject(saved);
+    expect(restored?.type).toBe('clip');
+    expect(restored && restored.type === 'clip' && restored.state.maskLayerIds).toEqual(['mask-a', 'mask-b']);
+  });
+
+  it('round-trips raster, adjust, and empty clip/outline defaults', async () => {
+    const adjust = createAdjustLayer('補正', 'a1');
+    adjust.state.params = { ...DEFAULT_ADJUST, brightness: 40 };
+    const outline = createOutlineLayer('縁', 'o1');
+    expect(outline.state.outline).toMatchObject(DEFAULT_OUTLINE);
+    for (const layer of [adjust, outline]) {
+      const saved = await savedLayerFrom(layer, { artboard });
+      const restored = await restoreLayerFrom(saved, { artboard });
+      expect(restored?.type).toBe(layer.type);
+      expect(restored?.state).toEqual(layer.state);
+    }
   });
 });

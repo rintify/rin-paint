@@ -1,135 +1,31 @@
-import { DEFAULT_ADJUST, type AdjustParams } from '../model/adjust';
-import type { BlendMode } from '../model/blend';
-import { cloneImageParams, normalizeImageParams, type ImageParams } from '../model/image';
-import { DEFAULT_OUTLINE, type OutlineParams } from '../model/outline';
-import type { ShapeParams } from '../model/shape';
-import type { TextParams } from '../model/text';
-import type { LayerParameterLink } from '../model/layer';
+import {
+  cloneImageParams,
+  defaultLayerCommon,
+  normalizeImageParams,
+  type ImageParams,
+  type LayerCommon,
+  type LayerKindMap,
+  type LayerType,
+  type ShapeParams,
+  type TextParams,
+} from '../model';
+import { DEFAULT_ADJUST } from '../model/adjust';
+import { DEFAULT_OUTLINE } from '../model/outline';
 
-interface LayerTreeFields {
-  parentId: string | null;
-  childIds: string[];
-  parameterLink?: LayerParameterLink;
-}
+export type LayerOf<K extends LayerType = LayerType> = LayerCommon & {
+  type: K;
+  state: LayerKindMap[K]['state'];
+  runtime: LayerKindMap[K]['runtime'];
+};
 
-export interface RasterLayer extends LayerTreeFields {
-  id: string;
-  type: 'raster';
-  name: string;
-  canvas: HTMLCanvasElement;
-  ctx: CanvasRenderingContext2D;
-  opacity: number;
-  blend: BlendMode;
-  visible: boolean;
-}
-
-export interface AdjustLayer extends LayerTreeFields {
-  id: string;
-  type: 'adjust';
-  name: string;
-  params: AdjustParams;
-  maskLayerIds: string[];
-  opacity: number;
-  blend: BlendMode;
-  visible: boolean;
-}
-
-export interface OutlineLayer extends LayerTreeFields {
-  id: string;
-  type: 'outline';
-  name: string;
-  outline: OutlineParams;
-  opacity: number;
-  blend: BlendMode;
-  visible: boolean;
-}
-
-export interface ClipLayer extends LayerTreeFields {
-  id: string;
-  type: 'clip';
-  name: string;
-  maskLayerIds: string[];
-  opacity: number;
-  blend: BlendMode;
-  visible: boolean;
-}
-
-export interface ShapeLayer extends LayerTreeFields {
-  id: string;
-  type: 'shape';
-  name: string;
-  shape: ShapeParams;
-  snapEnabled: boolean;
-  opacity: number;
-  blend: BlendMode;
-  visible: boolean;
-}
-
-export interface TextLayer extends LayerTreeFields {
-  id: string;
-  type: 'text';
-  name: string;
-  text: TextParams;
-  snapEnabled: boolean;
-  opacity: number;
-  blend: BlendMode;
-  visible: boolean;
-}
-
-export interface ImageLayer extends LayerTreeFields {
-  id: string;
-  type: 'image';
-  name: string;
-  image: ImageParams;
-  canvas: HTMLCanvasElement;
-  ctx: CanvasRenderingContext2D;
-  snapEnabled: boolean;
-  constrainAspect: boolean;
-  opacity: number;
-  blend: BlendMode;
-  visible: boolean;
-}
-export type Layer = RasterLayer | AdjustLayer | OutlineLayer | ClipLayer | ShapeLayer | TextLayer | ImageLayer;
-
-export function createImageLayer(
-  name: string,
-  canvas: HTMLCanvasElement,
-  image: ImageParams,
-  id = newLayerId(),
-  snapEnabled = true,
-  constrainAspect = true,
-): ImageLayer {
-  return {
-    id,
-    type: 'image',
-    name,
-    image: normalizeImageParams(cloneImageParams(image)),
-    canvas,
-    ctx: canvas.getContext('2d', { willReadFrequently: true })!,
-    snapEnabled,
-    constrainAspect,
-    opacity: 1,
-    blend: 'source-over',
-    visible: true,
-    parentId: null,
-    childIds: [],
-  };
-}
-
-export function createTextLayer(name: string, text: TextParams, id = newLayerId(), snapEnabled = true): TextLayer {
-  return {
-    id,
-    type: 'text',
-    name,
-    text: structuredClone(text),
-    snapEnabled,
-    opacity: 1,
-    blend: 'source-over',
-    visible: true,
-    parentId: null,
-    childIds: [],
-  };
-}
+export type RasterLayer = LayerOf<'raster'>;
+export type AdjustLayer = LayerOf<'adjust'>;
+export type OutlineLayer = LayerOf<'outline'>;
+export type ClipLayer = LayerOf<'clip'>;
+export type ShapeLayer = LayerOf<'shape'>;
+export type TextLayer = LayerOf<'text'>;
+export type ImageLayer = LayerOf<'image'>;
+export type Layer = { [K in LayerType]: LayerOf<K> }[LayerType];
 
 let idCounter = 0;
 export function newLayerId(): string {
@@ -149,81 +45,84 @@ export function makeCanvas(w: number, h: number): HTMLCanvasElement {
   return c;
 }
 
-export function createRasterLayer(name: string, w: number, h: number, id = newLayerId()): RasterLayer {
-  const canvas = makeCanvas(w, h);
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+function canvasRuntime(canvas: HTMLCanvasElement): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
+  return { canvas, ctx: canvas.getContext('2d', { willReadFrequently: true })! };
+}
+
+export function createImageLayer(
+  name: string,
+  canvas: HTMLCanvasElement,
+  image: ImageParams,
+  id = newLayerId(),
+  snapEnabled = true,
+  constrainAspect = true,
+): ImageLayer {
   return {
-    id,
+    ...defaultLayerCommon(id, name),
+    type: 'image',
+    state: {
+      placement: normalizeImageParams(cloneImageParams(image)),
+      snapEnabled,
+      constrainAspect,
+    },
+    runtime: canvasRuntime(canvas),
+  };
+}
+
+export function createTextLayer(name: string, text: TextParams, id = newLayerId(), snapEnabled = true): TextLayer {
+  return {
+    ...defaultLayerCommon(id, name),
+    type: 'text',
+    state: { text: structuredClone(text), snapEnabled },
+    runtime: undefined,
+  };
+}
+
+export function createRasterLayer(name: string, w: number, h: number, id = newLayerId()): RasterLayer {
+  return {
+    ...defaultLayerCommon(id, name),
     type: 'raster',
-    name,
-    canvas,
-    ctx,
-    opacity: 1,
-    blend: 'source-over',
-    visible: true,
-    parentId: null,
-    childIds: [],
+    state: {},
+    runtime: canvasRuntime(makeCanvas(w, h)),
   };
 }
 
 export function createAdjustLayer(name: string, id = newLayerId()): AdjustLayer {
   return {
-    id,
+    ...defaultLayerCommon(id, name),
     type: 'adjust',
-    name,
-    params: { ...DEFAULT_ADJUST },
-    maskLayerIds: [],
-    opacity: 1,
-    blend: 'source-over',
-    visible: true,
-    parentId: null,
-    childIds: [],
+    state: { params: { ...DEFAULT_ADJUST }, maskLayerIds: [] },
+    runtime: undefined,
   };
 }
 
 export function createOutlineLayer(name: string, id = newLayerId()): OutlineLayer {
   return {
-    id,
+    ...defaultLayerCommon(id, name),
     type: 'outline',
-    name,
-    outline: { ...DEFAULT_OUTLINE },
-    opacity: 1,
-    blend: 'source-over',
-    visible: true,
-    parentId: null,
-    childIds: [],
+    state: { outline: { ...DEFAULT_OUTLINE } },
+    runtime: undefined,
   };
 }
 
 export function createClipLayer(name: string, id = newLayerId()): ClipLayer {
   return {
-    id,
+    ...defaultLayerCommon(id, name),
     type: 'clip',
-    name,
-    maskLayerIds: [],
-    opacity: 1,
-    blend: 'source-over',
-    visible: true,
-    parentId: null,
-    childIds: [],
+    state: { maskLayerIds: [] },
+    runtime: undefined,
   };
 }
 
 export function createShapeLayer(name: string, shape: ShapeParams, id = newLayerId(), snapEnabled = true): ShapeLayer {
   return {
-    id,
+    ...defaultLayerCommon(id, name),
     type: 'shape',
-    name,
-    shape,
-    snapEnabled,
-    opacity: 1,
-    blend: 'source-over',
-    visible: true,
-    parentId: null,
-    childIds: [],
+    state: { shape, snapEnabled },
+    runtime: undefined,
   };
 }
 
-export function buildFilter(p: AdjustParams): string {
+export function buildFilter(p: import('../model').AdjustParams): string {
   return `brightness(${p.brightness}%) contrast(${p.contrast}%) hue-rotate(${p.hue}deg) saturate(${p.saturation}%)`;
 }

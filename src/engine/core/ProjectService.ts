@@ -183,7 +183,7 @@ export class ProjectService {
       const node = eng.history.push({ kind: 'canvasChange', before, after }, 'キャンバスサイズ・解像度');
       node.ready = Promise.all([...before.layers, ...after.layers].map(async snapshot => {
         if (snapshot.canvas) {
-          try { snapshot.blob = await canvasToBlob(snapshot.canvas); snapshot.canvas = undefined; }
+          try { snapshot.content = await canvasToBlob(snapshot.canvas); snapshot.canvas = undefined; }
           catch { /* Keep the original canvas so undo remains lossless; persistence can retry. */ }
         }
       })).then(() => undefined);

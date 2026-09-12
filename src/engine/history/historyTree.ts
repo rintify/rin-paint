@@ -1,46 +1,18 @@
-import type { AdjustParams, BlendMode, ImageParams, LayerAddress, LayerParameterLink, LayerType, OutlineParams, ShapeParams, TextParams, CanvasSpec } from '../../model';
+import type { LayerAddress, LayerParameterLink, CanvasSpec } from '../../model';
+import type { LayerProps, LayerSnapshot } from '../layer-types/definition';
 import { HISTORY_VERSION } from '../persistence/version';
 import { opBytes } from './bytes';
 import type { TilePatch } from './tilePatch';
+import type { ParameterValue } from '../parameters/types';
 
-/** レイヤー構造操作の undo/redo 用スナップショット */
-export interface LayerSnapshot {
-  id: string;
-  type: LayerType;
-  name: string;
-  opacity: number;
-  blend: BlendMode;
-  visible: boolean;
-  parentId: string | null;
-  childIds: string[];
-  params?: AdjustParams;
-  outline?: OutlineParams;
-  maskLayerIds?: string[];
-  shape?: ShapeParams;
-  snapEnabled?: boolean;
-  constrainAspect?: boolean;
-  text?: TextParams;
-  image?: ImageParams;
-  parameterLink?: LayerParameterLink;
-  /** ラスター内容。作成直後は canvas、PNG エンコード完了後は blob に置き換わる */
-  canvas?: HTMLCanvasElement;
-  blob?: Blob;
-}
+export type { LayerProps, LayerSnapshot };
 
-export interface LayerProps {
-  name?: string;
-  opacity?: number;
-  blend?: BlendMode;
-  visible?: boolean;
-  params?: AdjustParams;
-  outline?: OutlineParams;
-  maskLayerIds?: string[];
-  shape?: ShapeParams;
-  snapEnabled?: boolean;
-  constrainAspect?: boolean;
-  text?: TextParams;
-  image?: ImageParams;
-  parameterLink?: LayerParameterLink | null;
+export interface LayerParameterOp {
+  kind: 'layerParameter';
+  layerId: string;
+  parameterId: string;
+  before: ParameterValue;
+  after: ParameterValue;
 }
 
 export interface LayerLinkOp {
@@ -108,6 +80,7 @@ export type AtomicOp =
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: LayerSnapshot[] }
   | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
+  | LayerParameterOp
   | LayerLinkOp
   | LayerReplaceOp
   | LayerMergeOp
@@ -128,7 +101,7 @@ export interface HistoryNode {
 }
 
 export interface PersistedLayerSnapshot extends Omit<LayerSnapshot, 'canvas'> {
-  blob?: Blob;
+  content?: Blob;
 }
 
 export interface CanvasSnapshot {
@@ -169,6 +142,7 @@ export type PersistedAtomicOp =
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: PersistedLayerSnapshot[] }
   | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
+  | LayerParameterOp
   | LayerLinkOp
   | PersistedLayerReplaceOp
   | PersistedTileLayerMergeOp
@@ -236,7 +210,7 @@ export class HistoryTree {
       const { canvas, ...rest } = value;
       return {
         ...rest,
-        blob: value.blob ?? (canvas ? await canvasToBlob(canvas) : undefined),
+        content: value.content ?? (canvas ? await canvasToBlob(canvas) : undefined),
       };
     };
     const persistAtomic = async (op: AtomicOp): Promise<PersistedAtomicOp> => {
@@ -257,6 +231,8 @@ export class HistoryTree {
           return { ...op };
         case 'layerProps':
           return { ...op, before: { ...op.before }, after: { ...op.after } };
+        case 'layerParameter':
+          return { ...op };
         case 'layerLink':
           return structuredClone(op);
         case 'layerReplace': {

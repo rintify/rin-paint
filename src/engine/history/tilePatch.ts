@@ -170,8 +170,8 @@ export async function applyTiles(
 ): Promise<void> {
   for (const t of tiles) {
     const bmp = await createImageBitmap(which === 'before' ? t.before : t.after);
-    layer.ctx.clearRect(t.x, t.y, t.w, t.h);
-    layer.ctx.drawImage(bmp, t.x, t.y);
+    layer.runtime.ctx.clearRect(t.x, t.y, t.w, t.h);
+    layer.runtime.ctx.drawImage(bmp, t.x, t.y);
     bmp.close();
   }
 }

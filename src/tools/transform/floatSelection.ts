@@ -220,10 +220,10 @@ export class FloatSelection {
 
     const selected = this.eng.selectedRasters();
     this.rasterFloats = selected.map(item => {
-      const before = document.createElement('canvas'); before.width = artW; before.height = artH; before.getContext('2d')!.drawImage(item.canvas, 0, 0);
+      const before = document.createElement('canvas'); before.width = artW; before.height = artH; before.getContext('2d')!.drawImage(item.runtime.canvas, 0, 0);
       const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
-      const cc = canvas.getContext('2d')!; cc.translate(-minX, -minY); input.trace(cc); cc.clip(); cc.drawImage(item.canvas, 0, 0);
-      item.ctx.save(); item.ctx.globalCompositeOperation = 'destination-out'; input.trace(item.ctx); item.ctx.fill(); item.ctx.restore();
+      const cc = canvas.getContext('2d')!; cc.translate(-minX, -minY); input.trace(cc); cc.clip(); cc.drawImage(item.runtime.canvas, 0, 0);
+      item.runtime.ctx.save(); item.runtime.ctx.globalCompositeOperation = 'destination-out'; input.trace(item.runtime.ctx); item.runtime.ctx.fill(); item.runtime.ctx.restore();
       return { layer: item, canvas, before };
     });
     const canvas = (input.preferredLayerId
@@ -334,7 +334,7 @@ export class FloatSelection {
   cancelSelection(): void {
     if (this.phase === 'float') {
       for (const item of this.rasterFloats) {
-        item.layer.ctx.clearRect(0, 0, this.eng.artboard.w, this.eng.artboard.h); item.layer.ctx.drawImage(item.before, 0, 0);
+        item.layer.runtime.ctx.clearRect(0, 0, this.eng.artboard.w, this.eng.artboard.h); item.layer.runtime.ctx.drawImage(item.before, 0, 0);
         this.eng.bumpLayer(item.layer.id);
       }
       this.eng.restoreObjectGroup(this.objectTransforms);
@@ -496,7 +496,7 @@ export class FloatSelection {
   }
 
   private stamp(): void {
-    for (const item of this.rasterFloats) this.drawFloatImage(item.layer.ctx, item.canvas);
+    for (const item of this.rasterFloats) this.drawFloatImage(item.layer.runtime.ctx, item.canvas);
   }
 
   private rotateHandlePos(): Pt {

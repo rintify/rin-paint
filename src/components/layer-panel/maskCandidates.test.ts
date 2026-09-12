@@ -6,6 +6,12 @@ import type { LayerMeta } from '../../model';
 function layer(
   partial: Pick<LayerMeta, 'id' | 'name' | 'type'> & Partial<LayerMeta>,
 ): LayerMeta {
+  const state = partial.state ?? (
+    partial.type === 'adjust' ? { params: { brightness: 100, contrast: 100, hue: 0, saturation: 100 }, maskLayerIds: [] }
+    : partial.type === 'outline' ? { outline: { color: '#000000', widthMm: 1, alphaThreshold: .5, cornerStyle: 'round' } }
+    : partial.type === 'clip' ? { maskLayerIds: [] }
+    : {}
+  );
   return {
     parentId: null,
     childIds: [],
@@ -17,7 +23,8 @@ function layer(
     canRemove: true,
     canTransferShape: false,
     ...partial,
-  };
+    state,
+  } as LayerMeta;
 }
 
 describe('maskCandidateRows', () => {

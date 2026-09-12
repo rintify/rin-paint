@@ -50,8 +50,8 @@ export class FillService {
       const reference = this.engine.compositor.compositeSelection(selected);
       const pixels = reference.getContext('2d', { willReadFrequently: true })!
         .getImageData(0, 0, reference.width, reference.height).data;
-      const before = makeCanvas(target.canvas.width, target.canvas.height);
-      before.getContext('2d')!.drawImage(target.canvas, 0, 0);
+      const before = makeCanvas(target.runtime.canvas.width, target.runtime.canvas.height);
+      before.getContext('2d')!.drawImage(target.runtime.canvas, 0, 0);
       const result = await this.analyze({
         pixels,
         width: reference.width,
@@ -63,7 +63,7 @@ export class FillService {
       }, token);
       if (!result || token !== this.token || !result.bounds) return;
       const bounds = result.bounds;
-      const image = target.ctx.getImageData(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+      const image = target.runtime.ctx.getImageData(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
       const rgb = color === TRANSPARENT ? null : parseHex(color);
       const span = bounds.maxX - bounds.minX;
       for (let y = bounds.minY; y < bounds.maxY; y++) {
@@ -76,7 +76,7 @@ export class FillService {
           }
         }
       }
-      target.ctx.putImageData(image, bounds.minX, bounds.minY);
+      target.runtime.ctx.putImageData(image, bounds.minX, bounds.minY);
       this.engine.commitRasterBatch([{ layer: target, before, rect: bounds }], '塗りつぶし');
       if (color !== TRANSPARENT) useStore.getState().pushColor(color);
     } finally {
