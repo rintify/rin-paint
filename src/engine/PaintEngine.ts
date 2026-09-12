@@ -333,6 +333,8 @@ export class PaintEngine {
   linkCandidates(id: string): LayerLinkCandidate[] { return this.links.candidates(id); }
   async changeLayerLinkSource(targetId: string, source: LayerAddress): Promise<void> { return this.links.changeSource(targetId, source); }
   removeLayerLink(targetId: string): void { this.links.removeLink(targetId); }
+  unlinkLayerParameter(targetId: string, semanticId: string): void { this.links.unlinkParameter(targetId, semanticId); }
+  unlinkLayerParameters(targetIds: string[], semanticId: string): void { this.links.unlinkParameters(targetIds, semanticId); }
   async relinkLayerParameter(targetId: string, semanticId: string): Promise<void> { return this.links.relink(targetId, semanticId); }
   async relinkAllLayerParameters(targetId: string): Promise<void> { return this.links.relink(targetId); }
   async focusLayerReference(address: LayerAddress): Promise<void> {
@@ -503,6 +505,12 @@ export class PaintEngine {
   }
   updateSelectedParameter(key: string, value: LayerParameterValue): void {
     this.layerService.updateSelectedParameter(key, value);
+  }
+  previewSelectedParameter(key: string, value: LayerParameterValue): void {
+    this.layerService.previewSelectedParameter(key, value);
+  }
+  commitSelectedParameterPreview(key: string, before: LayerParameterValue, value: LayerParameterValue): void {
+    this.layerService.commitSelectedParameterPreview(key, before, value);
   }
   commitSelectedLayerOpacity(beforeById: Record<string, number>, opacity: number): void {
     this.layerService.commitSelectedLayerOpacity(beforeById, opacity);

@@ -196,6 +196,27 @@ export class ParameterLinkService {
     this.engine.committed();
   }
 
+  unlinkParameter(targetLayerId: string, semanticId: string): void {
+    this.unlinkParameters([targetLayerId], semanticId);
+  }
+
+  unlinkParameters(targetLayerIds: string[], semanticId: string): void {
+    const ops = targetLayerIds.flatMap(targetLayerId => {
+      const targetAddress = this.currentAddress(targetLayerId);
+      const target = this.find(targetAddress);
+      const current = target?.layer.parameterLink;
+      if (!target || !current?.linkedParameterIds.includes(semanticId)) return [];
+      const before = cloneLink(current)!;
+      const after = cloneLink(current)!;
+      after.linkedParameterIds = after.linkedParameterIds.filter(id => id !== semanticId);
+      this.apply(target, { parameterLink: after });
+      return [{ kind: 'layerLink' as const, target: targetAddress, before, after: cloneLink(after) }];
+    });
+    if (!ops.length) return;
+    this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, 'パラメータのリンクを解除');
+    this.engine.committed();
+  }
+
   async relink(targetLayerId: string, semanticId?: string): Promise<void> {
     await this.flush();
     const targetAddress = this.currentAddress(targetLayerId);

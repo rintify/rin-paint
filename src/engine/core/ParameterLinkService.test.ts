@@ -67,6 +67,19 @@ describe('ParameterLinkService', () => {
     expect(service.detachChanged(b, before, before)).toBeNull();
   });
 
+  it('unlinks one parameter without changing its value or the other links', () => {
+    const a = shape('a', '#111111');
+    const b = shape('b', '#222222');
+    const { service, history } = setup([a, b]);
+    service.createPasteLink('b', { pageId: 'p1', layerId: 'a' });
+    const color = b.shape.color;
+    service.unlinkParameter('b', 'appearance.color');
+    expect(b.shape.color).toBe(color);
+    expect(b.parameterLink?.linkedParameterIds).not.toContain('appearance.color');
+    expect(b.parameterLink?.linkedParameterIds).toContain('layer.opacity');
+    expect(history).toHaveLength(1);
+  });
+
   it('disables self and cyclic source candidates', async () => {
     const a = shape('a', '#111111');
     const b = shape('b', '#111111');

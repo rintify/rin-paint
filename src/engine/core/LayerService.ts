@@ -797,6 +797,43 @@ export class LayerService {
     this.engine.committed();
   }
 
+  previewSelectedParameter(key: string, value: LayerParameterValue): void {
+    const state = useStore.getState();
+    const ids = state.multiSelectMode ? state.selectedLayerIds : [this.activeLayerId];
+    for (const layerId of ids) {
+      const layer = this.byId(layerId);
+      if (!layer) continue;
+      const descriptor = layerParameterDescriptors(layer).find(item => item.key === key || parameterSemanticId(item) === key);
+      if (!descriptor) continue;
+      this.assignProps(layer, descriptor.write(layer, value));
+      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId }, true);
+    }
+    this.engine.requestRender();
+    this.engine.syncStore();
+  }
+
+  commitSelectedParameterPreview(key: string, beforeValue: LayerParameterValue, value: LayerParameterValue): void {
+    const state = useStore.getState();
+    const ids = state.multiSelectMode ? state.selectedLayerIds : [this.activeLayerId];
+    const changes = ids.flatMap(layerId => {
+      const layer = this.byId(layerId);
+      if (!layer) return [];
+      const descriptor = layerParameterDescriptors(layer).find(item => item.key === key || parameterSemanticId(item) === key);
+      if (!descriptor) return [];
+      return [{ layer, layerId, before: descriptor.write(layer, beforeValue), after: descriptor.write(layer, value) }];
+    });
+    const ops: import('../history/historyTree').AtomicOp[] = changes.flatMap(({ layer, layerId, before, after }) => {
+      this.assignProps(layer, after);
+      const propsOp = { kind: 'layerProps' as const, layerId, before, after };
+      const linkOp = this.linkOpForUserChange(layer, before, after, true);
+      return linkOp ? [propsOp, linkOp] : [propsOp];
+    });
+    if (!ops.length) return;
+    this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, '共通パラメータを変更');
+    for (const { layerId } of changes) this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId });
+    this.engine.committed();
+  }
+
   commitSelectedLayerOpacity(beforeById: Record<string, number>, opacity: number): void {
     const changes = Object.entries(beforeById).flatMap(([layerId, before]) => {
       const layer = this.byId(layerId);

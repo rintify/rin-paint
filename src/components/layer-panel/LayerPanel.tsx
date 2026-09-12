@@ -3,8 +3,8 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import LinkIcon from '@mui/icons-material/Link';
-import HubIcon from '@mui/icons-material/Hub';
 import {
+  Badge,
   Box,
   Button,
   Dialog,
@@ -55,6 +55,7 @@ export function LayerPanel() {
   const previousGeneration = useRef(generation);
   const previousMulti = useRef(multi);
   const previousActiveId = useRef(activeId);
+  const requestedPaletteId = useRef<string | null>(null);
   const byId = useMemo(() => new Map(layers.map(l => [l.id, l])), [layers]);
   const active = byId.get(activeId);
   const [palette, setPalette] = useState<{ id: string; open: boolean }>(() => ({
@@ -235,9 +236,11 @@ export function LayerPanel() {
   useLayoutEffect(() => {
     if (previousActiveId.current === activeId) return;
     previousActiveId.current = activeId;
+    const explicitlyRequested = requestedPaletteId.current === activeId;
+    if (explicitlyRequested) requestedPaletteId.current = null;
     setPalette(current => ({
       id: activeId,
-      open: multi ? current.open : !!active && hasLayerControls(active.type),
+      open: multi ? current.open : explicitlyRequested || (!!active && hasLayerControls(active.type)),
     }));
   }, [activeId, active, multi]);
 
@@ -450,10 +453,20 @@ export function LayerPanel() {
                   applyDrop();
                 }}
               >
+                <Tooltip title={meta.parameterLink?.linkedParameterIds.includes('layer.visible')
+                  ? '表示状態はリンク元を参照中'
+                  : meta.parameterLink && meta.compatibleLinkParameterIds?.includes('layer.visible')
+                    ? '表示状態のリンクは解除済み'
+                    : '表示切替'}>
                 <IconButton
                   draggable={false}
                   size="small"
-                  aria-label="表示切替"
+                  aria-label={meta.parameterLink?.linkedParameterIds.includes('layer.visible') ? '表示切替・リンク中' : '表示切替'}
+                  sx={meta.parameterLink?.linkedParameterIds.includes('layer.visible')
+                    ? { color: 'secondary.main' }
+                    : meta.parameterLink && meta.compatibleLinkParameterIds?.includes('layer.visible')
+                      ? { color: 'text.disabled', outline: '1px dashed', outlineColor: 'divider' }
+                      : undefined}
                   onPointerDown={e => e.stopPropagation()}
                   onClick={event => {
                     event.stopPropagation();
@@ -469,20 +482,26 @@ export function LayerPanel() {
                     ? <VisibilityIcon sx={{ fontSize: 16 }} />
                     : <VisibilityOffIcon sx={{ fontSize: 16 }} />}
                 </IconButton>
+                </Tooltip>
                 {meta.type === 'adjust' || meta.type === 'outline' || meta.type === 'clip'
                   ? <Box className={`effect-badge ${meta.type}`}>{meta.type === 'adjust' ? '補正' : meta.type === 'outline' ? '縁' : 'クリップ'}</Box>
                   : <Thumb meta={meta} />}
                 <Typography variant="body2" noWrap sx={{ flex: 1, opacity: meta.visible ? 1 : 0.5 }}>
                   {meta.name}
                 </Typography>
-                {meta.parameterLink && (
-                  <Tooltip title={meta.linkSource?.missing ? 'リンク元が見つかりません' : 'パラメータリンクあり'}>
-                    <LinkIcon color={meta.linkSource?.missing ? 'warning' : 'primary'} sx={{ fontSize: 15 }} />
-                  </Tooltip>
-                )}
-                {!!meta.directLinkTargets?.length && (
-                  <Tooltip title={`${meta.directLinkTargets.length}レイヤーのリンク元`}>
-                    <HubIcon color="secondary" sx={{ fontSize: 15 }} />
+                {(meta.parameterLink || !!meta.directLinkTargets?.length) && (
+                  <Tooltip title={[
+                    meta.parameterLink && (meta.linkSource?.missing ? 'リンク元が見つかりません' : 'リンク元を参照中'),
+                    !!meta.directLinkTargets?.length && `${meta.directLinkTargets.length}レイヤーから参照`,
+                  ].filter(Boolean).join('・')}>
+                    <Badge
+                      badgeContent={meta.directLinkTargets?.length || 0}
+                      color="secondary"
+                      max={99}
+                      sx={{ '& .MuiBadge-badge': { fontSize: 9, minWidth: 14, height: 14 } }}
+                    >
+                      <LinkIcon sx={{ fontSize: 16, color: meta.linkSource?.missing ? 'warning.main' : 'secondary.main' }} />
+                    </Badge>
                   </Tooltip>
                 )}
                 {multi && isPrimary && <Box className="primary-badge">主</Box>}
@@ -546,6 +565,7 @@ export function LayerPanel() {
         <MenuItem
           onClick={() => {
             if (menu) {
+              requestedPaletteId.current = menu.id;
               select(menu.id);
               setPalette({ id: menu.id, open: true });
             }
@@ -622,7 +642,10 @@ export function LayerPanel() {
         </DialogActions>
       </Dialog>
       {active && palette.id === active.id && palette.open && (
-        <LayerControlsPalette meta={active} onClose={() => setPalette({ id: active.id, open: false })} />
+        <LayerControlsPalette
+          meta={active}
+          onClose={() => setPalette({ id: active.id, open: false })}
+        />
       )}
     </Box>
   );

@@ -1,39 +1,45 @@
 import CloseIcon from '@mui/icons-material/Close';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
 import {
   Box,
   Button,
   FormControl,
   IconButton,
+  Menu,
   MenuItem,
   Paper,
   Select,
   Stack,
   Typography,
 } from '@mui/material';
-import { useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { useEngine } from '../EngineContext';
 import { useStore } from '../../state/store';
 import { BLEND_OPTIONS, type BlendMode, type LayerMeta } from '../../model';
 import { layerTypeHandler } from '../../engine/layer-types/registry';
+import { shapePanelActions } from '../../engine/shapes';
 import { CommitSlider } from './CommitSlider';
 import { layerControlsPanel } from './layerControls';
 import { MultiParameterControls } from './MultiParameterControls';
 import { LayerLinkControls } from './LayerLinkControls';
+import { ParameterLinkIndicator } from './ParameterLinkIndicator';
 
 function OpacityControl({
   value,
   onPreview,
   onCommit,
   linked = false,
+  indicator,
 }: {
   value: number | null;
   onPreview: (value: number) => void;
   onCommit: (before: number | null, after: number) => void;
   linked?: boolean;
+  indicator?: ReactNode;
 }) {
   return (
-    <Stack direction="row" spacing={1} sx={{ alignItems: 'center', ...(linked ? { color: 'primary.main' } : {}) }}>
-      <Typography variant="caption" color={linked ? 'primary' : 'text.secondary'} sx={{ width: 72, flex: 'none' }}>
+    <Stack direction="row" spacing={1} sx={{ alignItems: 'center', ...(linked ? { color: 'secondary.main' } : {}) }}>
+      <Typography variant="caption" color={linked ? 'secondary' : 'text.secondary'} sx={{ width: 72, flex: 'none' }}>
         不透明度
       </Typography>
       <CommitSlider value={value} min={0} max={100} onPreview={onPreview} onCommit={onCommit} />
@@ -44,11 +50,83 @@ function OpacityControl({
       >
         {value ?? '—'}
       </Typography>
+      {indicator}
     </Stack>
   );
 }
 
-function LayerControls({ meta }: { meta: LayerMeta }) {
+function LayerSettingsOverflow({
+  meta,
+  onRequestLinkDialog,
+}: {
+  meta: LayerMeta;
+  onRequestLinkDialog: () => void;
+}) {
+  const engine = useEngine();
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const shapeActions = meta.shape ? shapePanelActions(meta.shape) : [];
+  return (
+    <>
+      <IconButton
+        size="small"
+        aria-label="レイヤー設定のその他の操作"
+        sx={{ alignSelf: 'flex-end' }}
+        onClick={event => setAnchor(event.currentTarget)}
+      >
+        <MoreVertIcon />
+      </IconButton>
+      <Menu anchorEl={anchor} open={!!anchor} onClose={() => setAnchor(null)} disableRestoreFocus>
+        <MenuItem
+          onClick={() => {
+            setAnchor(null);
+            onRequestLinkDialog();
+          }}
+        >
+          {meta.parameterLink ? 'リンク元を変更' : 'リンク元を設定'}
+        </MenuItem>
+        {meta.parameterLink && (
+          <MenuItem
+            onClick={() => {
+              setAnchor(null);
+              void engine.relinkAllLayerParameters(meta.id);
+            }}
+          >
+            互換項目をすべて再リンク
+          </MenuItem>
+        )}
+        {meta.parameterLink && (
+          <MenuItem
+            onClick={() => {
+              setAnchor(null);
+              engine.removeLayerLink(meta.id);
+            }}
+          >
+            パラメータリンクを解除
+          </MenuItem>
+        )}
+        {shapeActions.map(action => (
+          <MenuItem
+            key={action.id}
+            onClick={() => {
+              setAnchor(null);
+              if (action.id === 'convertToPolygon') engine.convertRectToPolygon(meta.id);
+            }}
+          >
+            {action.label}
+          </MenuItem>
+        ))}
+      </Menu>
+    </>
+  );
+}
+
+function LayerControls({
+  meta,
+  onRequestLinkDialog,
+}: {
+  meta: LayerMeta;
+  onRequestLinkDialog: () => void;
+}) {
   const engine = useEngine();
   const multi = useStore(s => s.multiSelectMode);
   if (multi) return <MultiLayerControls />;
@@ -60,6 +138,7 @@ function LayerControls({ meta }: { meta: LayerMeta }) {
       <OpacityControl
         value={pct}
         linked={meta.parameterLink?.linkedParameterIds.includes('layer.opacity')}
+        indicator={<ParameterLinkIndicator meta={meta} semanticId="layer.opacity" />}
         onPreview={v => engine.previewLayerProps(meta.id, { opacity: v / 100 })}
         onCommit={(b, a) =>
           engine.commitLayerProps(
@@ -71,10 +150,10 @@ function LayerControls({ meta }: { meta: LayerMeta }) {
       />
       {handler.supportsBlend && (
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          <Typography variant="caption" color={meta.parameterLink?.linkedParameterIds.includes('layer.blend') ? 'primary' : 'text.secondary'} sx={{ width: 72, flex: 'none' }}>
+          <Typography variant="caption" color={meta.parameterLink?.linkedParameterIds.includes('layer.blend') ? 'secondary' : 'text.secondary'} sx={{ width: 72, flex: 'none' }}>
             合成
           </Typography>
-          <FormControl size="small" fullWidth color={meta.parameterLink?.linkedParameterIds.includes('layer.blend') ? 'primary' : undefined}>
+          <FormControl size="small" fullWidth color={meta.parameterLink?.linkedParameterIds.includes('layer.blend') ? 'secondary' : undefined}>
             <Select
               value={meta.blend}
               onChange={(e) =>
@@ -90,9 +169,11 @@ function LayerControls({ meta }: { meta: LayerMeta }) {
               ))}
             </Select>
           </FormControl>
+          <ParameterLinkIndicator meta={meta} semanticId="layer.blend" />
         </Stack>
       )}
       {TypeControls && <TypeControls meta={meta} />}
+      <LayerSettingsOverflow meta={meta} onRequestLinkDialog={onRequestLinkDialog} />
     </Stack>
   );
 }
@@ -111,11 +192,18 @@ function MultiLayerControls() {
   );
 }
 
-export function LayerControlsPalette({ meta, onClose }: { meta: LayerMeta; onClose: () => void }) {
+export function LayerControlsPalette({
+  meta,
+  onClose,
+}: {
+  meta: LayerMeta;
+  onClose: () => void;
+}) {
   const engine = useEngine();
   const multi = useStore(s => s.multiSelectMode);
   const selectedCount = useStore(s => s.selectedLayerIds.length);
   const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [linkDialogRequested, setLinkDialogRequested] = useState(false);
   const paper = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
     const clamp = () => {
@@ -215,8 +303,14 @@ export function LayerControlsPalette({ meta, onClose }: { meta: LayerMeta; onClo
             複数選択を解除
           </Button>
         )}
-        {!multi && <LayerLinkControls meta={meta} />}
-        <LayerControls meta={meta} />
+        {!multi && (
+          <LayerLinkControls
+            meta={meta}
+            sourceDialogRequested={linkDialogRequested}
+            onSourceDialogOpened={() => setLinkDialogRequested(false)}
+          />
+        )}
+        <LayerControls meta={meta} onRequestLinkDialog={() => setLinkDialogRequested(true)} />
       </Box>
     </Paper>
   );

@@ -3,6 +3,8 @@ import { useEngine } from '../EngineContext';
 import type { AdjustParams, LayerMeta } from '../../model';
 import { CommitSlider } from './CommitSlider';
 import { MaskControls } from './MaskControls';
+import { ParameterLinkIndicator } from './ParameterLinkIndicator';
+import { linkedParameterColor } from './parameterLinkUi';
 
 const ADJUST_SLIDERS: { key: keyof AdjustParams; label: string; min: number; max: number }[] = [
   { key: 'brightness', label: '明度', min: 0, max: 200 },
@@ -18,7 +20,7 @@ export function AdjustControls({ meta }: { meta: LayerMeta }) {
     <>
       {ADJUST_SLIDERS.map((p) => (
         <Stack direction="row" spacing={1} key={p.key} sx={{ alignItems: 'center' }}>
-          <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>
+          <Typography variant="caption" color={linkedParameterColor(meta, `adjust.${p.key}`)} sx={{ width: 72, flex: 'none' }}>
             {p.label}
           </Typography>
           <CommitSlider
@@ -41,6 +43,7 @@ export function AdjustControls({ meta }: { meta: LayerMeta }) {
           >
             {params[p.key]}
           </Typography>
+          <ParameterLinkIndicator meta={meta} semanticId={`adjust.${p.key}`} />
         </Stack>
       ))}
       <MaskControls meta={meta} />

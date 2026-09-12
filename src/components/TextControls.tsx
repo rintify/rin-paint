@@ -10,6 +10,8 @@ import { useEngine } from './EngineContext';
 import { pickFile } from './hooks/pickFile';
 import { NumericField } from './NumericField';
 import { CanvasMmField } from './CanvasMmField';
+import { ParameterLinkIndicator } from './layer-panel/ParameterLinkIndicator';
+import { linkedParameterColor } from './layer-panel/parameterLinkUi';
 
 export function TextControls({ meta }: { meta: LayerMeta }) {
   const engine = useEngine();
@@ -47,7 +49,7 @@ export function TextControls({ meta }: { meta: LayerMeta }) {
       </Typography>
       <Stack spacing={0.25}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>スナップ</Typography>
+          <Typography variant="caption" color={linkedParameterColor(meta, 'interaction.snap')} sx={{ width: 72, flex: 'none' }}>スナップ</Typography>
           <Switch
             checked={meta.snapEnabled !== false}
             onChange={event => engine.commitLayerProps(
@@ -58,22 +60,19 @@ export function TextControls({ meta }: { meta: LayerMeta }) {
             )}
             slotProps={{ input: { 'aria-label': 'スナップ' } }}
           />
+          <ParameterLinkIndicator meta={meta} semanticId="interaction.snap" />
         </Stack>
         <Typography variant="caption" color="text.secondary">移動の端・中央と90°回転</Typography>
       </Stack>
       <Stack direction="row" spacing={1}>
-        <CanvasMmField
-          size="small"
-          label="X"
-          valuePx={text.x}
-          onCommitPx={value => change(before => ({ ...before, x: value }))}
-        />
-        <CanvasMmField
-          size="small"
-          label="Y"
-          valuePx={text.y}
-          onCommitPx={value => change(before => ({ ...before, y: value }))}
-        />
+        <Stack direction="row" spacing={0.25} sx={{ alignItems: 'center', minWidth: 0 }}>
+          <CanvasMmField size="small" label="X" valuePx={text.x} onCommitPx={value => change(before => ({ ...before, x: value }))} />
+          <ParameterLinkIndicator meta={meta} semanticId="frame.leftMm" />
+        </Stack>
+        <Stack direction="row" spacing={0.25} sx={{ alignItems: 'center', minWidth: 0 }}>
+          <CanvasMmField size="small" label="Y" valuePx={text.y} onCommitPx={value => change(before => ({ ...before, y: value }))} />
+          <ParameterLinkIndicator meta={meta} semanticId="frame.topMm" />
+        </Stack>
       </Stack>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
         <CanvasMmField
@@ -92,6 +91,7 @@ export function TextControls({ meta }: { meta: LayerMeta }) {
             width: event.target.checked ? null : (engine.textFrameSize(meta.id)?.width ?? 1),
           }))}
         />
+        <ParameterLinkIndicator meta={meta} semanticId="frame.widthMm" />
       </Stack>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
         <CanvasMmField
@@ -110,6 +110,7 @@ export function TextControls({ meta }: { meta: LayerMeta }) {
             height: event.target.checked ? null : (engine.textFrameSize(meta.id)?.height ?? 1),
           }))}
         />
+        <ParameterLinkIndicator meta={meta} semanticId="frame.heightMm" />
       </Stack>
       <TextField
         select
@@ -169,18 +170,17 @@ export function TextControls({ meta }: { meta: LayerMeta }) {
       <Typography variant="caption" color="text.secondary">
         ルビは同じ行の文字を選択して設定します。
       </Typography>
-      <TextField
-        select
-        size="small"
-        label="文字全体の方向"
-        value={text.direction}
-        disabled={session.composing}
-        onChange={e =>
-          change(before => ({ ...before, direction: e.target.value as TextParams['direction'] }))}
-      >
-        <MenuItem value="horizontal">横書き</MenuItem>
-        <MenuItem value="vertical">縦書き</MenuItem>
-      </TextField>
+      <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
+        <TextField
+          select fullWidth size="small" label="文字全体の方向" value={text.direction}
+          disabled={session.composing}
+          onChange={e => change(before => ({ ...before, direction: e.target.value as TextParams['direction'] }))}
+        >
+          <MenuItem value="horizontal">横書き</MenuItem>
+          <MenuItem value="vertical">縦書き</MenuItem>
+        </TextField>
+        <ParameterLinkIndicator meta={meta} semanticId="text.direction" />
+      </Stack>
       <Stack direction="row" spacing={1}>
         <TextField
           select
@@ -195,6 +195,7 @@ export function TextControls({ meta }: { meta: LayerMeta }) {
           <MenuItem value="center">中央揃え</MenuItem>
           <MenuItem value="right">右揃え</MenuItem>
         </TextField>
+        <ParameterLinkIndicator meta={meta} semanticId="text.horizontalAlign" />
         <TextField
           select
           fullWidth
@@ -208,16 +209,16 @@ export function TextControls({ meta }: { meta: LayerMeta }) {
           <MenuItem value="center">中央揃え</MenuItem>
           <MenuItem value="bottom">下揃え</MenuItem>
         </TextField>
+        <ParameterLinkIndicator meta={meta} semanticId="text.verticalAlign" />
       </Stack>
-      <NumericField
-        size="small"
-        label="行間 (倍)"
-        value={text.lineHeight}
-        min={1}
-        max={5}
-        disabled={session.composing}
-        onCommit={value => change(before => ({ ...before, lineHeight: value }))}
-      />
+      <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
+        <NumericField
+          fullWidth size="small" label="行間 (倍)" value={text.lineHeight} min={1} max={5}
+          disabled={session.composing}
+          onCommit={value => change(before => ({ ...before, lineHeight: value }))}
+        />
+        <ParameterLinkIndicator meta={meta} semanticId="text.lineHeight" />
+      </Stack>
       <NumericField
         size="small"
         label="回転 (度)"

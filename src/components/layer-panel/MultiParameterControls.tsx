@@ -1,4 +1,6 @@
-import { Box, Button, FormControl, MenuItem, Select, Stack, Switch, Typography } from '@mui/material';
+import LinkIcon from '@mui/icons-material/Link';
+import LinkOffIcon from '@mui/icons-material/LinkOff';
+import { Box, Button, FormControl, IconButton, MenuItem, Select, Stack, Switch, Tooltip, Typography } from '@mui/material';
 import { commonLayerParameterDescriptors, parameterSemanticId } from '../../engine/layerParameters';
 import { STANDARD_FONTS } from '../../engine/text/render';
 import { clampSizeMm, mmToPx, pxToMm, roundMm, SIZE_MM_MAX, SIZE_MM_MIN } from '../../engine/units';
@@ -25,23 +27,38 @@ export function MultiParameterControls({ layers }: { layers: LayerMeta[] }) {
   return (
     <Stack spacing={1}>
       <Typography variant="caption" color="text.secondary">共通パラメータ</Typography>
-      {layers.some(layer => !!layer.parameterLink) && (
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={() => void Promise.all(layers.filter(layer => !!layer.parameterLink).map(layer => engine.relinkAllLayerParameters(layer.id)))}
-        >
-          各リンク元へ再リンク
-        </Button>
-      )}
       {descriptors.map(descriptor => {
         const shared = sharedValue(layers.map(layer => descriptor.read(layer)));
         const value = shared.value;
         const semanticId = parameterSemanticId(descriptor);
-        const linkedCount = layers.filter(layer => layer.parameterLink?.linkedParameterIds.includes(semanticId)).length;
+        const linkedLayers = layers.filter(layer => layer.parameterLink?.linkedParameterIds.includes(semanticId));
+        const linkedCount = linkedLayers.length;
         const linkState = linkedCount === 0 ? 'none' : linkedCount === layers.length ? 'all' : 'mixed';
-        const label = `${descriptor.label}${linkState === 'all' ? ' 🔗' : linkState === 'mixed' ? ' ◐' : ''}`;
-        const labelColor = linkState === 'all' ? 'primary' : linkState === 'mixed' ? 'warning.main' : 'text.secondary';
+        const label = descriptor.label;
+        const labelColor = linkState === 'all' ? 'secondary' : linkState === 'mixed' ? 'warning.main' : 'text.secondary';
+        const relinkable = layers.filter(layer => layer.parameterLink
+          && layer.compatibleLinkParameterIds?.includes(semanticId)
+          && !layer.parameterLink.linkedParameterIds.includes(semanticId));
+        const indicatorSx = {
+          width: 24, height: 24, minWidth: 24, p: 0, flex: '0 0 24px',
+          boxSizing: 'border-box', border: '1px solid transparent',
+        } as const;
+        const linkIndicator = linkedLayers.length ? (
+          <Tooltip title={linkState === 'mixed' ? `${linkedLayers.length}レイヤーのリンクを解除` : 'クリックしてリンクを解除'}>
+            <IconButton
+              disableRipple
+              aria-label={`${descriptor.label}のリンクを解除`}
+              sx={{ ...indicatorSx, color: linkState === 'mixed' ? 'warning.main' : 'secondary.main' }}
+              onClick={() => engine.unlinkLayerParameters(linkedLayers.map(layer => layer.id), semanticId)}
+            ><LinkIcon fontSize="small" /></IconButton>
+          </Tooltip>
+        ) : relinkable.length ? (
+          <Tooltip title={`${relinkable.length}レイヤーをそれぞれのリンク元へ再リンク`}>
+            <IconButton disableRipple aria-label={`${descriptor.label}を再リンク`} sx={{ ...indicatorSx, color: 'text.disabled', borderStyle: 'dashed', borderColor: 'text.disabled' }} onClick={() => void Promise.all(
+              relinkable.map(layer => engine.relinkLayerParameter(layer.id, semanticId)),
+            )}><LinkOffIcon fontSize="small" /></IconButton>
+          </Tooltip>
+        ) : null;
         const commit = (next: number | string) => {
           engine.updateSelectedParameter(descriptor.key, next);
         };
@@ -58,6 +75,7 @@ export function MultiParameterControls({ layers }: { layers: LayerMeta[] }) {
               }}
               slotProps={{ input: { 'aria-label': descriptor.label } }}
             />
+            {linkIndicator}
           </Stack>
         );
         if (descriptor.control === 'number' && descriptor.canvasLength && descriptor.key === 'strokeWidth') {
@@ -74,9 +92,15 @@ export function MultiParameterControls({ layers }: { layers: LayerMeta[] }) {
                   valueMm={strokeMm}
                   min={SIZE_MM_MIN}
                   max={SIZE_MM_MAX}
-                  onChange={mm => commit(mmToPx(clampSizeMm(roundMm(mm)), ppi))}
+                  onPreview={mm => engine.previewSelectedParameter(descriptor.key, mmToPx(clampSizeMm(roundMm(mm)), ppi))}
+                  onCommit={(before, after) => engine.commitSelectedParameterPreview(
+                    descriptor.key,
+                    mmToPx(clampSizeMm(roundMm(before)), ppi),
+                    mmToPx(clampSizeMm(roundMm(after)), ppi),
+                  )}
                 />
               )}
+              {linkIndicator}
             </Stack>
           );
         }
@@ -92,19 +116,21 @@ export function MultiParameterControls({ layers }: { layers: LayerMeta[] }) {
             );
           }
           return (
+            <Stack key={descriptor.key} direction="row" spacing={0.25} sx={{ alignItems: 'center' }}>
             <CanvasMmField
-              key={descriptor.key}
               size="small"
               label={label}
               valuePx={value}
               minPx={descriptor.min}
               onCommitPx={commit}
             />
+            {linkIndicator}
+            </Stack>
           );
         }
         if (descriptor.control === 'number') return (
+          <Stack key={descriptor.key} direction="row" spacing={0.25} sx={{ alignItems: 'center' }}>
           <NumericField
-            key={descriptor.key}
             size="small"
             label={label}
             value={typeof value === 'number' ? value : null}
@@ -112,6 +138,8 @@ export function MultiParameterControls({ layers }: { layers: LayerMeta[] }) {
             max={descriptor.max}
             onCommit={commit}
           />
+          {linkIndicator}
+          </Stack>
         );
         if (descriptor.control === 'color') return (
           <Stack key={descriptor.key} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
@@ -129,6 +157,7 @@ export function MultiParameterControls({ layers }: { layers: LayerMeta[] }) {
             {descriptor.allowTransparent && (
               <Button size="small" variant={value === TRANSPARENT ? 'contained' : 'outlined'} onClick={() => commit(TRANSPARENT)}>透明</Button>
             )}
+            {linkIndicator}
           </Stack>
         );
         const options = descriptor.key === 'fontId'
@@ -148,6 +177,7 @@ export function MultiParameterControls({ layers }: { layers: LayerMeta[] }) {
                 {options.map(option => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
               </Select>
             </FormControl>
+            {linkIndicator}
           </Stack>
         );
       })}
