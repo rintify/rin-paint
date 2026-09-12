@@ -16,7 +16,8 @@ import { useEngine } from '../EngineContext';
 import { useStore } from '../../state/store';
 import type { LayerMeta } from '../../model';
 import { maskSourceLabel } from '../../engine/layer-types/registry';
-import { maskCandidateRows } from './maskCandidates';
+import { canUseLayerAsMask, maskCandidateRows } from './maskCandidates';
+import { focusLayerRow } from './layerPanelEvents';
 import { Thumb } from './Thumb';
 
 export function MaskControls({ meta, mode = 'adjust' }: { meta: LayerMeta; mode?: 'adjust' | 'clip' }) {
@@ -26,6 +27,7 @@ export function MaskControls({ meta, mode = 'adjust' }: { meta: LayerMeta; mode?
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [draft, setDraft] = useState<string[]>(meta.maskLayerIds ?? []);
+  const [dropActive, setDropActive] = useState(false);
   const byId = useMemo(() => new Map(layers.map(layer => [layer.id, layer])), [layers]);
   const candidates = maskCandidateRows(rootLayerIds, layers, meta.id, query);
   const show = () => {
@@ -33,9 +35,38 @@ export function MaskControls({ meta, mode = 'adjust' }: { meta: LayerMeta; mode?
     setQuery('');
     setOpen(true);
   };
+  const droppedLayerId = (event: React.DragEvent) => event.dataTransfer.getData('text/plain');
+  const canDrop = (id: string) => canUseLayerAsMask(rootLayerIds, layers, meta.id, id);
+  const addDroppedMask = (id: string) => {
+    if (!canDrop(id) || meta.maskLayerIds?.includes(id)) return;
+    engine.commitLayerProps(
+      meta.id,
+      { maskLayerIds: meta.maskLayerIds ?? [] },
+      { maskLayerIds: [...(meta.maskLayerIds ?? []), id] },
+      'マスクを追加',
+    );
+  };
   return (
     <>
-      <Stack spacing={1} className="mask-controls">
+      <Stack
+        spacing={1}
+        className={`mask-controls${dropActive ? ' drop-active' : ''}`}
+        onDragOver={event => {
+          if (!canDrop(droppedLayerId(event))) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'copy';
+          setDropActive(true);
+        }}
+        onDragLeave={event => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node)) setDropActive(false);
+        }}
+        onDrop={event => {
+          event.preventDefault();
+          event.stopPropagation();
+          setDropActive(false);
+          addDroppedMask(droppedLayerId(event));
+        }}
+      >
         <Stack direction="row" sx={{ alignItems: 'center' }}>
           <Box sx={{ flex: 1 }}>
             <Typography variant="caption" color="text.secondary">マスク</Typography>
@@ -54,17 +85,25 @@ export function MaskControls({ meta, mode = 'adjust' }: { meta: LayerMeta; mode?
                 key={id}
                 size="small"
                 label={byId.get(id)?.name ?? '削除済み'}
-                onDelete={() =>
+                clickable
+                onClick={() => focusLayerRow(id)}
+                aria-label={`${byId.get(id)?.name ?? '削除済み'}をレイヤー一覧で表示`}
+                onDelete={event => {
+                  event.stopPropagation();
                   engine.commitLayerProps(
                     meta.id,
                     { maskLayerIds: meta.maskLayerIds },
                     { maskLayerIds: meta.maskLayerIds!.filter(value => value !== id) },
                     'マスクを解除',
-                  )}
+                  );
+                }}
               />
             ))}
           </Stack>
         )}
+        <Typography variant="caption" color="text.secondary">
+          レイヤー一覧からここへドロップして追加できます。
+        </Typography>
       </Stack>
       <Dialog
         open={open}
@@ -101,7 +140,13 @@ export function MaskControls({ meta, mode = 'adjust' }: { meta: LayerMeta; mode?
                     key={id}
                     size="small"
                     label={byId.get(id)?.name ?? '削除済み'}
-                    onDelete={() => setDraft(current => current.filter(value => value !== id))}
+                    clickable
+                    onClick={() => focusLayerRow(id)}
+                    aria-label={`${byId.get(id)?.name ?? '削除済み'}をレイヤー一覧で表示`}
+                    onDelete={event => {
+                      event.stopPropagation();
+                      setDraft(current => current.filter(value => value !== id));
+                    }}
                   />
                 ))}
               </Stack>

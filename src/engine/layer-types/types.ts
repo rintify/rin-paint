@@ -96,6 +96,8 @@ export interface LayerDrawEnv extends LayerMeasureEnv {
   ppi: number;
   /** 指定レイヤー自身のアルファをOR合成する。表示状態は無視する。 */
   maskCanvas(ids: string[]): MaskCanvas | null;
+  /** 入力を必要とする効果レイヤーの、効果によって追加された見た目だけを描画する。 */
+  drawEffectContribution(ctx: CanvasRenderingContext2D, layerId: string): void;
   effectCache: EffectCacheStore;
   stats: RenderStatsAccumulator;
   /** ラスターレイヤー直上に描くツールのプレビュー */
@@ -203,7 +205,7 @@ export interface LayerParameterDescriptor {
  */
 export interface LayerTypeHandler<L extends Layer = Layer> {
   type: L['type'];
-  /** マスク元レイヤーとして使えるか (補正レイヤーだけ不可) */
+  /** マスク元レイヤーとして使えるか */
   canMask: boolean;
   /** マスク元一覧に出す種類名 */
   maskSourceLabel: string | null;

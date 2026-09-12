@@ -128,7 +128,7 @@ export function scaleStoredLayer(source: StoredLayer, env: LayerStoredScaleEnv):
   return handlers()[source.type].scaleStored(source, env);
 }
 
-/** 補正レイヤーのマスク元に使えるか */
+/** マスク元に使えるレイヤー種別か */
 export function canMaskLayerType(type: LayerType): boolean {
   return handlers()[type].canMask;
 }

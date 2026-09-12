@@ -1,5 +1,19 @@
 import type { LayerMeta } from '../../model';
 import { canMaskLayerType } from '../../engine/layer-types/registry';
+import { flattenRenderOrder } from '../../engine/layerTree';
+
+export function canUseLayerAsMask(
+  roots: string[],
+  layers: LayerMeta[],
+  targetId: string,
+  sourceId: string,
+): boolean {
+  const source = layers.find(layer => layer.id === sourceId);
+  if (!source || source.id === targetId || !canMaskLayerType(source.type)) return false;
+  if (source.type !== 'outline') return true;
+  const order = flattenRenderOrder(roots, layers);
+  return order.indexOf(source.id) < order.indexOf(targetId);
+}
 
 export function maskCandidateRows(
   roots: string[],
@@ -12,8 +26,7 @@ export function maskCandidateRows(
   const matching = new Set(
     layers
       .filter(layer =>
-        layer.id !== excludedId
-        && canMaskLayerType(layer.type)
+        canUseLayerAsMask(roots, layers, excludedId, layer.id)
         && (!normalized || layer.name.toLocaleLowerCase().includes(normalized)))
       .map(layer => layer.id),
   );

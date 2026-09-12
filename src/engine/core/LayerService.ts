@@ -172,7 +172,7 @@ export class LayerService {
   }
 
   assignProps(l: Layer, p: LayerProps): void {
-    const affectsMask = p.opacity !== undefined || p.shape !== undefined || p.text !== undefined;
+    const affectsMask = p.opacity !== undefined || p.shape !== undefined || p.text !== undefined || p.outline !== undefined;
     if (p.name !== undefined) l.name = p.name;
     if (p.opacity !== undefined) l.opacity = p.opacity;
     if (p.blend !== undefined) l.blend = p.blend;

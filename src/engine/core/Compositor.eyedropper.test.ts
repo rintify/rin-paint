@@ -2,7 +2,14 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createCanvas, type Canvas } from '@napi-rs/canvas';
 import type { PaintEngine } from '../PaintEngine';
-import { createRasterLayer, createShapeLayer, createTextLayer, type Layer } from '../layers';
+import {
+  createClipLayer,
+  createOutlineLayer,
+  createRasterLayer,
+  createShapeLayer,
+  createTextLayer,
+  type Layer,
+} from '../layers';
 import { Compositor } from './Compositor';
 
 const native = new WeakMap<HTMLCanvasElement, Canvas>();
@@ -84,5 +91,31 @@ describe('Compositor eyedropper sampling', () => {
     });
 
     expect([...compositor.samplePixel(3, 3, text.id)]).toEqual([0, 255, 0, 255]);
+  });
+
+  it('samples only the generated border from a selected outline layer', () => {
+    const raster = createRasterLayer('元画像', 16, 16, 'source');
+    raster.ctx.fillStyle = '#ff0000';
+    raster.ctx.fillRect(5, 5, 4, 4);
+    const outline = createOutlineLayer('縁どり', 'outline');
+    outline.outline = { color: '#00ff00', widthMm: 2, alphaThreshold: .5, cornerStyle: 'round' };
+    const compositor = compositorFor([raster, outline]);
+
+    expect([...compositor.samplePixel(3, 6, outline.id)]).toEqual([0, 255, 0, 128]);
+    expect([...compositor.samplePixel(6, 6, outline.id)]).toEqual([0, 0, 0, 0]);
+  });
+
+  it('uses an outline layer contribution as a clip mask', () => {
+    const raster = createRasterLayer('元画像', 16, 16, 'source');
+    raster.ctx.fillStyle = '#ff0000';
+    raster.ctx.fillRect(5, 5, 4, 4);
+    const outline = createOutlineLayer('縁どり', 'outline');
+    outline.outline = { color: '#00ff00', widthMm: 2, alphaThreshold: .5, cornerStyle: 'round' };
+    const clip = createClipLayer('クリップ', 'clip');
+    clip.maskLayerIds = [outline.id];
+    const compositor = compositorFor([raster, outline, clip]);
+
+    expect([...compositor.samplePixel(3, 6, null)]).toEqual([0, 255, 0, 64]);
+    expect([...compositor.samplePixel(6, 6, null)]).toEqual([0, 0, 0, 0]);
   });
 });

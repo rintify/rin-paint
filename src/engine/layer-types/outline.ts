@@ -26,7 +26,7 @@ function normalize(value: Partial<OutlineParams> | undefined): OutlineParams {
 }
 
 export const outlineLayerType: LayerTypeHandler<OutlineLayer> = {
-  type: 'outline', canMask: false, maskSourceLabel: null, supportsBlend: false,
+  type: 'outline', canMask: true, maskSourceLabel: '縁どり', supportsBlend: false,
   defaultName: index => `縁どり ${index}`,
   snapshot(layer, snapshot) { snapshot.outline = { ...layer.outline }; },
   async restore(source, env) {
@@ -39,6 +39,9 @@ export const outlineLayerType: LayerTypeHandler<OutlineLayer> = {
   captureProps: layer => ({ outline: { ...layer.outline } }),
   scale() {}, async scaleStored() {},
   draw() {},
+  drawMask(ctx, layer, env) {
+    env.drawEffectContribution(ctx, layer.id);
+  },
   effect: {
     paddingPx(layer, env) {
       return Math.ceil(layer.outline.widthMm * env.ppi / 25.4 + 1);

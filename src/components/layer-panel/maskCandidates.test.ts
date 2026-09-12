@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest';
-import { maskCandidateRows } from './maskCandidates';
+import { canUseLayerAsMask, maskCandidateRows } from './maskCandidates';
 import type { LayerMeta } from '../../model';
 
 function layer(
@@ -30,9 +30,12 @@ describe('maskCandidateRows', () => {
     layer({ id: 'b', name: 'Beta', type: 'raster', parentId: 'folder' }),
   ];
 
-  it('excludes all effect layers and the excluded id', () => {
+  it('allows only earlier outline effects and excludes other effects and the target', () => {
     const rows = maskCandidateRows(['folder'], layers, 'a', '');
     expect(rows.map((r) => r.layer.id)).toEqual(['folder', 'b']);
+    expect(canUseLayerAsMask(['folder'], layers, 'clip', 'outline')).toBe(true);
+    expect(maskCandidateRows(['folder'], layers, 'clip', '').map(row => row.layer.id))
+      .toEqual(['folder', 'a', 'outline', 'b']);
   });
 
   it('filters by query and keeps ancestor layers', () => {

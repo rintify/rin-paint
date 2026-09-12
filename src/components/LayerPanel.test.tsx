@@ -280,3 +280,59 @@ describe('mask candidates', () => {
     expect(result.map(row => [row.layer.id, row.depth])).toEqual([['parent', 0], ['child', 1]]);
   });
 });
+
+describe('mask interactions', () => {
+  const adjust: LayerMeta = {
+    ...base,
+    id: 'adjust',
+    name: '補正',
+    type: 'adjust',
+    canRemove: true,
+    params: { brightness: 100, contrast: 100, hue: 0, saturation: 100 },
+    maskLayerIds: [],
+  };
+
+  it('adds a dragged layer to the active effect mask without moving it', async () => {
+    (mockEngine.commitLayerProps as ReturnType<typeof vi.fn>).mockClear();
+    useStore.getState().set({
+      layers: [...layers, adjust],
+      rootLayerIds: ['raster', 'shape', 'adjust'],
+      activeLayerId: 'adjust',
+      selectedLayerIds: ['adjust'],
+    });
+    await renderPanel();
+    const target = container.querySelector('.mask-controls')!;
+    const transfer = { getData: () => 'shape', dropEffect: '' };
+    const dragOver = new Event('dragover', { bubbles: true, cancelable: true });
+    Object.defineProperty(dragOver, 'dataTransfer', { value: transfer });
+    const drop = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, 'dataTransfer', { value: transfer });
+    await act(async () => {
+      target.dispatchEvent(dragOver);
+      target.dispatchEvent(drop);
+    });
+    expect(mockEngine.commitLayerProps).toHaveBeenCalledWith(
+      'adjust',
+      { maskLayerIds: [] },
+      { maskLayerIds: ['shape'] },
+      'マスクを追加',
+    );
+  });
+
+  it('scrolls to and pulses a mask source when its chip is clicked', async () => {
+    const animate = vi.fn(() => ({ cancel() {} }));
+    Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: animate });
+    useStore.getState().set({
+      layers: [...layers, { ...adjust, maskLayerIds: ['shape'] }],
+      rootLayerIds: ['raster', 'shape', 'adjust'],
+      activeLayerId: 'adjust',
+      selectedLayerIds: ['adjust'],
+    });
+    await renderPanel();
+    animate.mockClear();
+    await click(container.querySelector('[aria-label="直線をレイヤー一覧で表示"]'));
+    expect((animate.mock.calls as unknown as [Keyframe[]][]).some(([frames]) =>
+      Array.isArray(frames) && frames.some(frame => frame.transform === 'scale(1.06)'),
+    )).toBe(true);
+  });
+});

@@ -28,6 +28,7 @@ import { useLongPress } from '../hooks/useLongPress';
 import { NameEditor } from '../NameEditor';
 import { LayerControlsPalette } from './LayerControlsPalette';
 import { Thumb } from './Thumb';
+import { LAYER_FOCUS_EVENT } from './layerPanelEvents';
 
 interface VisibleRow { id: string; depth: number; index: number; exiting?: boolean }
 interface DropTarget {
@@ -62,10 +63,15 @@ export function LayerPanel() {
   const [addEffectAnchor, setAddEffectAnchor] = useState<HTMLElement | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [drop, setDrop] = useState<DropTarget | null>(null);
+  const [focusRequest, setFocusRequest] = useState<{ id: string; token: number } | null>(null);
   const frozen = useRef<{ id: string; depth: number }[] | null>(null);
   const desired = useMemo(
-    () => selectedLayerRows(rootLayerIds, layers, multi ? selectedIds : activeId),
-    [rootLayerIds, layers, activeId, multi, selectedIds],
+    () => selectedLayerRows(
+      rootLayerIds,
+      layers,
+      [...(multi ? selectedIds : [activeId]), ...(focusRequest ? [focusRequest.id] : [])],
+    ),
+    [rootLayerIds, layers, activeId, multi, selectedIds, focusRequest],
   );
   const [rename, setRename] = useState<{ id: string; value: string } | null>(null);
   const renameSubmit = useRef<(() => boolean) | null>(null);
@@ -186,6 +192,34 @@ export function LayerPanel() {
     for (const animation of animations.current) animation.cancel();
   }, []);
   useEffect(() => {
+    const focus = (event: Event) => {
+      const id = (event as CustomEvent<string>).detail;
+      if (metadata.current.has(id)) {
+        setFocusRequest(current => ({ id, token: (current?.token ?? 0) + 1 }));
+      }
+    };
+    window.addEventListener(LAYER_FOCUS_EVENT, focus);
+    return () => window.removeEventListener(LAYER_FOCUS_EVENT, focus);
+  }, []);
+  useLayoutEffect(() => {
+    if (!focusRequest || rows.some(row => row.id === focusRequest.id && row.exiting)) return;
+    const el = list.current;
+    const node = elements.current.get(focusRequest.id);
+    if (!el || !node) return;
+    const rowTop = Number.parseFloat(node.style.top) || 0;
+    const top = Math.max(0, rowTop - Math.max(0, el.clientHeight - ROW_HEIGHT) / 2);
+    if (reduceMotion()) el.scrollTop = top;
+    else if (typeof el.scrollTo === 'function') el.scrollTo({ top, behavior: 'smooth' });
+    else el.scrollTop = top;
+    if (!reduceMotion()) {
+      node.animate([
+        { transform: 'scale(1)', boxShadow: '0 0 0 0 rgba(128,191,255,0)' },
+        { transform: 'scale(1.06)', boxShadow: '0 0 0 4px rgba(128,191,255,.55)' },
+        { transform: 'scale(1)', boxShadow: '0 0 0 0 rgba(128,191,255,0)' },
+      ], { duration: 520, easing: 'cubic-bezier(.2,.8,.2,1)' });
+    }
+  }, [rows, focusRequest]);
+  useEffect(() => {
     if (previousGeneration.current === generation) return;
     previousGeneration.current = generation;
     setMenu(null);
@@ -213,6 +247,7 @@ export function LayerPanel() {
       return;
     }
     oldRects.current = new Map([...elements.current].map(([key, node]) => [key, node.getBoundingClientRect()]));
+    setFocusRequest(null);
     if (additive) engine.beginMultiSelect(id);
     else engine.setActiveLayer(id);
   };
@@ -364,7 +399,7 @@ export function LayerPanel() {
                     event.preventDefault();
                     return;
                   }
-                  event.dataTransfer.effectAllowed = 'move';
+                  event.dataTransfer.effectAllowed = 'copyMove';
                   event.dataTransfer.setData('text/plain', meta.id);
                   frozen.current = desired;
                   setDragId(meta.id);

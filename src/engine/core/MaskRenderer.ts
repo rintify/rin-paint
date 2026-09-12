@@ -32,6 +32,28 @@ export class MaskRenderer {
       return { canvas: sources[0].canvas, opacity: sources[0].opacity, release: noop };
     }
 
+    // 縁取りは、それ以前に合成された可視レイヤーを入力に持つ。入力側の変更を
+    // 個別キャッシュキーへ安全に畳み込めないため、含む場合は毎回生成する。
+    if (sources.some(source => source.type === 'outline')) {
+      const canvas = document.createElement('canvas');
+      canvas.width = env.artboard.w;
+      canvas.height = env.artboard.h;
+      const ctx = canvas.getContext('2d')!;
+      for (const source of sources) {
+        ctx.save();
+        // 効果の contribution は適用時の不透明度をすでに含む。
+        ctx.globalAlpha = source.type === 'outline' ? 1 : source.opacity;
+        ctx.globalCompositeOperation = 'source-over';
+        env.handlerFor(source).drawMask!(ctx, source, env);
+        ctx.restore();
+      }
+      return {
+        canvas,
+        opacity: 1,
+        release: () => { canvas.width = 0; canvas.height = 0; },
+      };
+    }
+
     const key = [
       env.artboard.w,
       env.artboard.h,

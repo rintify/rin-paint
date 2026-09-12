@@ -172,6 +172,16 @@ export class Compositor {
         env,
         id => eng.getMaskRevision?.(id) ?? 0,
       ),
+      drawEffectContribution: (ctx, layerId) => {
+        const contribution = this.renderEffectContribution(layerId, {
+          x: 0,
+          y: 0,
+          w: eng.artboard.w,
+          h: eng.artboard.h,
+        });
+        ctx.drawImage(contribution.canvas, 0, 0);
+        contribution.release();
+      },
       effectCache: this.effectCache,
       stats: this.frameStats,
       drawAboveLayer,
@@ -216,8 +226,20 @@ export class Compositor {
       this.ensureComposited();
       return this.artCacheCtx.getImageData(cx, cy, 1, 1).data;
     }
-    const art = this.renderArt({ x: cx, y: cy, w: 1, h: 1 }, new Set([includedLayerId]), false);
-    const data = art.ctx.getImageData(0, 0, 1, 1).data;
+    const layer = this.engine.layerById(includedLayerId);
+    const padding = layer?.type === 'outline'
+      ? Math.max(0, layerHandler(layer).effect?.paddingPx?.(layer, this.drawEnv(false)) ?? 0)
+      : 0;
+    const region = {
+      x: Math.max(0, cx - padding),
+      y: Math.max(0, cy - padding),
+      w: Math.min(this.engine.artboard.w, cx + padding + 1) - Math.max(0, cx - padding),
+      h: Math.min(this.engine.artboard.h, cy + padding + 1) - Math.max(0, cy - padding),
+    };
+    const art = layer?.type === 'outline'
+      ? this.renderEffectContribution(includedLayerId, region)
+      : this.renderArt(region, new Set([includedLayerId]), false);
+    const data = art.ctx.getImageData(cx - region.x, cy - region.y, 1, 1).data;
     art.release();
     return data;
   }
@@ -288,6 +310,7 @@ export class Compositor {
     region: RenderRect,
     included: Set<string> | null,
     drawToolOverlay: boolean,
+    capture?: { effectId: string; contribution: CanvasLease | null },
   ): CanvasLease {
     const eng = this.engine;
     const art = this.borrowCanvas(region.w, region.h);
@@ -302,7 +325,7 @@ export class Compositor {
     const participates = (layer: Layer) => layer.visible && (included === null || included.has(layer.id));
     const activeEffectInChain = (layer: Layer): boolean => {
       if (!layerHandler(layer).effect) return false;
-      if (participates(layer)) return true;
+      if (participates(layer) || capture?.effectId === layer.id) return true;
       return layer.childIds.some(id => {
         const child = eng.layerById(id);
         return !!child && activeEffectInChain(child);
@@ -334,18 +357,31 @@ export class Compositor {
       target: CanvasRenderingContext2D,
       targetCanvas: HTMLCanvasElement,
       state: { revision: number },
-    ) => {
+    ): boolean => {
       for (const id of ids) {
         const layer = eng.layerById(id);
         if (!layer) continue;
         const handler = layerHandler(layer);
         if (handler.effect) {
-          if (participates(layer)) {
+          if (participates(layer) || capture?.effectId === layer.id) {
+            const capturesThisEffect = capture?.effectId === layer.id;
+            const before = capturesThisEffect ? this.borrowCanvas(region.w, region.h) : null;
+            before?.ctx.drawImage(targetCanvas, 0, 0);
             handler.effect.apply(effectScope(targetCanvas, state.revision), layer, env);
             resetTarget(target);
             state.revision = mixRevision(state.revision, `${layer.id}:${eng.getRenderRevision?.(layer.id) ?? 0}`);
+            if (capturesThisEffect && capture) {
+              const contribution = this.borrowCanvas(region.w, region.h);
+              contribution.ctx.drawImage(targetCanvas, 0, 0);
+              contribution.ctx.globalCompositeOperation = 'destination-out';
+              contribution.ctx.drawImage(before!.canvas, 0, 0);
+              contribution.ctx.globalCompositeOperation = 'source-over';
+              before!.release();
+              capture.contribution = contribution;
+              return true;
+            }
           }
-          renderSequence(layer.childIds, target, targetCanvas, state);
+          if (renderSequence(layer.childIds, target, targetCanvas, state)) return true;
           continue;
         }
 
@@ -365,8 +401,12 @@ export class Compositor {
           if (participates(layer)) {
             drawLayer(local, layer);
           }
-          renderSequence(layer.childIds, local, scope.canvas, localState);
+          const stopped = renderSequence(layer.childIds, local, scope.canvas, localState);
           local.restore();
+          if (stopped) {
+            scope.release();
+            return true;
+          }
           target.save();
           resetTarget(target);
           target.drawImage(local.canvas, 0, 0);
@@ -379,14 +419,22 @@ export class Compositor {
           drawLayer(target, layer);
           state.revision = mixRevision(state.revision, `${layer.id}:${eng.getRenderRevision?.(layer.id) ?? 0}`);
         }
-        renderSequence(layer.childIds, target, targetCanvas, state);
+        if (renderSequence(layer.childIds, target, targetCanvas, state)) return true;
       }
+      return false;
     };
     const inclusionKey = included ? [...included].sort().join(',') : 'all';
     const initialRevision = mixRevision(2166136261, `${inclusionKey}:${drawToolOverlay ? 'tool' : 'plain'}`);
     renderSequence(eng.getRootLayerIds(), artCtx, art.canvas, { revision: initialRevision });
 
     return art;
+  }
+
+  private renderEffectContribution(layerId: string, region: RenderRect): CanvasLease {
+    const capture = { effectId: layerId, contribution: null as CanvasLease | null };
+    const art = this.renderArt(region, null, false, capture);
+    art.release();
+    return capture.contribution ?? this.borrowCanvas(region.w, region.h);
   }
 
   private compositeFull(ctx: CanvasRenderingContext2D, drawToolOverlay: boolean): void {
