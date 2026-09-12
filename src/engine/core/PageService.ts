@@ -59,6 +59,7 @@ export class PageService {
     const index = Math.max(0, this.pageOrder.indexOf(this.activePageId));
     this.pageOrder.splice(index + 1, 0, id);
     await savePage(page);
+    eng.links.noteSavedPage(page);
     await this.saveMeta();
     eng.syncStore();
   }
@@ -72,6 +73,7 @@ export class PageService {
     eng.cancelShapeEdit();
     eng.layerService.exitMultiSelect();
     await eng.flushSavePublic();
+    await eng.links.flush();
     await eng.recorderPublic().reset();
     eng.setBusy(true);
     useStore.getState().set({ pageBusy: true });
@@ -81,11 +83,13 @@ export class PageService {
       this.activePageId = id;
       setPersistencePageId(id);
       await eng.restoreSavedPagePublic(page);
+      eng.links.reconcileAll();
       await this.saveMeta();
       eng.events.emit('projectReset');
       eng.shapeEdit.refreshVertexState();
       eng.requestRender();
       eng.syncStore();
+      eng.scheduleSave();
     } finally {
       eng.setBusy(false);
       useStore.getState().set({ pageBusy: false });
@@ -100,6 +104,7 @@ export class PageService {
       await this.switchPage(target);
     }
     this.pageOrder = this.pageOrder.filter(pageId => pageId !== id);
+    this.engine.links.removePage(id);
     await deletePageData(id);
     await this.saveMeta();
     this.engine.syncStore();

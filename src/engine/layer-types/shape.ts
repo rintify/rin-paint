@@ -34,6 +34,16 @@ function shapeOf(layer: LayerParameterLayer): ShapeParams {
 }
 
 function shapeDescriptors(shape: ShapeParams): LayerParameterDescriptor[] {
+  const semanticForShapeKey = (key: string): string => ({
+    'rect.x': 'frame.leftMm',
+    'rect.y': 'frame.topMm',
+    'rect.width': 'frame.widthMm',
+    'rect.height': 'frame.heightMm',
+    'ellipse.cx': 'object.centerXmm',
+    'polygon.cx': 'object.centerXmm',
+    'ellipse.cy': 'object.centerYmm',
+    'polygon.cy': 'object.centerYmm',
+  } as Record<string, string>)[key] ?? `shape.${key}`;
   const shapeRead = <T,>(read: (shape: ShapeParams) => T) =>
     (layer: LayerParameterLayer): T => read(shapeOf(layer));
   const shapeWrite = (make: (shape: ShapeParams, value: LayerParameterValue) => ShapeParams) =>
@@ -42,29 +52,29 @@ function shapeDescriptors(shape: ShapeParams): LayerParameterDescriptor[] {
     });
   const descriptors: LayerParameterDescriptor[] = [
     {
-      key: 'snapEnabled', label: 'スナップ', control: 'switch',
+      key: 'snapEnabled', semanticId: 'interaction.snap', label: 'スナップ', control: 'switch',
       trueLabel: 'ON', falseLabel: 'OFF',
       read: layer => layer.type === 'shape' ? layer.snapEnabled !== false : null,
       write: (_layer, value) => ({ snapEnabled: Boolean(value) }),
     },
     {
-      key: 'strokeWidth', label: '線の太さ', control: 'number', canvasLength: true,
+      key: 'strokeWidth', semanticId: 'appearance.widthMm', label: '線の太さ', control: 'number', canvasLength: true,
       read: shapeRead(current => current.strokeWidth),
       write: shapeWrite((current, value) => ({ ...current, strokeWidth: Math.max(0, Number(value)) })),
     },
     {
-      key: 'rotation', label: '回転 (度)', control: 'number', min: -3600, max: 3600,
+      key: 'rotation', semanticId: 'transform.rotation', label: '回転 (度)', control: 'number', min: -3600, max: 3600,
       read: shapeRead(current => shapeRotation(current) * 180 / Math.PI),
       write: shapeWrite((current, value) => setShapeRotation(current, Number(value) * Math.PI / 180)),
     },
     {
-      key: 'color', label: '色', control: 'color', allowTransparent: true,
+      key: 'color', semanticId: 'appearance.color', label: '色', control: 'color', allowTransparent: true,
       read: shapeRead(current => current.color),
       write: shapeWrite((current, value) => ({ ...current, color: String(value) })),
     },
   ];
   if (shapeFillable(shape)) descriptors.push({
-    key: 'paintMode', label: '描画方式', control: 'select',
+    key: 'paintMode', semanticId: 'shape.paintMode', label: '描画方式', control: 'select',
     options: [
       { value: 'stroke', label: '輪郭' },
       { value: 'fill-inside', label: '内側塗りつぶし' },
@@ -74,20 +84,22 @@ function shapeDescriptors(shape: ShapeParams): LayerParameterDescriptor[] {
     write: shapeWrite((current, value) => setShapePaintMode(current, value as ShapePaintMode)),
   });
   if (shape.kind === 'rect' || shape.kind === 'polygon') descriptors.push({
-    key: 'strokeJoin', label: '線の角', control: 'select',
+    key: 'strokeJoin', semanticId: 'appearance.cornerStyle', label: '線の角', control: 'select',
     options: [{ value: 'round', label: '丸' }, { value: 'miter', label: '角' }],
     read: shapeRead(shapeStrokeJoin),
-    write: shapeWrite((current, value) => ({ ...current, strokeJoin: value === 'miter' ? 'miter' : 'round' })),
+    write: shapeWrite((current, value) => ({ ...current, strokeJoin: value === 'miter' || value === 'sharp' ? 'miter' : 'round' })),
+    readCanonical: layer => shapeStrokeJoin(shapeOf(layer)) === 'miter' ? 'sharp' : 'round',
+    writeCanonical: (layer, value) => ({ shape: { ...cloneShape(shapeOf(layer)), strokeJoin: value === 'sharp' ? 'miter' : 'round' } }),
   });
   if (shape.kind === 'rect' || shape.kind === 'polygon') descriptors.push({
-    key: 'cornerRadius', label: '角丸半径', control: 'number', canvasLength: true, min: 0,
+    key: 'cornerRadius', semanticId: 'shape.cornerRadiusMm', label: '角丸半径', control: 'number', canvasLength: true, min: 0,
     read: shapeRead(current => current.kind === 'rect' || current.kind === 'polygon' ? current.cornerRadius ?? 0 : 0),
     write: shapeWrite((current, value) => current.kind === 'rect' || current.kind === 'polygon'
       ? { ...current, cornerRadius: Math.max(0, Number(value)) }
       : current),
   });
   descriptors.push(...shapeParameterFields(shape).map(field => ({
-    key: field.key, label: field.label, control: 'number' as const, min: field.min,
+    key: field.key, semanticId: semanticForShapeKey(field.key), label: field.label, control: 'number' as const, min: field.min,
     canvasLength: field.canvasLength,
     read: shapeRead(current => field.read(current)),
     write: shapeWrite((current, value) => field.write(current, Number(value))),

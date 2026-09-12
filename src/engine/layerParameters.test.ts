@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LayerMeta } from '../model';
-import { commonLayerParameterDescriptors } from './layerParameters';
+import { commonLayerParameterDescriptors, linkableParameterMap, readCanonicalParameter, writeCanonicalParameter } from './layerParameters';
 
 const base = { opacity: 1, blend: 'source-over' as const, visible: true, parentId: null, childIds: [], version: 0, canMergeDown: false, canRemove: true, canTransferShape: false };
 
@@ -9,7 +9,10 @@ describe('generic layer parameters', () => {
     const shape: LayerMeta = { ...base, id: 's', type: 'shape', name: '図形', shape: { kind: 'rect', x: 0, y: 0, width: 10, height: 10, color: '#111111', strokeWidth: 2, paintMode: 'stroke' } };
     const text: LayerMeta = { ...base, id: 't', type: 'text', name: '文字', text: { content: 'ab', x: 0, y: 0, width: null, height: null, rotation: 0, direction: 'horizontal', horizontalAlign: 'left', verticalAlign: 'top', lineHeight: 1.5, style: { fontId: 'sans', color: '#222222', sizePt: 12 }, ranges: [{ start: 0, end: 1, fontId: 'serif', color: '#333333', sizePt: 8 }], ruby: [] } };
     const descriptors = commonLayerParameterDescriptors([shape, text]);
-    expect(descriptors.map(value => value.key)).toEqual(['visible', 'opacity', 'blend', 'snapEnabled', 'rotation', 'color']);
+    expect(descriptors.map(value => value.key)).toEqual([
+      'visible', 'opacity', 'blend', 'snapEnabled', 'rotation', 'color',
+      'frame.leftMm', 'frame.topMm', 'frame.widthMm', 'frame.heightMm',
+    ]);
     const color = descriptors.find(value => value.key === 'color')!;
     const changed = color.write(text, '#abcdef').text!;
     expect(changed.style.color).toBe('#abcdef');
@@ -37,5 +40,16 @@ describe('generic layer parameters', () => {
     expect(descriptors.find(value => value.key === 'strokeWidth')?.canvasLength).toBe(true);
     expect(descriptors.find(value => value.key === 'rect.x')?.canvasLength).toBe(true);
     expect(descriptors.find(value => value.key === 'rotation')?.canvasLength).toBeFalsy();
+  });
+
+  it('normalizes pixel geometry through millimeters across different PPI values', () => {
+    const source: LayerMeta = { ...base, id: 's', type: 'shape', name: 'S', shape: { kind: 'rect', x: 100, y: 20, width: 200, height: 100, color: '#111111', strokeWidth: 10, paintMode: 'stroke' } };
+    const target: LayerMeta = { ...base, id: 't', type: 'shape', name: 'T', shape: { kind: 'rect', x: 0, y: 0, width: 1, height: 1, color: '#222222', strokeWidth: 1, paintMode: 'stroke' } };
+    const sourceDescriptor = linkableParameterMap(source).get('frame.widthMm')!;
+    const targetDescriptor = linkableParameterMap(target).get('frame.widthMm')!;
+    const widthMm = readCanonicalParameter(sourceDescriptor, source, 254)!;
+    expect(widthMm).toBeCloseTo(20);
+    const props = writeCanonicalParameter(targetDescriptor, target, widthMm, 127);
+    expect(props.shape?.kind === 'rect' && props.shape.width).toBeCloseTo(100);
   });
 });

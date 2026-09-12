@@ -77,7 +77,7 @@ export async function unpackProjectFile(file: Blob): Promise<ProjectFile> {
   const header = new Uint8Array(await file.slice(0, MAGIC.length + 4).arrayBuffer());
   const matches = (magic: Uint8Array) => magic.every((byte, index) => header[index] === byte);
   if (header.length < MAGIC.length + 4 || !matches(MAGIC)) {
-    throw new Error('rin-paint v8 のプロジェクトファイルではありません');
+    throw new Error('rin-paint v9 のプロジェクトファイルではありません');
   }
   const manifestLength = new DataView(header.buffer, header.byteOffset + MAGIC.length, 4).getUint32(0, true);
   const start = MAGIC.length + 4;
@@ -92,7 +92,7 @@ export async function unpackProjectFile(file: Blob): Promise<ProjectFile> {
   });
   const raw = (await decodeValue(manifest.data, blobs)) as Record<string, unknown>;
   if (raw?.app !== 'rin-paint' || raw.version !== PROJECT_VERSION || !Array.isArray(raw.pages) || !raw.pages.length) {
-    throw new Error('rin-paint v8 のプロジェクトファイルではありません');
+    throw new Error('rin-paint v9 のプロジェクトファイルではありません');
   }
   return {
     app: 'rin-paint',

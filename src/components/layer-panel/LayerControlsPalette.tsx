@@ -18,19 +18,22 @@ import { layerTypeHandler } from '../../engine/layer-types/registry';
 import { CommitSlider } from './CommitSlider';
 import { layerControlsPanel } from './layerControls';
 import { MultiParameterControls } from './MultiParameterControls';
+import { LayerLinkControls } from './LayerLinkControls';
 
 function OpacityControl({
   value,
   onPreview,
   onCommit,
+  linked = false,
 }: {
   value: number | null;
   onPreview: (value: number) => void;
   onCommit: (before: number | null, after: number) => void;
+  linked?: boolean;
 }) {
   return (
-    <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-      <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>
+    <Stack direction="row" spacing={1} sx={{ alignItems: 'center', ...(linked ? { color: 'primary.main' } : {}) }}>
+      <Typography variant="caption" color={linked ? 'primary' : 'text.secondary'} sx={{ width: 72, flex: 'none' }}>
         不透明度
       </Typography>
       <CommitSlider value={value} min={0} max={100} onPreview={onPreview} onCommit={onCommit} />
@@ -56,6 +59,7 @@ function LayerControls({ meta }: { meta: LayerMeta }) {
     <Stack spacing={1}>
       <OpacityControl
         value={pct}
+        linked={meta.parameterLink?.linkedParameterIds.includes('layer.opacity')}
         onPreview={v => engine.previewLayerProps(meta.id, { opacity: v / 100 })}
         onCommit={(b, a) =>
           engine.commitLayerProps(
@@ -67,10 +71,10 @@ function LayerControls({ meta }: { meta: LayerMeta }) {
       />
       {handler.supportsBlend && (
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>
+          <Typography variant="caption" color={meta.parameterLink?.linkedParameterIds.includes('layer.blend') ? 'primary' : 'text.secondary'} sx={{ width: 72, flex: 'none' }}>
             合成
           </Typography>
-          <FormControl size="small" fullWidth>
+          <FormControl size="small" fullWidth color={meta.parameterLink?.linkedParameterIds.includes('layer.blend') ? 'primary' : undefined}>
             <Select
               value={meta.blend}
               onChange={(e) =>
@@ -211,6 +215,7 @@ export function LayerControlsPalette({ meta, onClose }: { meta: LayerMeta; onClo
             複数選択を解除
           </Button>
         )}
+        {!multi && <LayerLinkControls meta={meta} />}
         <LayerControls meta={meta} />
       </Box>
     </Paper>

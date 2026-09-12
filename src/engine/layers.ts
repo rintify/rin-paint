@@ -3,10 +3,12 @@ import type { BlendMode } from '../model/blend';
 import { DEFAULT_OUTLINE, type OutlineParams } from '../model/outline';
 import type { ShapeParams } from '../model/shape';
 import type { TextParams } from '../model/text';
+import type { LayerParameterLink } from '../model/layer';
 
 interface LayerTreeFields {
   parentId: string | null;
   childIds: string[];
+  parameterLink?: LayerParameterLink;
 }
 
 export interface RasterLayer extends LayerTreeFields {

@@ -289,6 +289,7 @@ export class ShapeEditController {
     this.syncVertexState();
     this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(previous), shapeDirty(next)));
     this.engine.requestOverlayRender();
+    this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id }, true);
     this.engine.syncStore();
     return true;
   }
@@ -323,7 +324,10 @@ export class ShapeEditController {
       }
     }
     if (layer && JSON.stringify(layer.shape) !== JSON.stringify(edit.before)) {
-      this.engine.history.push({ kind: 'layerProps', layerId: layer.id, before: { shape: cloneShape(edit.before) }, after: { shape: cloneShape(layer.shape) } }, edit.vertexIndex !== undefined ? '多角形の頂点を編集' : '図形を編集');
+      const propsOp = { kind: 'layerProps' as const, layerId: layer.id, before: { shape: cloneShape(edit.before) }, after: { shape: cloneShape(layer.shape) } };
+      const linkOp = this.engine.layerService.linkOpForUserChange(layer, propsOp.before, propsOp.after);
+      this.engine.history.push(linkOp ? { kind: 'batch', ops: [propsOp, linkOp] } : propsOp, edit.vertexIndex !== undefined ? '多角形の頂点を編集' : '図形を編集');
+      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });
       this.engine.committed(false);
     } else {
       this.engine.requestOverlayRender();
@@ -343,7 +347,10 @@ export class ShapeEditController {
     this.engine.layerService.assignProps(layer, { shape: result.shape });
     this.selectedHandle = null;
     this.syncVertexState();
-    this.engine.history.push({ kind: 'layerProps', layerId: layer.id, before: { shape: before }, after: { shape: cloneShape(layer.shape) } }, '多角形の頂点を削除');
+    const propsOp = { kind: 'layerProps' as const, layerId: layer.id, before: { shape: before }, after: { shape: cloneShape(layer.shape) } };
+    const linkOp = this.engine.layerService.linkOpForUserChange(layer, propsOp.before, propsOp.after);
+    this.engine.history.push(linkOp ? { kind: 'batch', ops: [propsOp, linkOp] } : propsOp, '多角形の頂点を削除');
+    this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });
     this.engine.committed();
   }
 

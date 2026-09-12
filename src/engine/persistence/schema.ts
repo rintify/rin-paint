@@ -28,6 +28,26 @@ function isLocation(value: unknown): boolean {
   );
 }
 
+function isLayerLink(value: unknown): boolean {
+  if (value === null) return true;
+  if (!value || typeof value !== 'object') return false;
+  const link = value as Record<string, unknown>;
+  const source = link.source as Record<string, unknown> | undefined;
+  const fallback = link.fallbackValues as Record<string, unknown> | undefined;
+  return !!source
+    && typeof source.pageId === 'string'
+    && typeof source.layerId === 'string'
+    && typeof link.sourceNameHint === 'string'
+    && typeof link.sourcePageIndexHint === 'number'
+    && Array.isArray(link.linkedParameterIds)
+    && link.linkedParameterIds.every(id => typeof id === 'string')
+    && !!fallback
+    && Object.values(fallback).every(item => item === null
+      || typeof item === 'string'
+      || typeof item === 'boolean'
+      || (typeof item === 'number' && Number.isFinite(item)));
+}
+
 function isLayerSnapshot(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const s = value as Record<string, unknown>;
@@ -40,6 +60,7 @@ function isLayerSnapshot(value: unknown): boolean {
     typeof s.visible === 'boolean' &&
     (s.parentId === null || typeof s.parentId === 'string') &&
     Array.isArray(s.childIds) &&
+    (s.parameterLink === undefined || isLayerLink(s.parameterLink)) &&
     (s.blob === undefined || isBlob(s.blob))
   );
 }
@@ -58,6 +79,11 @@ function isAtomicOp(value: unknown): value is PersistedAtomicOp {
       return typeof op.layerId === 'string' && isLocation(op.from) && isLocation(op.to);
     case 'layerProps':
       return typeof op.layerId === 'string' && !!op.before && !!op.after;
+    case 'layerLink': {
+      const target = op.target as Record<string, unknown> | undefined;
+      return !!target && typeof target.pageId === 'string' && typeof target.layerId === 'string'
+        && isLayerLink(op.before) && isLayerLink(op.after);
+    }
     case 'layerReplace': {
       const side = (value: unknown) => {
         if (!value || typeof value !== 'object') return false;
@@ -146,7 +172,7 @@ export function isSavedPage(value: unknown): value is SavedPage {
     typeof p.id === 'string' &&
     !!p.canvasSpec &&
     Array.isArray(p.rootLayerIds) &&
-    Array.isArray(p.layers) &&
+    Array.isArray(p.layers) && p.layers.every(isLayerSnapshot) &&
     typeof p.activeLayerId === 'string' &&
     isPersistedHistory(p.history) &&
     !!p.view &&

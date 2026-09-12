@@ -18,6 +18,7 @@ export function CanvasMmField({
   minPx?: number;
   label?: string;
   size?: 'small' | 'medium';
+  disabled?: boolean;
   sx?: object;
 }) {
   const ppi = useStore(s => s.canvasSpec.ppi);

@@ -6,6 +6,7 @@ import type {
   OutlineParams,
   ShapeParams,
   TextParams,
+  LayerParameterLink,
 } from '../../model';
 import type { LayerProps, LayerSnapshot } from '../history/historyTree';
 import type { Layer, RasterLayer } from '../layers';
@@ -42,6 +43,7 @@ export interface StoredLayer {
   shape?: ShapeParams;
   snapEnabled?: boolean;
   text?: TextParams;
+  parameterLink?: LayerParameterLink;
   canvas?: HTMLCanvasElement;
   blob?: Blob;
 }
@@ -179,22 +181,32 @@ export interface LayerEraser<L extends Layer> {
   draw(ctx: CanvasRenderingContext2D, layer: L, env: LayerDrawEnv): void;
 }
 
-export type LayerParameterValue = number | string | boolean;
+export type LayerParameterValue = number | string | boolean | null;
 export type LayerParameterLayer = Layer | LayerMeta;
 
 export interface LayerParameterDescriptor {
   key: string;
+  /** Stable cross-layer identity used by multi-editing and parameter links. */
+  semanticId?: string;
+  /** False when a value cannot safely be edited across a heterogeneous selection. */
+  multiSelectable?: boolean;
+  /** False for selection-dependent controls such as rich-text formatting. */
+  linkable?: boolean;
   label: string;
   control: 'number' | 'color' | 'select' | 'switch';
   min?: number;
   max?: number;
   options?: { value: string; label: string }[];
   allowTransparent?: boolean;
+  nullable?: boolean;
   /** switch の ON/OFF 表示。未指定なら「表示／非表示」 */
   trueLabel?: string;
   falseLabel?: string;
   /** true なら内部は px、UI は現在ページ ppi で mm 表示・入力する */
   canvasLength?: boolean;
+  /** Canonical values are persisted in links; canvas lengths use millimetres. */
+  readCanonical?(layer: LayerParameterLayer, ppi: number): LayerParameterValue | null;
+  writeCanonical?(layer: LayerParameterLayer, value: LayerParameterValue, ppi: number): LayerProps;
   read(layer: LayerParameterLayer): LayerParameterValue | null;
   write(layer: LayerParameterLayer, value: LayerParameterValue): LayerProps;
 }

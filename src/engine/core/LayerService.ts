@@ -11,6 +11,7 @@ import {
   type LayerProps,
   type LayerSnapshot,
   type TileLayerMergeOp,
+  type LayerLinkOp,
 } from '../history/historyTree';
 import { extractTiles } from '../history/tilePatch';
 import {
@@ -38,7 +39,7 @@ import { canReparent, closestRasterOrRoot, structuralLowerId } from '../layerTre
 import { isEmptyText } from '../text/model';
 import type { PaintEngine } from '../PaintEngine';
 import { cloneShape, polygonFromWorldPoints, shapeCorners } from '../shapes';
-import { layerParameterDescriptors, type LayerParameterValue } from '../layerParameters';
+import { layerParameterDescriptors, parameterSemanticId, type LayerParameterValue } from '../layerParameters';
 import type { DirtyRect } from '../brush';
 
 /** Owns layer tree state and layer CRUD / tree mutation helpers. */
@@ -136,12 +137,13 @@ export class LayerService {
     });
   }
 
-  async restoreLayer(snap: LayerSnapshot, location?: LayerLocation): Promise<void> {
+  async restoreLayer(snap: LayerSnapshot, location?: LayerLocation): Promise<Layer | null> {
     const layer = await restoreLayerFrom(snap, { artboard: this.engine.artboard });
-    if (!layer) return;
+    if (!layer) return null;
     this.layers.push(layer);
     if (location) this.insertAt(layer.id, location);
     this.bumpLayer(layer.id);
+    return layer;
   }
 
   removeLayerInternal(id: string): void {
@@ -177,6 +179,7 @@ export class LayerService {
     if (p.opacity !== undefined) l.opacity = p.opacity;
     if (p.blend !== undefined) l.blend = p.blend;
     if (p.visible !== undefined) l.visible = p.visible;
+    if (p.parameterLink !== undefined) l.parameterLink = p.parameterLink ? structuredClone(p.parameterLink) : undefined;
     layerHandler(l).applyProps(l, p);
     this.versions.set(l.id, (this.versions.get(l.id) ?? 0) + 1);
     if (affectsMask) this.bumpMaskVersion(l.id);
@@ -302,16 +305,32 @@ export class LayerService {
   updateText(id: string, before: TextParams, after: TextParams, preview = false): void {
     const layer = this.byId(id);
     if (this.engine.isBusy() || layer?.type !== 'text') return;
+    const linkChange = !preview ? this.engine.links.detachChanged(
+      layer,
+      { ...layer, text: structuredClone(before) },
+      { ...layer, text: structuredClone(after) },
+    ) : null;
     layer.text = structuredClone(after);
+    if (linkChange) layer.parameterLink = structuredClone(linkChange.after);
     this.bumpLayer(id);
     const contentBefore = { ...before, x: 0, y: 0, width: null, height: null };
     const contentAfter = { ...after, x: 0, y: 0, width: null, height: null };
     const frameOnlyPreview = preview && JSON.stringify(contentBefore) === JSON.stringify(contentAfter);
     if (!frameOnlyPreview) this.engine.syncTextRendersPublic();
     if (!preview && JSON.stringify(before) !== JSON.stringify(after)) {
-      this.engine.history.push({ kind: 'layerProps', layerId: id, before: { text: structuredClone(before) }, after: { text: structuredClone(after) } }, '文字を編集');
+      const propsOp = { kind: 'layerProps' as const, layerId: id, before: { text: structuredClone(before) }, after: { text: structuredClone(after) } };
+      this.engine.history.push(linkChange ? { kind: 'batch', ops: [propsOp, {
+        kind: 'layerLink',
+        target: { pageId: this.engine.pages.activePageId, layerId: id },
+        before: linkChange.before,
+        after: linkChange.after,
+      }] } : propsOp, '文字を編集');
+      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: id });
       this.engine.committed();
-    } else this.engine.syncStore();
+    } else {
+      if (preview) this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: id }, true);
+      this.engine.syncStore();
+    }
   }
 
   addTextLayer(text: TextParams): void {
@@ -345,6 +364,13 @@ export class LayerService {
       return null;
     };
     return walk(this.rootLayerIds);
+  }
+
+  textFrameSize(id: string): { width: number; height: number } | null {
+    const layer = this.byId(id);
+    if (layer?.type !== 'text') return null;
+    const frame = textFrame(layer, this.engine.compositor.textRenderer);
+    return { width: frame.w, height: frame.h };
   }
 
   editTextLayer(id: string): void {
@@ -592,8 +618,26 @@ export class LayerService {
     const l = this.byId(id);
     if (!l) return;
     this.assignProps(l, props);
+    this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: id }, true);
     this.engine.requestRender();
     this.engine.syncStore();
+  }
+
+  linkOpForUserChange(layer: Layer, before: LayerProps, after: LayerProps, preserveIfSourceMatches = false): LayerLinkOp | null {
+    const change = this.engine.links.detachChanged(
+      layer,
+      { ...layer, ...structuredClone(before), parameterLink: layer.parameterLink } as import('../layer-types/types').LayerParameterLayer,
+      { ...layer, ...structuredClone(after), parameterLink: layer.parameterLink } as import('../layer-types/types').LayerParameterLayer,
+      preserveIfSourceMatches,
+    );
+    if (!change) return null;
+    this.assignProps(layer, { parameterLink: change.after });
+    return {
+      kind: 'layerLink',
+      target: { pageId: this.engine.pages.activePageId, layerId: layer.id },
+      before: change.before,
+      after: change.after,
+    };
   }
 
   commitLayerProps(id: string, before: LayerProps, after: LayerProps, label: string): void {
@@ -602,7 +646,13 @@ export class LayerService {
     const l = this.byId(id);
     if (!l) return;
     this.assignProps(l, after);
-    this.engine.history.push({ kind: 'layerProps', layerId: id, before, after }, label);
+    const linkOp = this.linkOpForUserChange(l, before, after);
+    const propsOp = { kind: 'layerProps' as const, layerId: id, before, after };
+    this.engine.history.push(linkOp ? {
+      kind: 'batch',
+      ops: [propsOp, linkOp],
+    } : propsOp, label);
+    this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: id });
     this.engine.committed();
   }
 
@@ -625,11 +675,15 @@ export class LayerService {
     polygon.points = world.map(point => ({ x: point.x - center.x, y: point.y - center.y }));
     this.assignProps(layer, { shape: polygon });
     if (layer.name === '四角形') layer.name = '多角形';
-    this.engine.history.push({
+    const propsOp = {
       kind: 'layerProps', layerId: layer.id,
       before: { shape: beforeShape, name: beforeName },
       after: { shape: cloneShape(layer.shape), name: layer.name },
-    }, '多角形に変換');
+    } as const;
+    const linkOp = this.linkOpForUserChange(layer, propsOp.before, propsOp.after);
+    const downstreamLinkOps = this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });
+    const operations = [propsOp, ...(linkOp ? [linkOp] : []), ...downstreamLinkOps];
+    this.engine.history.push(operations.length > 1 ? { kind: 'batch', ops: operations } : propsOp, '多角形に変換');
     this.engine.committed();
   }
 
@@ -661,7 +715,7 @@ export class LayerService {
   commitSelectedLayerProps(before: LayerProps, after: LayerProps, label: string): void {
     const st = useStore.getState();
     const ids = st.multiSelectMode ? st.selectedLayerIds : [this.activeLayerId];
-    const ops = ids.flatMap(id => {
+    const ops: import('../history/historyTree').AtomicOp[] = ids.flatMap(id => {
       const layer = this.byId(id);
       if (!layer) return [];
       const current: LayerProps = {
@@ -670,7 +724,9 @@ export class LayerService {
       };
       const op = { kind: 'layerProps' as const, layerId: id, before: { ...current, ...before }, after };
       this.assignProps(layer, after);
-      return [op];
+      const linkOp = this.linkOpForUserChange(layer, op.before, after);
+      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: id });
+      return linkOp ? [op, linkOp] : [op];
     });
     if (!ops.length) return;
     this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, label);
@@ -681,14 +737,17 @@ export class LayerService {
     const state = useStore.getState();
     for (const id of state.selectedLayerIds) {
       const layer = this.byId(id);
-      if (layer) this.assignProps(layer, props);
+      if (layer) {
+        this.assignProps(layer, props);
+        this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: id }, true);
+      }
     }
     this.engine.requestRender();
     this.engine.syncStore();
   }
 
   updateSelectedShapes(update: (shape: ShapeParams) => ShapeParams): void {
-    const ops = useStore.getState().selectedLayerIds.flatMap(layerId => {
+    const ops: import('../history/historyTree').AtomicOp[] = useStore.getState().selectedLayerIds.flatMap(layerId => {
       const layer = this.byId(layerId);
       if (layer?.type !== 'shape') return [];
       const before = cloneShape(layer.shape);
@@ -696,7 +755,10 @@ export class LayerService {
       if (JSON.stringify(before) === JSON.stringify(after)) return [];
       layer.shape = after;
       this.bumpLayer(layerId);
-      return [{ kind: 'layerProps' as const, layerId, before: { shape: before }, after: { shape: after } }];
+      const propsOp = { kind: 'layerProps' as const, layerId, before: { shape: before }, after: { shape: after } };
+      const linkOp = this.linkOpForUserChange(layer, propsOp.before, propsOp.after);
+      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId });
+      return linkOp ? [propsOp, linkOp] : [propsOp];
     });
     if (!ops.length) return;
     this.engine.history.push({ kind: 'batch', ops }, '図形の共通設定');
@@ -708,34 +770,48 @@ export class LayerService {
     this.engine.events.emit('textCommitRequest');
     const state = useStore.getState();
     const ids = state.multiSelectMode ? state.selectedLayerIds : [this.activeLayerId];
-    const ops = ids.flatMap(layerId => {
+    const changes = ids.flatMap(layerId => {
       const layer = this.byId(layerId);
       if (!layer) return [];
-      const descriptor = layerParameterDescriptors(layer).find(item => item.key === key);
+      const descriptor = layerParameterDescriptors(layer).find(item => item.key === key || parameterSemanticId(item) === key);
       if (!descriptor) return [];
       const before: LayerProps = {
         opacity: layer.opacity, visible: layer.visible, blend: layer.blend,
         ...layerTypeProps(layer),
       };
       const after = descriptor.write(layer, value);
-      this.assignProps(layer, after);
-      this.bumpLayer(layer.id);
-      return [{ kind: 'layerProps' as const, layerId, before, after }];
+      return [{ layer, layerId, before, after }];
+    });
+    for (const change of changes) {
+      this.assignProps(change.layer, change.after);
+      this.bumpLayer(change.layer.id);
+    }
+    const ops: import('../history/historyTree').AtomicOp[] = changes.flatMap(({ layer, layerId, before, after }) => {
+      const propsOp = { kind: 'layerProps' as const, layerId, before, after };
+      const linkOp = this.linkOpForUserChange(layer, before, after, true);
+      return linkOp ? [propsOp, linkOp] : [propsOp];
     });
     if (!ops.length) return;
     this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, key === 'snapEnabled' ? 'スナップを変更' : '共通パラメータを変更');
+    for (const { layerId } of changes) this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId });
     this.engine.committed();
   }
 
   commitSelectedLayerOpacity(beforeById: Record<string, number>, opacity: number): void {
-    const ops = Object.entries(beforeById).flatMap(([layerId, before]) => {
+    const changes = Object.entries(beforeById).flatMap(([layerId, before]) => {
       const layer = this.byId(layerId);
       if (!layer || before === opacity) return [];
-      this.assignProps(layer, { opacity });
-      return [{ kind: 'layerProps' as const, layerId, before: { opacity: before }, after: { opacity } }];
+      return [{ layer, layerId, before: { opacity: before }, after: { opacity } }];
+    });
+    for (const change of changes) this.assignProps(change.layer, change.after);
+    const ops: import('../history/historyTree').AtomicOp[] = changes.flatMap(({ layer, layerId, before, after }) => {
+      const propsOp = { kind: 'layerProps' as const, layerId, before, after };
+      const linkOp = this.linkOpForUserChange(layer, before, after, true);
+      return linkOp ? [propsOp, linkOp] : [propsOp];
     });
     if (!ops.length) return;
     this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, '複数レイヤーの不透明度');
+    for (const { layerId } of changes) this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId });
     this.engine.committed();
   }
 

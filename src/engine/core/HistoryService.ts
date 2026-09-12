@@ -63,6 +63,7 @@ export class HistoryService {
 
   afterHistoryNav(): void {
     const eng = this.engine;
+    eng.links.reconcileAll();
     eng.layerService.fixActive();
     eng.syncTextRendersPublic();
     eng.requestRender();
@@ -115,6 +116,10 @@ export class HistoryService {
       case 'layerProps': {
         const l = ls.byId(op.layerId);
         if (l) ls.assignProps(l, dir === 'undo' ? op.before : op.after);
+        break;
+      }
+      case 'layerLink': {
+        eng.links.applyHistoryLink(op.target, dir === 'undo' ? op.before : op.after);
         break;
       }
       case 'layerReplace': {
@@ -185,7 +190,12 @@ export class HistoryService {
     for (const entry of objects) {
       const layer = eng.layerService.byId(entry.id);
       if (!layer) continue;
-      operations.push({ kind: 'layerProps', layerId: entry.id, before: entry.before, after: objectTransformProps(layer) });
+      const after = objectTransformProps(layer);
+      const propsOp = { kind: 'layerProps' as const, layerId: entry.id, before: entry.before, after };
+      operations.push(propsOp);
+      const linkOp = eng.layerService.linkOpForUserChange(layer, entry.before, after);
+      if (linkOp) operations.push(linkOp);
+      eng.links.propagateFrom({ pageId: eng.pages.activePageId, layerId: entry.id });
     }
     if (!operations.length) return;
     const node = this.history.push(operations.length === 1 ? operations[0] : { kind: 'batch', ops: operations }, label);

@@ -60,6 +60,7 @@ export function buildLayerSnapshot(layer: Layer, env: LayerSnapshotEnv): LayerSn
     visible: layer.visible,
     parentId: layer.parentId,
     childIds: [...layer.childIds],
+    ...(layer.parameterLink ? { parameterLink: structuredClone(layer.parameterLink) } : {}),
   };
   layerHandler(layer).snapshot(layer, snapshot, env);
   return snapshot;
@@ -87,6 +88,7 @@ export async function restoreLayerFrom(
   layer.visible = source.visible ?? true;
   layer.parentId = source.parentId;
   layer.childIds = [...source.childIds];
+  layer.parameterLink = source.parameterLink ? structuredClone(source.parameterLink) : undefined;
   return layer;
 }
 
@@ -104,6 +106,7 @@ export function savedLayerFrom(layer: Layer, env: LayerContentEnv): Promise<Save
     visible: layer.visible,
     parentId: layer.parentId,
     childIds: [...layer.childIds],
+    ...(layer.parameterLink ? { parameterLink: structuredClone(layer.parameterLink) } : {}),
   };
   return layerHandler(layer).toSaved(layer, env).then(fields => Object.assign(saved, fields));
 }

@@ -9,6 +9,7 @@ import { appAlert } from './AppDialogs';
 import { useEngine } from './EngineContext';
 import { pickFile } from './hooks/pickFile';
 import { NumericField } from './NumericField';
+import { CanvasMmField } from './CanvasMmField';
 
 export function TextControls({ meta }: { meta: LayerMeta }) {
   const engine = useEngine();
@@ -59,6 +60,56 @@ export function TextControls({ meta }: { meta: LayerMeta }) {
           />
         </Stack>
         <Typography variant="caption" color="text.secondary">移動の端・中央と90°回転</Typography>
+      </Stack>
+      <Stack direction="row" spacing={1}>
+        <CanvasMmField
+          size="small"
+          label="X"
+          valuePx={text.x}
+          onCommitPx={value => change(before => ({ ...before, x: value }))}
+        />
+        <CanvasMmField
+          size="small"
+          label="Y"
+          valuePx={text.y}
+          onCommitPx={value => change(before => ({ ...before, y: value }))}
+        />
+      </Stack>
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+        <CanvasMmField
+          size="small"
+          label="枠幅"
+          valuePx={text.width ?? engine.textFrameSize(meta.id)?.width ?? 0}
+          disabled={text.width === null}
+          onCommitPx={value => change(before => ({ ...before, width: value }))}
+        />
+        <Typography variant="caption">自動</Typography>
+        <Switch
+          checked={text.width === null}
+          slotProps={{ input: { 'aria-label': '枠幅を自動にする' } }}
+          onChange={event => change(before => ({
+            ...before,
+            width: event.target.checked ? null : (engine.textFrameSize(meta.id)?.width ?? 1),
+          }))}
+        />
+      </Stack>
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+        <CanvasMmField
+          size="small"
+          label="枠高さ"
+          valuePx={text.height ?? engine.textFrameSize(meta.id)?.height ?? 0}
+          disabled={text.height === null}
+          onCommitPx={value => change(before => ({ ...before, height: value }))}
+        />
+        <Typography variant="caption">自動</Typography>
+        <Switch
+          checked={text.height === null}
+          slotProps={{ input: { 'aria-label': '枠高さを自動にする' } }}
+          onChange={event => change(before => ({
+            ...before,
+            height: event.target.checked ? null : (engine.textFrameSize(meta.id)?.height ?? 1),
+          }))}
+        />
       </Stack>
       <TextField
         select

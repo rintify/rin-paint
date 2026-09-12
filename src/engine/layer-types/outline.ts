@@ -53,22 +53,22 @@ export const outlineLayerType: LayerTypeHandler<OutlineLayer> = {
   bakeOnto() {}, contentCanvas: () => null,
   parameterDescriptors: () => [
     {
-      key: 'outline.color', label: '縁の色', control: 'color',
+      key: 'outline.color', semanticId: 'appearance.color', label: '縁の色', control: 'color',
       read: layer => outlineOf(layer).color,
       write: (layer, value) => ({ outline: { ...outlineOf(layer), color: String(value) } }),
     },
     {
-      key: 'outline.widthMm', label: '太さ (mm)', control: 'number', min: SIZE_MM_MIN, max: SIZE_MM_MAX,
+      key: 'outline.widthMm', semanticId: 'appearance.widthMm', label: '太さ (mm)', control: 'number', min: SIZE_MM_MIN, max: SIZE_MM_MAX,
       read: layer => outlineOf(layer).widthMm,
       write: (layer, value) => ({ outline: { ...outlineOf(layer), widthMm: roundMm(Number(value)) } }),
     },
     {
-      key: 'outline.alphaThreshold', label: '透明度閾値 (%)', control: 'number', min: 0, max: 100,
+      key: 'outline.alphaThreshold', semanticId: 'outline.alphaThreshold', label: '透明度閾値 (%)', control: 'number', min: 0, max: 100,
       read: layer => Math.round(outlineOf(layer).alphaThreshold * 100),
       write: (layer, value) => ({ outline: { ...outlineOf(layer), alphaThreshold: Number(value) / 100 } }),
     },
     {
-      key: 'outline.cornerStyle', label: '縁の角', control: 'select',
+      key: 'outline.cornerStyle', semanticId: 'appearance.cornerStyle', label: '縁の角', control: 'select',
       options: [{ value: 'round', label: '丸' }, { value: 'sharp', label: '角' }],
       read: layer => outlineOf(layer).cornerStyle ?? 'round',
       write: (layer, value) => ({ outline: { ...outlineOf(layer), cornerStyle: value === 'sharp' ? 'sharp' : 'round' } }),

@@ -3,7 +3,7 @@ import { packProjectFile, unpackProjectFile, type ProjectFile } from './projectF
 import { HISTORY_VERSION, PROJECT_MAGIC, PROJECT_VERSION } from './version';
 import { isPersistedHistory, isSavedProjectMeta } from './schema';
 
-describe('v8 project container', () => {
+describe('v9 project container', () => {
   it('stores binary layer/history payloads without base64 and restores them', async () => {
     const history = {
       version: HISTORY_VERSION,
@@ -50,7 +50,7 @@ describe('v8 project container', () => {
     const meta = { version: PROJECT_VERSION, pageOrder: ['p1'], activePageId: 'p1', fonts: [] };
     const current = new Uint8Array(await (await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages: [page] })).arrayBuffer());
     current.set(new TextEncoder().encode('RINPAINT7'), 0);
-    await expect(unpackProjectFile(new Blob([current]))).rejects.toThrow(/v8/);
+    await expect(unpackProjectFile(new Blob([current]))).rejects.toThrow(/v9/);
   });
 });
 

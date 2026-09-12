@@ -167,6 +167,7 @@ export class PolygonSplitService {
     const beforeByRoot = new Map(rootIds.map(id => [id, beforeEntries.filter(entry => id === entry.snapshot.id || ls.descendantIds(id).includes(entry.snapshot.id))]));
     const newRootIds: string[] = [];
     const maskChanges: NonNullable<LayerReplaceOp['maskChanges']> = [];
+    const downstreamLinkOps: import('../history/historyTree').LayerLinkOp[] = [];
     const producedByOriginal = new Map<string, string[]>();
     for (const result of results) {
       const layer = ls.shapeById(result.id)!;
@@ -185,7 +186,9 @@ export class PolygonSplitService {
         strokeJoin: layer.shape.strokeJoin,
         cornerRadius: layer.shape.kind === 'polygon' || layer.shape.kind === 'rect' ? layer.shape.cornerRadius : undefined,
       };
+      const beforeShape = cloneShape(layer.shape);
       layer.shape = polygonFromWorldPoints(result.fragments[0], style);
+      ls.linkOpForUserChange(layer, { shape: beforeShape }, { shape: cloneShape(layer.shape) });
       ls.bumpLayer(layer.id);
       newRootIds.push(layer.id);
       const produced = [layer.id];
@@ -194,10 +197,20 @@ export class PolygonSplitService {
         const entries = this.cloneSubtree(sourceEntries, result.id, fragment, `${layer.name} ${i + 1}`, { parentId: location.parentId, index: location.index + i });
         await ls.restoreEntries(entries);
         const cloneId = entries[0].snapshot.id;
+        const clone = ls.shapeById(cloneId);
+        const originalShape = sourceEntries[0]?.snapshot.shape;
+        if (clone && originalShape) ls.linkOpForUserChange(
+          clone,
+          { shape: cloneShape(originalShape) },
+          { shape: cloneShape(clone.shape) },
+        );
         produced.push(cloneId);
         newRootIds.push(cloneId);
       }
       producedByOriginal.set(result.id, produced);
+      for (const producedId of produced) downstreamLinkOps.push(
+        ...eng.links.propagateFrom({ pageId: eng.pages.activePageId, layerId: producedId }),
+      );
     }
     const selected = beforeSelection.selectedLayerIds.flatMap(id => producedByOriginal.has(id) ? producedByOriginal.get(id)! : ls.byId(id) ? [id] : []);
     const primaryResults = producedByOriginal.get(beforeSelection.activeLayerId) ?? [];
@@ -217,7 +230,7 @@ export class PolygonSplitService {
       after: side(newRootIds, afterEntries, afterSelection),
       maskChanges,
     };
-    eng.history.push(op, '多角形を分断');
+    eng.history.push(downstreamLinkOps.length ? { kind: 'batch', ops: [op, ...downstreamLinkOps] } : op, '多角形を分断');
     eng.committed();
   }
 }

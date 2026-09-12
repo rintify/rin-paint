@@ -1,4 +1,4 @@
-import type { AdjustParams, BlendMode, LayerType, OutlineParams, ShapeParams, TextParams, CanvasSpec } from '../../model';
+import type { AdjustParams, BlendMode, LayerAddress, LayerParameterLink, LayerType, OutlineParams, ShapeParams, TextParams, CanvasSpec } from '../../model';
 import { HISTORY_VERSION } from '../persistence/version';
 import { opBytes } from './bytes';
 import type { TilePatch } from './tilePatch';
@@ -19,6 +19,7 @@ export interface LayerSnapshot {
   shape?: ShapeParams;
   snapEnabled?: boolean;
   text?: TextParams;
+  parameterLink?: LayerParameterLink;
   /** ラスター内容。作成直後は canvas、PNG エンコード完了後は blob に置き換わる */
   canvas?: HTMLCanvasElement;
   blob?: Blob;
@@ -35,6 +36,14 @@ export interface LayerProps {
   shape?: ShapeParams;
   snapEnabled?: boolean;
   text?: TextParams;
+  parameterLink?: LayerParameterLink | null;
+}
+
+export interface LayerLinkOp {
+  kind: 'layerLink';
+  target: LayerAddress;
+  before: LayerParameterLink | null;
+  after: LayerParameterLink | null;
 }
 
 export interface LayerLocation {
@@ -88,6 +97,7 @@ export type AtomicOp =
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: LayerSnapshot[] }
   | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
+  | LayerLinkOp
   | LayerReplaceOp
   | LayerMergeOp;
 
@@ -147,6 +157,7 @@ export type PersistedAtomicOp =
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: PersistedLayerSnapshot[] }
   | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
+  | LayerLinkOp
   | PersistedLayerReplaceOp
   | PersistedTileLayerMergeOp;
 
@@ -233,6 +244,8 @@ export class HistoryTree {
           return { ...op };
         case 'layerProps':
           return { ...op, before: { ...op.before }, after: { ...op.after } };
+        case 'layerLink':
+          return structuredClone(op);
         case 'layerReplace': {
           const side = async (value: LayerReplaceSide): Promise<PersistedLayerReplaceSide> => ({
             ...value,

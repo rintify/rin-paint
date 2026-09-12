@@ -66,7 +66,7 @@ export function migrateProjectMeta(value: unknown): SavedProjectMeta {
 }
 
 export function migrateClipboard(value: unknown): LayerClipboard | undefined {
-  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.layers)) return undefined;
+  if (!isRecord(value) || value.version !== 2 || typeof value.sourcePageIndex !== 'number' || !Array.isArray(value.layers)) return undefined;
   normalizePersistedShapes(value.layers);
   return value as unknown as LayerClipboard;
 }

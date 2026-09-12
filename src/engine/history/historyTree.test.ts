@@ -90,4 +90,24 @@ describe('shape history persistence', () => {
     expect(restored.restore(await history.serialize(async () => new Blob()))).toBe(true);
     expect(restored.current.op).toMatchObject({ kind: 'batch', ops: [{ layerId: 'a' }, { layerId: 'b' }] });
   });
+
+  it('round-trips cross-page layer link operations', async () => {
+    const history = new HistoryTree();
+    const link = {
+      source: { pageId: 'source-page', layerId: 'source-layer' },
+      sourceNameHint: '元',
+      sourcePageIndexHint: 0,
+      linkedParameterIds: ['layer.opacity'],
+      fallbackValues: { 'layer.opacity': 75 },
+    };
+    history.push({
+      kind: 'layerLink',
+      target: { pageId: 'target-page', layerId: 'target-layer' },
+      before: null,
+      after: link,
+    }, 'リンク元を変更');
+    const restored = new HistoryTree();
+    expect(restored.restore(await history.serialize(async () => new Blob()))).toBe(true);
+    expect(restored.current.op).toEqual(expect.objectContaining({ kind: 'layerLink', after: link }));
+  });
 });

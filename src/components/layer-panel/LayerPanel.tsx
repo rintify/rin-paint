@@ -2,6 +2,8 @@ import AddIcon from '@mui/icons-material/Add';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
+import LinkIcon from '@mui/icons-material/Link';
+import HubIcon from '@mui/icons-material/Hub';
 import {
   Box,
   Button,
@@ -194,9 +196,7 @@ export function LayerPanel() {
   useEffect(() => {
     const focus = (event: Event) => {
       const id = (event as CustomEvent<string>).detail;
-      if (metadata.current.has(id)) {
-        setFocusRequest(current => ({ id, token: (current?.token ?? 0) + 1 }));
-      }
+      setFocusRequest(current => ({ id, token: (current?.token ?? 0) + 1 }));
     };
     window.addEventListener(LAYER_FOCUS_EVENT, focus);
     return () => window.removeEventListener(LAYER_FOCUS_EVENT, focus);
@@ -475,6 +475,16 @@ export function LayerPanel() {
                 <Typography variant="body2" noWrap sx={{ flex: 1, opacity: meta.visible ? 1 : 0.5 }}>
                   {meta.name}
                 </Typography>
+                {meta.parameterLink && (
+                  <Tooltip title={meta.linkSource?.missing ? 'リンク元が見つかりません' : 'パラメータリンクあり'}>
+                    <LinkIcon color={meta.linkSource?.missing ? 'warning' : 'primary'} sx={{ fontSize: 15 }} />
+                  </Tooltip>
+                )}
+                {!!meta.directLinkTargets?.length && (
+                  <Tooltip title={`${meta.directLinkTargets.length}レイヤーのリンク元`}>
+                    <HubIcon color="secondary" sx={{ fontSize: 15 }} />
+                  </Tooltip>
+                )}
                 {multi && isPrimary && <Box className="primary-badge">主</Box>}
                 <IconButton
                   draggable={false}

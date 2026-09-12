@@ -92,7 +92,7 @@ export class AutosaveService {
       activePageId: pages.activePageId,
       fonts,
     });
-    await savePage({
+    const page = {
       id: pages.activePageId,
       canvasSpec,
       rootLayerIds,
@@ -102,7 +102,9 @@ export class AutosaveService {
       view,
       thumbnailVersion: pages.thumbnailVersion,
       thumbnail,
-    });
+    };
+    await savePage(page);
+    eng.links.noteSavedPage(page);
     this.scheduleStorageRefresh();
   }
 

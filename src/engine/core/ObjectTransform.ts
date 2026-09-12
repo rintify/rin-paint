@@ -70,6 +70,7 @@ export class ObjectTransform {
         const afterBounds = dirtyFor(objectTransform?.bounds(layer, env) ?? null);
         const dirty = beforeBounds && afterBounds ? unionRect(beforeBounds, afterBounds) : beforeBounds ?? afterBounds;
         eng.layerService.bumpLayer(entry.id, dirty ?? undefined);
+        eng.links.propagateFrom({ pageId: eng.pages.activePageId, layerId: entry.id }, true);
       }
     }
     eng.syncTextRendersPublic(); eng.syncStore();
@@ -77,10 +78,14 @@ export class ObjectTransform {
 
   commitObjectGroup(entries: SelectedObjectTransform[]): void {
     const eng = this.engine;
-    const ops = entries.flatMap(entry => {
+    const ops: import('../history/historyTree').AtomicOp[] = entries.flatMap(entry => {
       const layer = eng.layerService.byId(entry.id);
       if (!layer) return [];
-      return [{ kind: 'layerProps' as const, layerId: entry.id, before: entry.before, after: objectTransformProps(layer) }];
+      const after = objectTransformProps(layer);
+      const propsOp = { kind: 'layerProps' as const, layerId: entry.id, before: entry.before, after };
+      const linkOp = eng.layerService.linkOpForUserChange(layer, entry.before, after);
+      eng.links.propagateFrom({ pageId: eng.pages.activePageId, layerId: entry.id });
+      return linkOp ? [propsOp, linkOp] : [propsOp];
     });
     if (!ops.length) return;
     eng.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, '複数オブジェクトを変形');

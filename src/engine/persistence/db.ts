@@ -1,7 +1,7 @@
 import { openDB, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import type {
   AdjustParams, BlendMode, LayerType, OutlineParams, ShapeParams, ToolInstance, TextParams,
-  CanvasSpec, ProjectFont, ToolLayoutItem, ToolStack,
+  CanvasSpec, ProjectFont, ToolLayoutItem, ToolStack, LayerParameterLink,
 } from '../../model';
 import type { PersistedHistory } from '../history/historyTree';
 import { opBytes } from '../history/bytes';
@@ -14,7 +14,7 @@ import type { ShortcutBindings } from '../../shortcuts';
 export interface SavedLayer {
   id: string; type: LayerType; name: string; opacity: number; blend: BlendMode;
   visible: boolean; parentId: string | null; childIds: string[];
-  params?: AdjustParams; outline?: OutlineParams; maskLayerIds?: string[]; shape?: ShapeParams; snapEnabled?: boolean; text?: TextParams; blob?: Blob;
+  params?: AdjustParams; outline?: OutlineParams; maskLayerIds?: string[]; shape?: ShapeParams; snapEnabled?: boolean; text?: TextParams; parameterLink?: LayerParameterLink; blob?: Blob;
 }
 export interface SavedPage {
   id: string; canvasSpec: CanvasSpec; rootLayerIds: string[]; layers: SavedLayer[];
@@ -33,7 +33,7 @@ export interface SavedAppSettings {
 export interface SavedAppSettingsFile {
   app: 'rin-paint'; kind: 'settings'; version: 1; settings: SavedAppSettings;
 }
-export interface LayerClipboard { version: 1; sourcePageId: string; sourcePpi: number; rootIds: string[]; layers: SavedLayer[] }
+export interface LayerClipboard { version: 2; sourcePageId: string; sourcePageIndex: number; sourcePpi: number; rootIds: string[]; layers: SavedLayer[] }
 export interface TimelapseFrame { key?: string; pageId?: string; t: number; blob: Blob }
 export interface SavedReferenceImage {
   blob: Blob; name: string; naturalWidth: number; naturalHeight: number; x: number; y: number;
@@ -160,10 +160,11 @@ export async function loadClipboard(): Promise<LayerClipboard | undefined> {
   const d = await db();
   const value = migrateClipboard(await d.get('clipboard', 'layers'));
   if (value) await d.put('clipboard', value, 'layers');
+  else await d.delete('clipboard', 'layers');
   return value;
 }
 export async function hasClipboard(): Promise<boolean> {
-  return (await (await db()).count('clipboard')) > 0;
+  return !!(await loadClipboard());
 }
 export async function clearClipboard(): Promise<void> {
   await (await db()).clear('clipboard');

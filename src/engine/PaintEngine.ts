@@ -3,6 +3,7 @@ import { Artboard } from './artboard';
 import { EngineEvents } from './events';
 import {
   type LayerMeta,
+  type LayerAddress,
   type ShapeParams,
   type StrokePoint,
   type TextParams,
@@ -36,6 +37,7 @@ import { ClipboardService } from './core/ClipboardService';
 import { FillService } from './core/FillService';
 import { PolygonSplitService } from './core/PolygonSplitService';
 import { SettingsService } from './core/SettingsService';
+import { ParameterLinkService, type LayerLinkCandidate } from './core/ParameterLinkService';
 import { layerHandler, layerTypeProps } from './layer-types/registry';
 import type { RasterLayer } from './layers';
 import type { LayerParameterValue } from './layerParameters';
@@ -60,6 +62,7 @@ export class PaintEngine {
   /** @internal */ readonly objects = new ObjectTransform(this);
   /** @internal */ readonly autosave = new AutosaveService(this);
   /** @internal */ readonly pages = new PageService(this);
+  /** @internal */ readonly links = new ParameterLinkService(this);
   /** @internal */ readonly project = new ProjectService(this);
   /** @internal */ readonly clipboard = new ClipboardService(this);
   /** @internal */ readonly fill = new FillService(this);
@@ -188,6 +191,8 @@ export class PaintEngine {
     this.initPromise ??= (async () => {
       await this.settings.init();
       await this.project.doInit();
+      await this.links.refreshCatalog();
+      this.links.reconcileAll();
     })();
     return this.initPromise;
   }
@@ -295,6 +300,7 @@ export class PaintEngine {
   }
   addTextLayer(text: TextParams): void { this.layerService.addTextLayer(text); }
   textAt(x: number, y: number): string | null { return this.layerService.textAt(x, y); }
+  textFrameSize(id: string): { width: number; height: number } | null { return this.layerService.textFrameSize(id); }
   editTextLayer(id: string): void { this.layerService.editTextLayer(id); }
   async addFont(file: File): Promise<ProjectFont | null> { return this.project.addFont(file); }
 
@@ -323,6 +329,15 @@ export class PaintEngine {
   }
   updateShapeParams(id: string, before: ShapeParams, after: ShapeParams, preview = false): void {
     this.layerService.updateShapeParams(id, before, after, preview);
+  }
+  linkCandidates(id: string): LayerLinkCandidate[] { return this.links.candidates(id); }
+  async changeLayerLinkSource(targetId: string, source: LayerAddress): Promise<void> { return this.links.changeSource(targetId, source); }
+  removeLayerLink(targetId: string): void { this.links.removeLink(targetId); }
+  async relinkLayerParameter(targetId: string, semanticId: string): Promise<void> { return this.links.relink(targetId, semanticId); }
+  async relinkAllLayerParameters(targetId: string): Promise<void> { return this.links.relink(targetId); }
+  async focusLayerReference(address: LayerAddress): Promise<void> {
+    if (address.pageId !== this.pages.activePageId) await this.pages.switchPage(address.pageId);
+    window.dispatchEvent(new CustomEvent<string>('rin-paint:focus-layer-row', { detail: address.layerId }));
   }
 
   beginShapeEdit(point: StrokePoint, event?: PointerEvent): boolean { return this.shapeEdit.beginShapeEdit(point, event); }
@@ -566,7 +581,9 @@ export class PaintEngine {
 
   syncStore(): void {
     const ls = this.layerService;
-    const metas: LayerMeta[] = ls.layers.map((l) => ({
+    const metas: LayerMeta[] = ls.layers.map((l) => {
+      const linkInfo = this.links.infoFor(l.id);
+      return ({
       ...layerTypeProps(l),
       id: l.id,
       type: l.type,
@@ -576,11 +593,16 @@ export class PaintEngine {
       visible: l.visible,
       parentId: l.parentId,
       childIds: [...l.childIds],
+      ...(l.parameterLink ? { parameterLink: structuredClone(l.parameterLink) } : { parameterLink: undefined }),
+      linkSource: linkInfo.source,
+      directLinkTargets: linkInfo.targets,
+      compatibleLinkParameterIds: linkInfo.compatibleIds,
       version: ls.versions.get(l.id) ?? 0,
       canMergeDown: ls.canMergeLayerDown(l.id),
       canRemove: ls.canRemoveLayer(l.id),
       canTransferShape: ls.canTransferShape(l.id),
-    }));
+    });
+    });
     const state = useStore.getState();
     let selectedLayerIds = state.multiSelectMode
       ? state.selectedLayerIds.filter(id => ls.byId(id))

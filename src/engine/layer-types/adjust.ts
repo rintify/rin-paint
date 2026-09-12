@@ -88,7 +88,7 @@ export const adjustLayerType: LayerTypeHandler<AdjustLayer> = {
 
   parameterDescriptors: () =>
     SLIDERS.map(([key, label, min, max]): LayerParameterDescriptor => ({
-      key: `adjust.${key}`,
+      key: `adjust.${key}`, semanticId: `adjust.${key}`,
       label,
       control: 'number',
       min,

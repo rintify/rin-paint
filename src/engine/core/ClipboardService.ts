@@ -32,7 +32,14 @@ export class ClipboardService {
         .filter(layer => allIds.has(layer.id))
         .map(layer => savedLayerFrom(layer, { artboard: eng.artboard })),
     );
-    const clipboard: LayerClipboard = { version: 1, sourcePageId: eng.pages.activePageId, sourcePpi: eng.getCanvasSpec().ppi, rootIds: roots, layers };
+    const clipboard: LayerClipboard = {
+      version: 2,
+      sourcePageId: eng.pages.activePageId,
+      sourcePageIndex: Math.max(0, eng.pages.pageOrder.indexOf(eng.pages.activePageId)),
+      sourcePpi: eng.getCanvasSpec().ppi,
+      rootIds: roots,
+      layers,
+    };
     await saveClipboard(clipboard);
     useStore.getState().set({ clipboardAvailable: true });
   }
@@ -51,6 +58,7 @@ export class ClipboardService {
       const snapshot: LayerSnapshot = {
         ...structuredClone({ ...source, blob: undefined }),
         blob: source.blob,
+        parameterLink: undefined,
         id: ids.get(source.id)!, parentId: remap(source.parentId),
         childIds: source.childIds.map(id => ids.get(id)).filter((id): id is string => typeof id === 'string'),
         maskLayerIds: source.maskLayerIds?.map(id => ids.get(id)).filter((id): id is string => typeof id === 'string'),
@@ -76,7 +84,16 @@ export class ClipboardService {
         : { parentId: snapshot.parentId, index: source.parentId ? sourceById.get(source.parentId)?.childIds.indexOf(source.id) ?? 0 : 0 };
       snapshot.parentId = location.parentId;
       snapshot.childIds = [];
-      await ls.restoreLayer(snapshot, location);
+      const restored = await ls.restoreLayer(snapshot, location);
+      if (!restored) continue;
+      eng.links.createPasteLink(
+        restored.id,
+        { pageId: clipboard.sourcePageId, layerId: source.id },
+        { name: source.name, pageIndex: clipboard.sourcePageIndex },
+      );
+      // Redo must restore the values and direct source chosen at paste time. Keep the
+      // original raster blob while refreshing all ordinary/link fields from the live copy.
+      Object.assign(snapshot, ls.snapshotLayer(restored, false));
       ops.push({ kind: 'layerAdd', snapshot, location });
     }
     ls.activeLayerId = rootIds.at(-1) ?? ls.activeLayerId;

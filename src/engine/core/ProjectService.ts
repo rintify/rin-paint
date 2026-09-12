@@ -67,6 +67,7 @@ export class ProjectService {
     eng.compositor.textRenderer.clear();
     ls.fixActive();
     eng.compositor.syncTextRenders();
+    eng.links.noteSavedPage(page);
   }
 
   async doInit(): Promise<void> {
@@ -233,6 +234,7 @@ export class ProjectService {
       };
       await replaceProject(meta, [page]);
       pages.activePageId = pageId; pages.pageOrder = [pageId]; pages.thumbnailVersion = 0;
+      await eng.links.refreshCatalog();
       setPersistencePageId(pageId);
       ls.layers = [layer]; ls.rootLayerIds = [layer.id]; ls.activeLayerId = layer.id;
       ls.resetCountersFromLayers(); eng.history = history; ls.clearVersions();
@@ -280,6 +282,7 @@ export class ProjectService {
     const eng = this.engine;
     if (eng.isBusy()) throw new Error('処理の完了後に保存してください');
     eng.layerService.finishFloating();
+    await eng.links.flush();
     eng.scheduleSave(); await eng.flushSavePublic();
     const meta = await loadProjectMeta();
     if (!meta) throw new Error('プロジェクトを保存できませんでした');
@@ -314,6 +317,7 @@ export class ProjectService {
       };
       await replaceProject(meta, archive.pages);
       pages.pageOrder = [...meta.pageOrder]; pages.activePageId = meta.activePageId; setPersistencePageId(pages.activePageId);
+      await eng.links.refreshCatalog();
       this.canvasSpec = { ...proj.canvasSpec };
       const pixels = canvasPixels(this.canvasSpec);
       eng.artboard.resize(pixels.width, pixels.height);
@@ -351,6 +355,7 @@ export class ProjectService {
         pages: pages.pageOrder.map(id => ({ id, thumbnailVersion: archive.pages.find(page => page.id === id)?.thumbnailVersion ?? 0 })),
       });
       ls.fixActive();
+      eng.links.reconcileAll();
       eng.compositor.syncTextRenders();
     } catch (error) {
       await loadFonts(previousFonts);
