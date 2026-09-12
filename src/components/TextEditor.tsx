@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useEngine } from './EngineContext';
 import { populateText } from '../engine/text/render';
-import { replaceText, resizeTextBox, styleAt, type TextResizeCorner } from '../engine/text/model';
+import { replaceText, resizeTextBox, styleAt, textEditorFrameOrigin, type TextResizeCorner } from '../engine/text/model';
 import { editorSelection, plainEditorText, restoreEditorSelection, useTextSession } from '../engine/text/session';
 import { useStore } from '../state/store';
 import type { TextParams } from '../types';
+import { collectSnapLines, rotatedRectBounds, snapAngleToRightAngles, snapTranslation, type SnapLines } from '../engine/shapes/snap';
 
 export function TextEditor({ fitScale }: { fitScale: number }) {
   const engine = useEngine();
@@ -24,6 +25,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   currentId.current = activeId;
   const [overflow, setOverflow] = useState(false);
   const [natural, setNatural] = useState({ id: '', width: 0, height: 0 });
+  const [snapGuides, setSnapGuides] = useState<{ x: number | null; y: number | null }>({ x: null, y: null });
   const drag = useRef<{
     pointerId: number;
     mode: 'move' | 'resize' | 'rotate';
@@ -34,6 +36,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
     height: number;
     before: TextParams;
     capture: HTMLElement;
+    snapLines?: SnapLines;
   } | null>(null);
   const editing = editingId === activeId && !!text;
 
@@ -133,6 +136,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   const width = text.width ?? Math.max(30, measured.width || Number(canvas?.dataset.textWidth ?? 100));
   const height = text.height ?? Math.max(30, measured.height || Number(canvas?.dataset.textHeight ?? 60));
   const displayScale = Math.max(0.0001, fitScale * viewScale);
+  const frameOrigin = textEditorFrameOrigin(text.x, text.y, width, height, fitScale);
   const begin = (event: ReactPointerEvent<HTMLDivElement>, mode: 'move' | 'resize' | 'rotate', corner?: TextResizeCorner) => {
     if (composing.current) return;
     if (event.button !== 0) return;
@@ -140,7 +144,14 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
     event.preventDefault(); event.stopPropagation();
     const point = engine.view.clientToArt(event.clientX, event.clientY);
     const capture = event.currentTarget;
-    drag.current = { pointerId: event.pointerId, mode, corner, x: point.x, y: point.y, width, height, before: structuredClone(text), capture };
+    drag.current = {
+      pointerId: event.pointerId, mode, corner, x: point.x, y: point.y, width, height,
+      before: structuredClone(text), capture,
+      snapLines: mode === 'move' && layer.snapEnabled !== false
+        ? collectSnapLines(engine.artboard, engine.visibleObjectBounds(activeId))
+        : undefined,
+    };
+    setSnapGuides({ x: null, y: null });
     capture.setPointerCapture(event.pointerId);
   };
   const move = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -149,29 +160,42 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
     const p = engine.view.clientToArt(event.clientX, event.clientY);
     const dx = p.x - d.x;
     const dy = p.y - d.y;
-    const next = d.mode === 'move'
-      ? { ...d.before, x: d.before.x + dx, y: d.before.y + dy }
-      : d.mode === 'rotate'
-        ? { ...d.before, rotation: Math.atan2(p.y - (d.before.y + d.height / 2), p.x - (d.before.x + d.width / 2)) + Math.PI / 2 }
-        : resizeTextBox(d.before, d.width, d.height, d.corner!, dx, dy);
+    let next: TextParams;
+    if (d.mode === 'move') {
+      if (d.snapLines) {
+        const bounds = rotatedRectBounds({ x: d.before.x, y: d.before.y, w: d.width, h: d.height }, d.before.rotation ?? 0);
+        const snapped = snapTranslation(bounds, dx, dy, d.snapLines, 8 * engine.uiScale());
+        next = { ...d.before, x: d.before.x + snapped.dx, y: d.before.y + snapped.dy };
+        setSnapGuides({ x: snapped.xGuide, y: snapped.yGuide });
+      } else next = { ...d.before, x: d.before.x + dx, y: d.before.y + dy };
+    } else if (d.mode === 'rotate') {
+      const angle = Math.atan2(p.y - (d.before.y + d.height / 2), p.x - (d.before.x + d.width / 2)) + Math.PI / 2;
+      next = { ...d.before, rotation: layer.snapEnabled !== false ? snapAngleToRightAngles(angle).angle : angle };
+    } else {
+      next = resizeTextBox(d.before, d.width, d.height, d.corner!, dx, dy);
+    }
     engine.updateText(activeId, d.before, next, true);
   };
   const finish = (event: ReactPointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || d.pointerId !== event.pointerId) return;
     drag.current = null;
+    setSnapGuides({ x: null, y: null });
     const next = engine.getText(activeId);
     if (next) engine.updateText(activeId, d.before, next);
     if (d.capture.hasPointerCapture(event.pointerId)) d.capture.releasePointerCapture(event.pointerId);
   };
   const resizeHandles: TextResizeCorner[] = ['nw', 'ne', 'sw', 'se'];
   return (
-    <div
+    <>
+      {snapGuides.x !== null && <div className="text-snap-guide vertical" style={{ left: snapGuides.x * fitScale }} />}
+      {snapGuides.y !== null && <div className="text-snap-guide horizontal" style={{ top: snapGuides.y * fitScale }} />}
+      <div
       data-canvas-ui
       className={`text-frame${editing ? ' editing' : ''}`}
       style={{
-        left: text.x * fitScale,
-        top: text.y * fitScale,
+        left: frameOrigin.left,
+        top: frameOrigin.top,
         width,
         height,
         transform: `scale(${fitScale}) rotate(${text.rotation ?? 0}rad)`,
@@ -218,6 +242,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
       ))}
       {!editing && <div className="text-rotate-stem"><div className="text-rotate-handle" title="文字を回転" onPointerDown={event => begin(event, 'rotate')} /></div>}
       {overflow && editing && <div className="text-overflow-hint">枠からはみ出しています</div>}
-    </div>
+      </div>
+    </>
   );
 }

@@ -51,9 +51,10 @@ export function CanvasView() {
   const canvasH = useStore((s) => s.canvasH);
   const polygonDraftActive = useStore((s) => s.polygonDraftActive);
   const polygonDraftPointCount = useStore((s) => s.polygonDraftPointCount);
-  const polygonVertexSelected = useStore((s) => s.polygonVertexSelected);
-  const polygonVertexCanDelete = useStore((s) => s.polygonVertexCanDelete);
-  const polygonVertexEdgeConstrained = useStore((s) => s.polygonVertexEdgeConstrained);
+  const shapeHandleSelected = useStore((s) => s.shapeHandleSelected);
+  const shapeHandleCanDelete = useStore((s) => s.shapeHandleCanDelete);
+  const shapeHandleIsVertex = useStore((s) => s.shapeHandleIsVertex);
+  const shapeHandleEdgeConstrained = useStore((s) => s.shapeHandleEdgeConstrained);
   const fillProgress = useStore((s) => s.fillProgress);
   const toolNotice = useStore((s) => s.toolNotice);
 
@@ -82,6 +83,10 @@ export function CanvasView() {
   useEffect(() => {
     engine.requestRender();
   }, [canvasW, canvasH]);
+
+  useEffect(() => {
+    engine.requestOverlayRender();
+  }, [size.w, size.h]);
 
   return (
     <Box
@@ -117,9 +122,9 @@ export function CanvasView() {
         style={{ width: size.w, height: size.h }}
       >
         <canvas ref={mainRef} width={canvasW} height={canvasH} />
-        <canvas ref={overlayRef} width={canvasW} height={canvasH} />
         <TextEditor fitScale={size.w / canvasW} />
       </Box>
+      <canvas ref={overlayRef} className="canvas-overlay" aria-hidden="true" />
       {selectionActive && (
         <Paper
           elevation={6}
@@ -135,6 +140,7 @@ export function CanvasView() {
             border: 1,
             borderColor: 'divider',
             bgcolor: 'background.paper',
+            zIndex: 6,
           }}
         >
           <Button
@@ -159,16 +165,16 @@ export function CanvasView() {
           <Button onClick={() => engine.polygonCancel()}>キャンセル</Button>
         </Paper>
       )}
-      {!polygonDraftActive && polygonVertexSelected && (
+      {!polygonDraftActive && shapeHandleSelected && (
         <Paper elevation={6} data-canvas-ui sx={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 1, p: 1, zIndex: 6 }}>
           <Button
-            aria-pressed={polygonVertexEdgeConstrained}
-            variant={polygonVertexEdgeConstrained ? 'contained' : 'outlined'}
-            onClick={() => engine.setPolygonVertexEdgeConstrained(!polygonVertexEdgeConstrained)}
+            aria-pressed={shapeHandleEdgeConstrained}
+            variant={shapeHandleEdgeConstrained ? 'contained' : 'outlined'}
+            onClick={() => engine.setShapeHandleEdgeConstrained(!shapeHandleEdgeConstrained)}
           >
             辺に沿う
           </Button>
-          <Button disabled={!polygonVertexCanDelete} onClick={() => engine.deleteSelectedPolygonVertex()}>頂点を削除</Button>
+          {shapeHandleIsVertex && <Button disabled={!shapeHandleCanDelete} onClick={() => engine.deleteSelectedShapeVertex()}>頂点を削除</Button>}
         </Paper>
       )}
       {fillProgress !== null && (

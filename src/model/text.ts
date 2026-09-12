@@ -21,6 +21,8 @@ export interface TextParams {
   ranges: TextRange[];
   ruby: RubyRange[];
   direction: 'horizontal' | 'vertical';
+  horizontalAlign: 'left' | 'center' | 'right';
+  verticalAlign: 'top' | 'center' | 'bottom';
   lineHeight: number;
   x: number;
   y: number;

@@ -18,9 +18,10 @@ const mockEngine = vi.hoisted(() => ({
   detach() {},
   setFitWidth() {},
   requestRender() {},
+  requestOverlayRender() {},
   resetView() {},
-  setPolygonVertexEdgeConstrained: setConstrained,
-  deleteSelectedPolygonVertex() {},
+  setShapeHandleEdgeConstrained: setConstrained,
+  deleteSelectedShapeVertex() {},
 })) as unknown as PaintEngine;
 
 let container: HTMLDivElement;
@@ -31,9 +32,10 @@ beforeEach(() => {
   setConstrained.mockClear();
   useStore.getState().set({
     polygonDraftActive: false,
-    polygonVertexSelected: true,
-    polygonVertexCanDelete: true,
-    polygonVertexEdgeConstrained: false,
+    shapeHandleSelected: true,
+    shapeHandleCanDelete: true,
+    shapeHandleIsVertex: true,
+    shapeHandleEdgeConstrained: false,
     canvasW: 160, canvasH: 120,
   });
   container = document.body.appendChild(document.createElement('div'));
@@ -53,7 +55,7 @@ describe('polygon vertex edge constraint UI', () => {
     expect(toggle!.getAttribute('aria-pressed')).toBe('false');
     await act(async () => toggle!.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(setConstrained).toHaveBeenCalledWith(true);
-    await act(async () => useStore.getState().set({ polygonVertexSelected: false, polygonVertexEdgeConstrained: false }));
+    await act(async () => useStore.getState().set({ shapeHandleSelected: false, shapeHandleEdgeConstrained: false }));
     expect([...container.querySelectorAll('button')].some(button => button.textContent === '辺に沿う')).toBe(false);
   });
 });

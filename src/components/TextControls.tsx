@@ -1,4 +1,4 @@
-import { Button, MenuItem, Stack, TextField, Typography } from '@mui/material';
+import { Button, MenuItem, Stack, Switch, TextField, Typography } from '@mui/material';
 import { useState } from 'react';
 import { formatRange, setRuby, styleAt } from '../engine/text/model';
 import { STANDARD_FONTS } from '../engine/text/render';
@@ -44,6 +44,22 @@ export function TextControls({ meta }: { meta: LayerMeta }) {
       <Typography variant="caption" color="text.secondary">
         {selected ? '選択した文字の書式' : 'これから入力する文字の書式'}
       </Typography>
+      <Stack spacing={0.25}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>スナップ</Typography>
+          <Switch
+            checked={meta.snapEnabled !== false}
+            onChange={event => engine.commitLayerProps(
+              meta.id,
+              { snapEnabled: meta.snapEnabled !== false },
+              { snapEnabled: event.target.checked },
+              'スナップを変更',
+            )}
+            slotProps={{ input: { 'aria-label': 'スナップ' } }}
+          />
+        </Stack>
+        <Typography variant="caption" color="text.secondary">移動の端・中央と90°回転</Typography>
+      </Stack>
       <TextField
         select
         size="small"
@@ -114,6 +130,34 @@ export function TextControls({ meta }: { meta: LayerMeta }) {
         <MenuItem value="horizontal">横書き</MenuItem>
         <MenuItem value="vertical">縦書き</MenuItem>
       </TextField>
+      <Stack direction="row" spacing={1}>
+        <TextField
+          select
+          fullWidth
+          size="small"
+          label="横位置"
+          value={text.horizontalAlign ?? 'left'}
+          disabled={session.composing}
+          onChange={e => change(before => ({ ...before, horizontalAlign: e.target.value as TextParams['horizontalAlign'] }))}
+        >
+          <MenuItem value="left">左揃え</MenuItem>
+          <MenuItem value="center">中央揃え</MenuItem>
+          <MenuItem value="right">右揃え</MenuItem>
+        </TextField>
+        <TextField
+          select
+          fullWidth
+          size="small"
+          label="縦位置"
+          value={text.verticalAlign ?? 'top'}
+          disabled={session.composing}
+          onChange={e => change(before => ({ ...before, verticalAlign: e.target.value as TextParams['verticalAlign'] }))}
+        >
+          <MenuItem value="top">上揃え</MenuItem>
+          <MenuItem value="center">中央揃え</MenuItem>
+          <MenuItem value="bottom">下揃え</MenuItem>
+        </TextField>
+      </Stack>
       <NumericField
         size="small"
         label="行間 (倍)"

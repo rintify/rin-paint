@@ -144,7 +144,8 @@ describe('canvas history and new project', () => {
     engine.addShapeLayer({ kind: 'rect', x: 10, y: 10, width: 40, height: 40, rotation: 0, color: '#000000', strokeWidth: 4, paintMode: 'stroke' });
     const shapeId = useStore.getState().activeLayerId;
     const originalShape = engine.getShape(shapeId);
-    engine.beginMultiSelect(rasterId);
+    engine.setActiveLayer(rasterId);
+    engine.beginMultiSelect(shapeId);
     engine.setPenColor('#ff0000');
     await (engine as unknown as { fill: { start(point: { x: number; y: number; pressure: number }): Promise<void> } }).fill.start({ x: 30, y: 30, pressure: 1 });
     await awaitHistoryReady();
@@ -305,7 +306,7 @@ describe('canvas history and new project', () => {
     engine.addRasterLayer();
     const second = useStore.getState().activeLayerId;
     engine.beginMultiSelect(first);
-    expect(useStore.getState().selectedLayerIds[0]).toBe(first);
+    expect(useStore.getState().selectedLayerIds[0]).toBe(second);
     const before = Object.fromEntries(useStore.getState().selectedLayerIds.map(id => [id, useStore.getState().layers.find(layer => layer.id === id)!.opacity]));
     engine.previewSelectedLayerProps({ opacity: .35 });
     engine.commitSelectedLayerOpacity(before, .35);
@@ -591,7 +592,7 @@ describe('shape snap, constraints, and persistence', () => {
     }));
     engine.cancelShapeEdit();
     engine.beginShapeEdit(pt(0, 0));
-    engine.setPolygonVertexEdgeConstrained(true);
+    engine.setShapeHandleEdgeConstrained(true);
     engine.updateShapeEdit(pt(2, 10));
     expect(engine.getShape(id)).toEqual(expect.objectContaining({
       kind: 'polygon',
@@ -600,8 +601,55 @@ describe('shape snap, constraints, and persistence', () => {
     engine.cancelShapeEdit();
     const raster = useStore.getState().layers.find(layer => layer.type === 'raster')!.id;
     engine.setActiveLayer(raster);
-    expect(useStore.getState().polygonVertexSelected).toBe(false);
-    expect(useStore.getState().polygonVertexEdgeConstrained).toBe(false);
+    expect(useStore.getState().shapeHandleSelected).toBe(false);
+    expect(useStore.getState().shapeHandleEdgeConstrained).toBe(false);
+  });
+
+  it('snaps a polygon vertex to another visible polygon vertex and honors the snap switch', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({
+      kind: 'polygon', cx: 0, cy: 0, rotation: 0, color: '#000', strokeWidth: 1, paintMode: 'stroke',
+      points: [{ x: 100, y: 100 }, { x: 140, y: 100 }, { x: 100, y: 140 }],
+    });
+    engine.addShapeLayer({
+      kind: 'polygon', cx: 0, cy: 0, rotation: 0, color: '#000', strokeWidth: 1, paintMode: 'stroke',
+      points: [{ x: 20, y: 20 }, { x: 60, y: 20 }, { x: 20, y: 60 }],
+    });
+    const id = useStore.getState().activeLayerId;
+    engine.beginShapeEdit(pt(60, 20));
+    engine.updateShapeEdit(pt(96, 98));
+    expect(engine.getShape(id)).toEqual(expect.objectContaining({
+      kind: 'polygon',
+      points: [expect.anything(), expect.objectContaining({ x: 100, y: 100 }), expect.anything()],
+    }));
+    engine.cancelShapeEdit();
+    engine.commitLayerProps(id, { snapEnabled: true }, { snapEnabled: false }, 'スナップを変更');
+    engine.beginShapeEdit(pt(60, 20));
+    engine.updateShapeEdit(pt(96, 98));
+    expect(engine.getShape(id)).toEqual(expect.objectContaining({
+      kind: 'polygon',
+      points: [expect.anything(), expect.objectContaining({ x: 96, y: 98 }), expect.anything()],
+    }));
+    engine.cancelShapeEdit();
+  });
+
+  it('constrains rectangle and ellipse corner transforms along their original edges', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({ kind: 'rect', x: 20, y: 20, width: 40, height: 30, rotation: 0, color: '#000', strokeWidth: 1, paintMode: 'stroke' });
+    const rectId = useStore.getState().activeLayerId;
+    engine.beginShapeEdit(pt(20, 20));
+    engine.setShapeHandleEdgeConstrained(true);
+    engine.updateShapeEdit(pt(35, 23));
+    expect(engine.getShape(rectId)).toMatchObject({ kind: 'rect', x: 35, y: 20, width: 25, height: 30 });
+    engine.finishShapeEdit(pt(35, 23));
+
+    engine.addShapeLayer({ kind: 'ellipse', cx: 100, cy: 100, rx: 20, ry: 10, rotation: 0, color: '#000', strokeWidth: 1, paintMode: 'stroke' });
+    const ellipseId = useStore.getState().activeLayerId;
+    engine.beginShapeEdit(pt(80, 90));
+    engine.setShapeHandleEdgeConstrained(true);
+    engine.updateShapeEdit(pt(83, 82));
+    expect(engine.getShape(ellipseId)).toMatchObject({ kind: 'ellipse', cx: 100, cy: 96, rx: 20, ry: 14 });
+    engine.cancelShapeEdit();
   });
 
   it('creates the same square from Shift and the GUI aspect lock', async () => {

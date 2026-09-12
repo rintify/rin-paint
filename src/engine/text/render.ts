@@ -1,6 +1,6 @@
 import { toCanvas } from 'html-to-image';
 import type { ProjectFont, TextParams, TextStyle } from '../../types';
-import { styleAt } from './model';
+import { styleAt, textAlignment } from './model';
 
 export const STANDARD_FONTS = [{ id: 'sans', name: 'ゴシック' }, { id: 'serif', name: '明朝' }, { id: 'mono', name: '等幅' }];
 export function fontFamily(id: string): string {
@@ -29,6 +29,7 @@ function applyStyle(el: HTMLElement, style: TextStyle, ppi: number): void {
   el.style.color = style.color;
 }
 export function styleTextRoot(el: HTMLElement, text: TextParams, ppi: number): void {
+  const alignment = textAlignment(text);
   Object.assign(el.style, {
     writingMode: text.direction === 'vertical' ? 'vertical-rl' : 'horizontal-tb',
     textOrientation: 'mixed', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'normal',
@@ -36,7 +37,9 @@ export function styleTextRoot(el: HTMLElement, text: TextParams, ppi: number): v
     width: text.width === null ? 'max-content' : `${text.width}px`,
     height: text.height === null ? 'max-content' : `${text.height}px`,
     minWidth: '1em', minHeight: '1em', padding: '0', margin: '0', border: '0',
-    overflow: 'visible', textAlign: 'start',
+    overflow: text.width === null && text.height === null ? 'visible' : 'hidden',
+    textAlign: alignment.textAlign,
+    alignContent: alignment.alignContent,
   });
   applyStyle(el, text.style, ppi);
 }
@@ -146,6 +149,13 @@ export class TextRenderer {
     ctx.save();
     ctx.translate(text.x + width / 2, text.y + height / 2);
     ctx.rotate(rotation);
+    // A fixed text frame is also its clipping boundary. Font overhang and excess
+    // content must not paint outside the frame selected by the user.
+    if (text.width !== null || text.height !== null) {
+      ctx.beginPath();
+      ctx.rect(-width / 2, -height / 2, width, height);
+      ctx.clip();
+    }
     ctx.drawImage(canvas, -width / 2 - offsetX, -height / 2 - offsetY);
     ctx.restore();
   }

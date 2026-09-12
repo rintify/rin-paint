@@ -11,8 +11,13 @@ import {
 } from '../model/tool';
 import { DEFAULT_SIZE_MM, clampSizeMm, roundMm } from '../engine/units';
 import { DEFAULT_PEN_DETAIL_SETTINGS } from '../tools/pen/settings';
+import { DEFAULT_FILL_TOOL_SETTINGS } from '../tools/fill/settings';
+import { DEFAULT_SHAPE_TOOL_SETTINGS } from '../tools/shape/settings';
+import { DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS } from '../tools/polygonSplit/settings';
+import { DEFAULT_TEXT_TOOL_SETTINGS } from '../tools/text/settings';
 import { getToolDescriptor, isToolKind, type ToolKind } from '../tools/registry';
 import { normalizeToolLayout } from './toolLayout';
+import { defaultShortcutBindings, type ShortcutBindings, type ShortcutId } from '../shortcuts';
 
 export interface RedoBranch {
   index: number;
@@ -27,19 +32,61 @@ export interface StorageUsage {
   total: number;
 }
 
-export function defaultTools(): ToolInstance[] {
-  return [
-    {
+export interface DefaultToolSetup {
+  tools: ToolInstance[];
+  toolLayout: ToolLayoutItem[];
+  toolStacks: ToolStack[];
+}
+
+/** 初回起動用。全種類を1つずつ作り、図形系だけを1つのスタックへまとめる。 */
+export function defaultToolSetup(): DefaultToolSetup {
+  // registry -> PaintEngine -> store の循環初期化を避けるため、初期値はデータだけで定義する。
+  const definitions: { kind: ToolKind; name: string; shape?: boolean; settings?: unknown }[] = [
+    { kind: 'pen', name: 'ペン', settings: { ...DEFAULT_PEN_DETAIL_SETTINGS } },
+    { kind: 'line', name: '直線', shape: true },
+    { kind: 'rect', name: '四角', shape: true, settings: { ...DEFAULT_SHAPE_TOOL_SETTINGS } },
+    { kind: 'ellipse', name: '楕円', shape: true, settings: { ...DEFAULT_SHAPE_TOOL_SETTINGS } },
+    { kind: 'polygon', name: '多角形', shape: true, settings: { ...DEFAULT_SHAPE_TOOL_SETTINGS } },
+    { kind: 'fill', name: '塗りつぶし', settings: { ...DEFAULT_FILL_TOOL_SETTINGS } },
+    { kind: 'polygonSplit', name: '多角形分断', settings: { ...DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS } },
+    { kind: 'lasso', name: '選択' },
+    { kind: 'blur', name: 'ぼかし' },
+    { kind: 'text', name: '文字', settings: { ...DEFAULT_TEXT_TOOL_SETTINGS } },
+  ];
+  const tools = definitions.map(({ kind, name, settings }) => {
+    return {
       id: newToolInstanceId(),
-      kind: 'pen',
-      name: 'ペン',
+      kind,
+      name,
       sizeMm: DEFAULT_SIZE_MM,
       color: '#222222',
-      settings: { ...DEFAULT_PEN_DETAIL_SETTINGS },
-    },
-    { id: newToolInstanceId(), kind: 'lasso', name: '選択', sizeMm: DEFAULT_SIZE_MM, color: '#222222' },
-  ];
+      ...(settings !== undefined ? { settings } : {}),
+    } satisfies ToolInstance;
+  });
+  const shapeKinds = new Set(definitions.filter(item => item.shape).map(item => item.kind));
+  const shapeTools = tools.filter(tool => shapeKinds.has(tool.kind as ToolKind));
+  const shapeStack: ToolStack = {
+    id: newToolStackId(),
+    name: '図形',
+    toolIds: shapeTools.map(tool => tool.id),
+  };
+  const shapeIds = new Set(shapeStack.toolIds);
+  const toolLayout: ToolLayoutItem[] = [];
+  let insertedShapeStack = false;
+  for (const tool of tools) {
+    if (shapeIds.has(tool.id)) {
+      if (!insertedShapeStack) {
+        toolLayout.push({ type: 'stack', stackId: shapeStack.id });
+        insertedShapeStack = true;
+      }
+    } else {
+      toolLayout.push({ type: 'tool', toolId: tool.id });
+    }
+  }
+  return { tools, toolLayout, toolStacks: [shapeStack] };
 }
+
+export function defaultTools(): ToolInstance[] { return defaultToolSetup().tools; }
 
 export interface PaintState {
   tools: ToolInstance[];
@@ -50,6 +97,8 @@ export interface PaintState {
   penSizeMm: number;
   penColor: string;
   colorHistory: string[];
+  shortcuts: ShortcutBindings;
+  shortcutTarget: { type: 'layer' | 'tool' | 'stack'; id: string } | null;
 
   layers: LayerMeta[];
   rootLayerIds: string[];
@@ -82,9 +131,10 @@ export interface PaintState {
   freeTransform: boolean;
   polygonDraftActive: boolean;
   polygonDraftPointCount: number;
-  polygonVertexSelected: boolean;
-  polygonVertexCanDelete: boolean;
-  polygonVertexEdgeConstrained: boolean;
+  shapeHandleSelected: boolean;
+  shapeHandleCanDelete: boolean;
+  shapeHandleIsVertex: boolean;
+  shapeHandleEdgeConstrained: boolean;
   fillProgress: number | null;
   toolNotice: string | null;
   exportProgress: number | null;
@@ -111,20 +161,24 @@ export interface PaintState {
   moveToolToStack: (toolId: string, stackId: string, targetIndex?: number) => void;
   unstackTool: (toolId: string, targetIndex?: number) => void;
   dissolveToolStack: (stackId: string) => void;
+  setShortcut: (id: ShortcutId, binding: string) => void;
+  resetShortcuts: () => void;
 }
 
-const initialTools = defaultTools();
-const initialLayout: ToolLayoutItem[] = initialTools.map((tool) => ({ type: 'tool', toolId: tool.id }));
+const initialToolSetup = defaultToolSetup();
+const initialTools = initialToolSetup.tools;
 
 export const useStore = create<PaintState>((set) => ({
   tools: initialTools,
-  toolLayout: initialLayout,
-  toolStacks: [],
+  toolLayout: initialToolSetup.toolLayout,
+  toolStacks: initialToolSetup.toolStacks,
   activeToolId: initialTools[0].id,
   tool: initialTools[0].kind as ToolKind,
   penSizeMm: initialTools[0].sizeMm,
   penColor: initialTools[0].color,
   colorHistory: ['#222222', '#e74c3c', '#e67e22', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#ffffff'],
+  shortcuts: defaultShortcutBindings(),
+  shortcutTarget: null,
 
   layers: [],
   rootLayerIds: [],
@@ -157,9 +211,10 @@ export const useStore = create<PaintState>((set) => ({
   freeTransform: false,
   polygonDraftActive: false,
   polygonDraftPointCount: 0,
-  polygonVertexSelected: false,
-  polygonVertexCanDelete: false,
-  polygonVertexEdgeConstrained: false,
+  shapeHandleSelected: false,
+  shapeHandleCanDelete: false,
+  shapeHandleIsVertex: false,
+  shapeHandleEdgeConstrained: false,
   fillProgress: null,
   toolNotice: null,
   exportProgress: null,
@@ -341,4 +396,6 @@ export const useStore = create<PaintState>((set) => ({
     layout.splice(Math.max(0, index), 0, ...stack.toolIds.map((toolId) => ({ type: 'tool' as const, toolId })));
     return normalizeToolLayout(s.tools, layout, s.toolStacks.filter((item) => item.id !== stackId));
   }),
+  setShortcut: (id, binding) => set((s) => ({ shortcuts: { ...s.shortcuts, [id]: binding } })),
+  resetShortcuts: () => set({ shortcuts: defaultShortcutBindings() }),
 }));

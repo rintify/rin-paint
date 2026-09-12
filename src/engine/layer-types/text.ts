@@ -62,21 +62,28 @@ export const textLayerType: LayerTypeHandler<TextLayer> = {
 
   snapshot(layer, snapshot) {
     snapshot.text = structuredClone(layer.text);
+    snapshot.snapEnabled = layer.snapEnabled;
   },
 
   async restore(source, env) {
     if (!source.text) return null;
-    return createTextLayer(env.name, { ...structuredClone(source.text), rotation: source.text.rotation ?? 0 }, source.id);
+    return createTextLayer(env.name, {
+      ...structuredClone(source.text),
+      horizontalAlign: source.text.horizontalAlign ?? 'left',
+      verticalAlign: source.text.verticalAlign ?? 'top',
+      rotation: source.text.rotation ?? 0,
+    }, source.id, source.snapEnabled !== false);
   },
 
   async toSaved(layer) {
-    return { text: structuredClone(layer.text) };
+    return { text: structuredClone(layer.text), snapEnabled: layer.snapEnabled };
   },
 
   applyProps(layer, props) {
     if (props.text !== undefined) layer.text = structuredClone(props.text);
+    if (props.snapEnabled !== undefined) layer.snapEnabled = props.snapEnabled;
   },
-  captureProps: (layer) => ({ text: structuredClone(layer.text) }),
+  captureProps: (layer) => ({ text: structuredClone(layer.text), snapEnabled: layer.snapEnabled }),
 
   scale(layer, factor) {
     layer.text = scaleText(layer.text, factor);
@@ -130,11 +137,14 @@ export const textLayerType: LayerTypeHandler<TextLayer> = {
   contentCanvas: (layer, env) => env.textRenderer.get(layer.id),
 
   parameterDescriptors: (): LayerParameterDescriptor[] => [
+    { key: 'snapEnabled', label: 'スナップ', control: 'switch', trueLabel: 'ON', falseLabel: 'OFF', read: layer => layer.type === 'text' ? layer.snapEnabled !== false : null, write: (_layer, value) => ({ snapEnabled: Boolean(value) }) },
     { key: 'color', label: '色', control: 'color', read: layer => uniformTextStyle(textOf(layer), 'color'), write: textWrite((text, value) => rewriteTextStyle(text, 'color', String(value))) },
     { key: 'rotation', label: '回転 (度)', control: 'number', min: -3600, max: 3600, read: layer => (textOf(layer).rotation ?? 0) * 180 / Math.PI, write: textWrite((text, value) => ({ ...text, rotation: Number(value) * Math.PI / 180 })) },
     { key: 'fontId', label: 'フォント', control: 'select', read: layer => uniformTextStyle(textOf(layer), 'fontId'), write: textWrite((text, value) => rewriteTextStyle(text, 'fontId', String(value))) },
     { key: 'fontSizePt', label: 'サイズ (pt)', control: 'number', min: 1, max: 512, read: layer => uniformTextStyle(textOf(layer), 'sizePt'), write: textWrite((text, value) => rewriteTextStyle(text, 'sizePt', Number(value))) },
     { key: 'text.direction', label: '文字全体の方向', control: 'select', options: [{ value: 'horizontal', label: '横書き' }, { value: 'vertical', label: '縦書き' }], read: layer => textOf(layer).direction, write: textWrite((text, value) => ({ ...text, direction: value as TextParams['direction'] })) },
+    { key: 'text.horizontalAlign', label: '横位置', control: 'select', options: [{ value: 'left', label: '左揃え' }, { value: 'center', label: '中央揃え' }, { value: 'right', label: '右揃え' }], read: layer => textOf(layer).horizontalAlign ?? 'left', write: textWrite((text, value) => ({ ...text, horizontalAlign: value as TextParams['horizontalAlign'] })) },
+    { key: 'text.verticalAlign', label: '縦位置', control: 'select', options: [{ value: 'top', label: '上揃え' }, { value: 'center', label: '中央揃え' }, { value: 'bottom', label: '下揃え' }], read: layer => textOf(layer).verticalAlign ?? 'top', write: textWrite((text, value) => ({ ...text, verticalAlign: value as TextParams['verticalAlign'] })) },
     { key: 'text.lineHeight', label: '行間 (倍)', control: 'number', min: 1, max: 5, read: layer => textOf(layer).lineHeight, write: textWrite((text, value) => ({ ...text, lineHeight: Number(value) })) },
   ],
 };

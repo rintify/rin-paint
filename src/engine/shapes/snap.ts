@@ -28,6 +28,11 @@ export interface SnapAngleResult {
   snapped: boolean;
 }
 
+export interface SnapPointResult<T extends Point = Point> {
+  point: T;
+  snappedTo: Point | null;
+}
+
 const ZERO_EDGE = 1e-8;
 
 /** 軸平行外接矩形の左・中央・右 / 上・中央・下 */
@@ -101,6 +106,30 @@ export function snapAngleToRightAngles(angle: number, thresholdDeg = 5): SnapAng
     return { angle: nearest * Math.PI / 180, snapped: true };
   }
   return { angle, snapped: false };
+}
+
+/** 点を候補頂点の最近傍へ吸着する。同距離なら候補配列の先頭を優先する。 */
+export function snapPointToPoints<T extends Point>(point: T, candidates: Point[], tolerance: number): SnapPointResult<T> {
+  let best: { point: Point; distance: number } | null = null;
+  for (const candidate of candidates) {
+    const distance = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+    if (distance > tolerance || (best && distance >= best.distance)) continue;
+    best = { point: candidate, distance };
+  }
+  return best
+    ? { point: { ...point, x: best.point.x, y: best.point.y }, snappedTo: { ...best.point } }
+    : { point, snappedTo: null };
+}
+
+/** 中心回転した矩形の軸平行外接矩形。 */
+export function rotatedRectBounds(bounds: ShapeBounds, angle: number): ShapeBounds {
+  const cx = bounds.x + bounds.w / 2;
+  const cy = bounds.y + bounds.h / 2;
+  const cos = Math.abs(Math.cos(angle));
+  const sin = Math.abs(Math.sin(angle));
+  const w = bounds.w * cos + bounds.h * sin;
+  const h = bounds.w * sin + bounds.h * cos;
+  return { x: cx - w / 2, y: cy - h / 2, w, h };
 }
 
 /**

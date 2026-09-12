@@ -23,6 +23,7 @@ import { canvasPixels, validateCanvasSpec } from '../engine/canvasSpec';
 import { appAlert, appConfirm } from './AppDialogs';
 import { useEngine } from './EngineContext';
 import { pickFile } from './hooks/pickFile';
+import { ShortcutSettingsDialog } from './ShortcutSettingsDialog';
 
 async function startTimelapse(): Promise<void> {
   const set = useStore.getState().set;
@@ -106,6 +107,7 @@ export function MainMenu() {
   const [sizeOpen, setSizeOpen] = useState(false);
   const [newOpen, setNewOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const progress = useStore((s) => s.exportProgress);
   const timelapseEnabled = useStore((s) => s.timelapseEnabled);
   const historyPrunableCount = useStore((s) => s.historyPrunableCount);
@@ -136,7 +138,7 @@ export function MainMenu() {
     const file = await pickFile('.rinsettings,application/json');
     if (!file) return;
     const ok = await appConfirm(
-      '登録ツール、ツールの並び・設定、色履歴、タイムラプス設定を読み込んだ内容で置き換えます。よろしいですか？',
+      '登録ツール、ツールの並び・設定、色履歴、ショートカット、タイムラプス設定を読み込んだ内容で置き換えます。よろしいですか？',
     );
     if (!ok) return;
     try {
@@ -223,6 +225,9 @@ export function MainMenu() {
         <MenuItem onClick={() => { close(); void onImportSettings(); }}>
           設定をインポート…
         </MenuItem>
+        <MenuItem onClick={() => { setShortcutsOpen(true); close(); }}>
+          ショートカット管理…
+        </MenuItem>
         <Divider />
         <MenuItem
           disabled={progress !== null}
@@ -267,6 +272,7 @@ export function MainMenu() {
         </MenuItem>
       </Menu>
       {sizeOpen && <CanvasSizeDialog onClose={() => setSizeOpen(false)} />}
+      {shortcutsOpen && <ShortcutSettingsDialog onClose={() => setShortcutsOpen(false)} />}
       <Dialog open={newOpen} onClose={creating ? undefined : () => setNewOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>新規プロジェクトを作成しますか？</DialogTitle>
         <DialogContent>

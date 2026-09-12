@@ -17,7 +17,7 @@ let root: Root;
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   update.mockClear();
-  const tools = defaultTools();
+  const tools = defaultTools().filter(tool => tool.kind === 'pen' || tool.kind === 'lasso');
   useStore.setState({ tools, toolLayout: tools.map(tool => ({ type: 'tool' as const, toolId: tool.id })), toolStacks: [], activeToolId: tools[0].id, tool: tools[0].kind as ToolKind });
   useStore.getState().addTool('rect');
   useStore.getState().addTool('ellipse');
@@ -27,7 +27,8 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
-  useStore.setState({ tools: defaultTools(), activeToolId: defaultTools()[0].id, tool: 'pen' });
+  const tools = defaultTools();
+  useStore.setState({ tools, activeToolId: tools[0].id, tool: 'pen' });
 });
 
 describe('shape tool aspect lock', () => {

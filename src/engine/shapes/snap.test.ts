@@ -6,7 +6,9 @@ import {
   constrainAxisAlignedAspect,
   constrainVertexToEdges,
   projectPointToInfiniteLine,
+  rotatedRectBounds,
   snapAngleToRightAngles,
+  snapPointToPoints,
   snapTranslation,
 } from './snap';
 
@@ -115,6 +117,26 @@ describe('rotation snap', () => {
     expect(snapAngleToRightAngles(deg(355)).angle).toBeCloseTo(deg(360));
     expect(snapAngleToRightAngles(deg(275)).angle).toBeCloseTo(deg(270));
     expect(snapAngleToRightAngles(deg(365)).angle).toBeCloseTo(deg(360));
+  });
+});
+
+describe('point snap', () => {
+  it('snaps to the nearest vertex inside the tolerance and preserves extra point fields', () => {
+    expect(snapPointToPoints(p(12, 13), [{ x: 10, y: 10 }, { x: 13, y: 13 }], 4)).toEqual({
+      point: p(13, 13),
+      snappedTo: { x: 13, y: 13 },
+    });
+    expect(snapPointToPoints(p(20, 20), [{ x: 10, y: 10 }], 4)).toEqual({ point: p(20, 20), snappedTo: null });
+  });
+});
+
+describe('rotated rectangle bounds', () => {
+  it('returns the external bounds used by movement snapping', () => {
+    const bounds = rotatedRectBounds({ x: 10, y: 20, w: 40, h: 20 }, Math.PI / 2);
+    expect(bounds.x).toBeCloseTo(20);
+    expect(bounds.y).toBeCloseTo(10);
+    expect(bounds.w).toBeCloseTo(20);
+    expect(bounds.h).toBeCloseTo(40);
   });
 });
 

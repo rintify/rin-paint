@@ -3,6 +3,7 @@ import { TRANSPARENT, type StrokePoint } from '../../model';
 import { checkerPattern } from '../brush';
 import type { ViewState } from '../view';
 import type { PaintEngine } from '../PaintEngine';
+import { shortcutIdForEvent } from '../../shortcuts';
 
 interface Loupe {
   x: number;
@@ -48,6 +49,7 @@ export class InputController {
   gesture: Gesture | null = null;
   panDrag: PanDrag | null = null;
   spaceDown = false;
+  private panShortcutCode: string | null = null;
 
   constructor(private engine: PaintEngine) {}
 
@@ -327,40 +329,46 @@ export class InputController {
 
   private onKeyDown = (e: KeyboardEvent): void => {
     const eng = this.engine;
-    if ((e.target as HTMLElement)?.closest('input, textarea, [contenteditable="true"], [data-text-controls]')) return;
-    const meta = e.metaKey || e.ctrlKey;
-    const key = e.key.toLowerCase();
-    if (meta && key === 'z') {
+    if (e.target instanceof Element && e.target.closest('input, textarea, [contenteditable="true"], [data-text-controls]')) return;
+    const command = shortcutIdForEvent(e, useStore.getState().shortcuts);
+    if (command === 'history.undo') {
       e.preventDefault();
-      if (e.shiftKey) void eng.redo();
-      else void eng.undo();
-    } else if (meta && key === 'y') {
+      void eng.undo();
+    } else if (command === 'history.redo' || command === 'history.redoAlternate') {
       e.preventDefault();
       void eng.redo();
-    } else if (meta && key === 'c') {
+    } else if (command === 'layers.copy') {
       e.preventDefault();
       void eng.copyLayers();
-    } else if (meta && key === 'v') {
+    } else if (command === 'layers.paste') {
       e.preventDefault();
       void eng.pasteLayers();
-    } else if (meta && key === '0') {
+    } else if (command === 'view.reset') {
       e.preventDefault();
       eng.view.reset();
-    } else if (e.code === 'Space') {
+    } else if (command === 'selection.rename') {
+      e.preventDefault();
+      eng.events.emit('shortcutCommand', { command: 'rename-selection' });
+    } else if (command === 'selection.delete') {
+      e.preventDefault();
+      eng.events.emit('shortcutCommand', { command: 'delete-selection' });
+    } else if (command === 'view.pan') {
       if (!this.spaceDown) {
         this.spaceDown = true;
+        this.panShortcutCode = e.code;
         if (this.area) this.area.style.cursor = 'grab';
       }
       if (e.target === document.body) e.preventDefault();
-    } else if (e.key === 'Escape') {
+    } else if (command === 'operation.cancel') {
       this.loupe = null;
       eng.lassoCancel();
     }
   };
 
   private onKeyUp = (e: KeyboardEvent): void => {
-    if (e.code === 'Space') {
+    if (this.spaceDown && e.code === this.panShortcutCode) {
       this.spaceDown = false;
+      this.panShortcutCode = null;
       if (this.area) this.area.style.cursor = '';
     }
   };

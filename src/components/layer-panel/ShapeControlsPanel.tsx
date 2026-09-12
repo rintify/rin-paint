@@ -119,7 +119,7 @@ export function ShapeControls({ meta }: { meta: LayerMeta }) {
             slotProps={{ input: { 'aria-label': 'スナップ' } }}
           />
         </Stack>
-        <Typography variant="caption" color="text.secondary">移動の端・中央と90°回転</Typography>
+        <Typography variant="caption" color="text.secondary">移動の端・中央、90°回転、多角形の頂点</Typography>
       </Stack>
       <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.75 }}>
         {fields.map(field => (

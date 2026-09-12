@@ -9,6 +9,7 @@ import type { ViewState } from '../view';
 import { DB_VERSION, PROJECT_VERSION } from './version';
 import { migrateClipboard, migrateProjectMeta, migrateSavedPage } from './migrate';
 import { validateAppSettings } from './settingsFile';
+import type { ShortcutBindings } from '../../shortcuts';
 
 export interface SavedLayer {
   id: string; type: LayerType; name: string; opacity: number; blend: BlendMode;
@@ -27,6 +28,7 @@ export interface SavedAppSettings {
   tools: ToolInstance[]; toolLayout: ToolLayoutItem[]; toolStacks: ToolStack[];
   activeToolId: string | null; penColor: string; penSizeMm: number;
   colorHistory: string[]; timelapseEnabled: boolean;
+  shortcuts: ShortcutBindings;
 }
 export interface SavedAppSettingsFile {
   app: 'rin-paint'; kind: 'settings'; version: 1; settings: SavedAppSettings;

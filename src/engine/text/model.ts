@@ -3,7 +3,32 @@ import { DEFAULT_TEXT_TOOL_SETTINGS, type TextToolSettings } from '../../tools/t
 
 export const DEFAULT_TEXT_STYLE: TextStyle = { fontId: DEFAULT_TEXT_TOOL_SETTINGS.fontId, color: '#222222', sizePt: DEFAULT_TEXT_TOOL_SETTINGS.sizePt };
 export function newText(x: number, y: number, color: string, width: number | null = null, height: number | null = null, settings: TextToolSettings = DEFAULT_TEXT_TOOL_SETTINGS): TextParams {
-  return { content: '', style: { fontId: settings.fontId, sizePt: settings.sizePt, color: color === 'transparent' ? '#222222' : color }, ranges: [], ruby: [], direction: settings.direction, lineHeight: settings.lineHeight, x, y, width, height, rotation: 0 };
+  return { content: '', style: { fontId: settings.fontId, sizePt: settings.sizePt, color: color === 'transparent' ? '#222222' : color }, ranges: [], ruby: [], direction: settings.direction, horizontalAlign: settings.horizontalAlign, verticalAlign: settings.verticalAlign, lineHeight: settings.lineHeight, x, y, width, height, rotation: 0 };
+}
+
+/** CSS writing modes use logical axes, while the UI exposes physical alignment. */
+export function textAlignment(text: TextParams): { textAlign: string; alignContent: string } {
+  const horizontal = text.horizontalAlign ?? 'left';
+  const vertical = text.verticalAlign ?? 'top';
+  if (text.direction === 'vertical') {
+    return {
+      textAlign: vertical === 'top' ? 'start' : vertical === 'bottom' ? 'end' : 'center',
+      // vertical-rl's block axis runs from right to left.
+      alignContent: horizontal === 'left' ? 'end' : horizontal === 'right' ? 'start' : 'center',
+    };
+  }
+  return {
+    textAlign: horizontal,
+    alignContent: vertical === 'top' ? 'start' : vertical === 'bottom' ? 'end' : 'center',
+  };
+}
+
+/** Position an unscaled DOM frame so scaling/rotation around its center matches canvas coordinates. */
+export function textEditorFrameOrigin(x: number, y: number, width: number, height: number, scale: number) {
+  return {
+    left: (x + width / 2) * scale - width / 2,
+    top: (y + height / 2) * scale - height / 2,
+  };
 }
 
 export function isEmptyText(text: TextParams): boolean {

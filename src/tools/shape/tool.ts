@@ -37,12 +37,14 @@ export class ShapeTool implements Tool {
     this.start = p;
     this.cur = p;
     this.lastEvent = event;
+    this.eng.requestOverlayRender();
   }
 
   onMove(p: StrokePoint, event?: PointerEvent): void {
     if (!this.start) return;
     this.cur = p;
     this.lastEvent = event;
+    this.eng.requestOverlayRender();
   }
 
   onUp(p: StrokePoint, event?: PointerEvent): void {
@@ -51,12 +53,14 @@ export class ShapeTool implements Tool {
     this.cur = null;
     this.lastEvent = undefined;
     if (shape) this.eng.addShapeLayer(shape);
+    else this.eng.requestOverlayRender();
   }
 
   cancel(): void {
     this.start = null;
     this.cur = null;
     this.lastEvent = undefined;
+    this.eng.requestOverlayRender();
   }
 
   drawOverlay(ctx: CanvasRenderingContext2D): void {

@@ -314,4 +314,39 @@ describe('effect scopes', () => {
     const adjusted = createRenderer([source, adjust], [source.id, adjust.id]);
     expect(adjusted.compositor.renderStats()).toMatchObject({ cpuReadbackPixels: 0, canvasBorrows: 2 });
   });
+
+  it('renders operation overlays at viewport device-pixel resolution', () => {
+    vi.stubGlobal('devicePixelRatio', 2);
+    try {
+      let transformA = Number.NaN;
+      let transformD = Number.NaN;
+      const engine = {
+        artboard: { w: 16, h: 16 },
+        view: { x: 5, y: 6, rot: 0, displayScale: () => 2 },
+        activeTool: () => ({ drawOverlay: (ctx: CanvasRenderingContext2D) => {
+          const value = ctx.getTransform();
+          transformA = value.a;
+          transformD = value.d;
+        } }),
+        drawActiveShapeHandles() {},
+        drawLoupeIfAny() {},
+      } as unknown as PaintEngine;
+      const compositor = new Compositor(engine);
+      const main = document.createElement('canvas');
+      const overlay = document.createElement('canvas');
+      const area = document.createElement('div');
+      Object.defineProperties(area, {
+        clientWidth: { configurable: true, value: 100 },
+        clientHeight: { configurable: true, value: 80 },
+      });
+      compositor.attachCanvases(main, overlay, area);
+      compositor.drawOverlayFrame();
+
+      expect([overlay.width, overlay.height]).toEqual([200, 160]);
+      expect(transformA).toBe(4);
+      expect(transformD).toBe(4);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

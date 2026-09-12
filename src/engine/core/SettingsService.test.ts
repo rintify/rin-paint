@@ -6,6 +6,7 @@ import { loadAppSettings, saveAppSettings, type SavedAppSettings } from '../pers
 import { makeAppSettingsFile } from '../persistence/settingsFile';
 import type { PaintEngine } from '../PaintEngine';
 import { SettingsService } from './SettingsService';
+import { defaultShortcutBindings } from '../../shortcuts';
 
 function saved(color = '#123456'): SavedAppSettings {
   return {
@@ -17,6 +18,7 @@ function saved(color = '#123456'): SavedAppSettings {
     penSizeMm: 10,
     colorHistory: [color, '#abcdef'],
     timelapseEnabled: false,
+    shortcuts: defaultShortcutBindings(),
   };
 }
 

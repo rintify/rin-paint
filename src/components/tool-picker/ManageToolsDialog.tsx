@@ -326,7 +326,10 @@ export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
                     }
                     onPointerDown={event => beginPress(event, { toolId: tool.id, layoutIndex: index, active: false })}
                     onClick={() => {
-                      if (!suppressClick.current && !isEditing) engine.selectToolInstance(tool.id);
+                      if (!suppressClick.current && !isEditing) {
+                        useStore.getState().set({ shortcutTarget: { type: 'tool', id: tool.id } });
+                        engine.selectToolInstance(tool.id);
+                      }
                     }}
                   >
                     <Box className="manage-tool-card-top">
@@ -396,6 +399,7 @@ export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
                     onPointerDown={event => beginPress(event, { layoutIndex: index, active: false })}
                     onClick={() => {
                       if (!suppressClick.current && !isEditing) {
+                        useStore.getState().set({ shortcutTarget: { type: 'stack', id: stack.id } });
                         setOpenStackId(value => (value === stack.id ? null : stack.id));
                       }
                     }}
@@ -473,6 +477,7 @@ export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
                                 })}
                               onClick={() => {
                                 if (!suppressClick.current && !memberEditing) {
+                                  useStore.getState().set({ shortcutTarget: { type: 'tool', id: tool.id } });
                                   engine.selectToolInstance(tool.id);
                                 }
                               }}

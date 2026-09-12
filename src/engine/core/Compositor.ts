@@ -45,6 +45,8 @@ export class Compositor {
   main: HTMLCanvasElement | null = null;
   mainCtx: CanvasRenderingContext2D | null = null;
   overlayCtx: CanvasRenderingContext2D | null = null;
+  private overlaySurface: HTMLCanvasElement | null = null;
+  private overlayArea: HTMLElement | null = null;
 
   /** ストローク開始時のレイヤー内容 (履歴パッチの before 側) */
   scratch = makeCanvas(1600, 1200);
@@ -219,9 +221,11 @@ export class Compositor {
     this.raf = 0;
   }
 
-  attachCanvases(main: HTMLCanvasElement, overlay: HTMLCanvasElement): void {
+  attachCanvases(main: HTMLCanvasElement, overlay: HTMLCanvasElement, overlayArea?: HTMLElement): void {
     this.main = main;
     this.mainCtx = main.getContext('2d')!;
+    this.overlaySurface = overlay;
+    this.overlayArea = overlayArea ?? null;
     this.overlayCtx = overlay.getContext('2d')!;
   }
 
@@ -229,6 +233,8 @@ export class Compositor {
     this.stopLoop();
     this.main = null;
     this.mainCtx = null;
+    this.overlaySurface = null;
+    this.overlayArea = null;
     this.overlayCtx = null;
   }
 
@@ -486,13 +492,55 @@ export class Compositor {
   }
 
   drawOverlayFrame(): void {
-    const ctx = this.overlayCtx;
-    if (!ctx) return;
+    const surface = this.overlaySurface;
+    if (!surface) return;
     const eng = this.engine;
-    ctx.clearRect(0, 0, eng.artboard.w, eng.artboard.h);
+    const area = this.overlayArea;
+    if (!area || !eng.view) {
+      const ctx = this.overlayCtx!;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, eng.artboard.w, eng.artboard.h);
+      eng.activeTool().drawOverlay?.(ctx);
+      eng.drawActiveShapeHandles(ctx);
+      eng.drawLoupeIfAny(ctx);
+      return;
+    }
+    const dpr = Math.max(1, globalThis.devicePixelRatio || 1);
+    const cssWidth = Math.max(1, area?.clientWidth ?? eng.artboard.w);
+    const cssHeight = Math.max(1, area?.clientHeight ?? eng.artboard.h);
+    const pixelWidth = Math.max(1, Math.round(cssWidth * dpr));
+    const pixelHeight = Math.max(1, Math.round(cssHeight * dpr));
+    if (surface.width !== pixelWidth || surface.height !== pixelHeight) {
+      surface.width = pixelWidth;
+      surface.height = pixelHeight;
+      this.overlayCtx = surface.getContext('2d')!;
+    }
+    const ctx = this.overlayCtx!;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, pixelWidth, pixelHeight);
+
+    const displayScale = eng.view.displayScale();
+    const cos = Math.cos(eng.view.rot);
+    const sin = Math.sin(eng.view.rot);
+    const a = cos * displayScale * dpr;
+    const b = sin * displayScale * dpr;
+    const c = -sin * displayScale * dpr;
+    const d = cos * displayScale * dpr;
+    const centerX = (cssWidth / 2 + eng.view.x) * dpr;
+    const centerY = (cssHeight / 2 + eng.view.y) * dpr;
+    ctx.setTransform(
+      a, b, c, d,
+      centerX - a * eng.artboard.w / 2 - c * eng.artboard.h / 2,
+      centerY - b * eng.artboard.w / 2 - d * eng.artboard.h / 2,
+    );
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, eng.artboard.w, eng.artboard.h);
+    ctx.clip();
     eng.activeTool().drawOverlay?.(ctx);
     eng.drawActiveShapeHandles(ctx);
     eng.drawLoupeIfAny(ctx);
+    ctx.restore();
   }
 
   captureBefore(layer: RasterLayer): void {

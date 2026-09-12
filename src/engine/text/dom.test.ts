@@ -31,4 +31,11 @@ describe('shared text DOM and selection', () => {
     populateText(root, { ...newText(0, 0, '#000000'), content: '終わり\n' }, 300);
     expect(plainEditorText(root)).toBe('終わり\n');
   });
+  it('applies frame alignment and clips fixed-size text', () => {
+    const root = document.createElement('div');
+    populateText(root, { ...newText(0, 0, '#000000', 200, 100), horizontalAlign: 'center', verticalAlign: 'bottom', content: '中央下' }, 300);
+    expect(root.style.textAlign).toBe('center');
+    expect(root.style.alignContent).toBe('end');
+    expect(root.style.overflow).toBe('hidden');
+  });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SavedAppSettings, SavedAppSettingsFile } from './db';
 import { makeAppSettingsFile, parseAppSettingsFile, validateAppSettings } from './settingsFile';
+import { defaultShortcutBindings } from '../../shortcuts';
 
 function settings(): SavedAppSettings {
   return {
@@ -15,6 +16,7 @@ function settings(): SavedAppSettings {
     penSizeMm: 1,
     colorHistory: ['#112233', '#abcdef'],
     timelapseEnabled: false,
+    shortcuts: defaultShortcutBindings(),
   };
 }
 
@@ -37,6 +39,7 @@ describe('app settings file', () => {
     ['invalid color', (file: SavedAppSettingsFile) => { file.settings.colorHistory[0] = 'red'; }],
     ['out-of-range size', (file: SavedAppSettingsFile) => { file.settings.tools[0]!.sizeMm = 999; }],
     ['unexpected tool setting', (file: SavedAppSettingsFile) => { file.settings.tools[0]!.settings = { surprise: true }; }],
+    ['duplicate shortcut', (file: SavedAppSettingsFile) => { file.settings.shortcuts['view.reset'] = file.settings.shortcuts['history.undo']; }],
   ])('rejects %s without returning a partial value', (_label, mutate) => {
     const file = structuredClone(makeAppSettingsFile(settings()));
     mutate(file);

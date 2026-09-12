@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatRange, isEmptyText, newText, replaceText, resizeTextBox, setRuby, styleAt } from './model';
+import { formatRange, isEmptyText, newText, replaceText, resizeTextBox, setRuby, styleAt, textAlignment, textEditorFrameOrigin } from './model';
 
 describe('rich text edits', () => {
   it('keeps partial formatting and ruby when inserting elsewhere', () => {
@@ -39,10 +39,21 @@ describe('rich text edits', () => {
     expect(setRuby(setRuby(text, 0, 2, 'とうきょう'), 0, 1, 'ひがし').ruby).toEqual([{ start: 0, end: 1, text: 'ひがし' }]);
   });
   it('applies tool defaults and treats whitespace-only content as empty', () => {
-    const text = newText(4, 8, '#abcdef', 120, 80, { fontId: 'serif', sizePt: 26, direction: 'vertical', lineHeight: 2 });
-    expect(text).toMatchObject({ style: { fontId: 'serif', sizePt: 26, color: '#abcdef' }, direction: 'vertical', lineHeight: 2 });
+    const text = newText(4, 8, '#abcdef', 120, 80, { fontId: 'serif', sizePt: 26, direction: 'vertical', horizontalAlign: 'right', verticalAlign: 'bottom', lineHeight: 2 });
+    expect(text).toMatchObject({ style: { fontId: 'serif', sizePt: 26, color: '#abcdef' }, direction: 'vertical', horizontalAlign: 'right', verticalAlign: 'bottom', lineHeight: 2 });
     expect(isEmptyText({ ...text, content: ' \n\t　' })).toBe(true);
     expect(isEmptyText({ ...text, content: ' \n字' })).toBe(false);
+  });
+  it('maps physical frame alignment onto horizontal and vertical writing axes', () => {
+    const horizontal = { ...newText(0, 0, '#000'), horizontalAlign: 'right' as const, verticalAlign: 'bottom' as const };
+    expect(textAlignment(horizontal)).toEqual({ textAlign: 'right', alignContent: 'end' });
+    expect(textAlignment({ ...horizontal, direction: 'vertical' })).toEqual({ textAlign: 'end', alignContent: 'start' });
+  });
+  it('keeps the editor frame center aligned when the artboard is scaled', () => {
+    expect(textEditorFrameOrigin(100, 60, 200, 80, 0.25)).toEqual({ left: -50, top: -15 });
+    const origin = textEditorFrameOrigin(100, 60, 200, 80, 0.25);
+    expect(origin.left + 100).toBe((100 + 100) * 0.25);
+    expect(origin.top + 40).toBe((60 + 40) * 0.25);
   });
   it('resizes all corners without jumping the opposite corner', () => {
     const text = { ...newText(10, 20, '#000000'), width: 100, height: 60 };

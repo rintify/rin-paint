@@ -67,18 +67,20 @@ export interface TextLayer extends LayerTreeFields {
   type: 'text';
   name: string;
   text: TextParams;
+  snapEnabled: boolean;
   opacity: number;
   blend: BlendMode;
   visible: boolean;
 }
 export type Layer = RasterLayer | AdjustLayer | OutlineLayer | ClipLayer | ShapeLayer | TextLayer;
 
-export function createTextLayer(name: string, text: TextParams, id = newLayerId()): TextLayer {
+export function createTextLayer(name: string, text: TextParams, id = newLayerId(), snapEnabled = true): TextLayer {
   return {
     id,
     type: 'text',
     name,
     text: structuredClone(text),
+    snapEnabled,
     opacity: 1,
     blend: 'source-over',
     visible: true,

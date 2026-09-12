@@ -5,6 +5,8 @@ export interface EngineEventMap {
   projectReset: void;
   /** 参照画像ファイルのドロップ受付 (MainMenu → ReferenceImageWindow) */
   referenceImageImport: File;
+  /** UI が選択対象に応じて処理するショートカット */
+  shortcutCommand: { command: 'rename-selection' | 'delete-selection' };
 }
 
 type Handler<T> = T extends void ? () => void : (payload: T) => void;
@@ -31,7 +33,7 @@ export class EngineEvents {
     ...args: EngineEventMap[K] extends void ? [] : [EngineEventMap[K]]
   ): void {
     const payload = args[0];
-    for (const handler of this.listeners.get(type) ?? []) {
+    for (const handler of [...(this.listeners.get(type) ?? [])].reverse()) {
       handler(payload);
     }
   }

@@ -560,6 +560,7 @@ export class LayerService {
   setActiveLayer(id: string): void {
     if (this.engine.isBusy() || !this.byId(id)) return;
     const state = useStore.getState();
+    state.set({ shortcutTarget: { type: 'layer', id } });
     if (state.multiSelectMode) {
       const selected = new Set(state.selectedLayerIds);
       const removing = selected.has(id);
@@ -568,10 +569,10 @@ export class LayerService {
       const selectedLayerIds = [...selected];
       if (selectedLayerIds.length <= 1) {
         this.activeLayerId = selectedLayerIds[0]!;
-        state.set({ multiSelectMode: false, selectedLayerIds });
+        state.set({ multiSelectMode: false, selectedLayerIds, shortcutTarget: { type: 'layer', id: this.activeLayerId } });
       } else {
         this.activeLayerId = removing ? selectedLayerIds.at(-1)! : id;
-        state.set({ selectedLayerIds });
+        state.set({ selectedLayerIds, shortcutTarget: { type: 'layer', id: this.activeLayerId } });
       }
       this.engine.syncStore();
       this.engine.shapeEdit.refreshVertexState();
@@ -644,10 +645,10 @@ export class LayerService {
     if (!this.byId(id)) return;
     const st = useStore.getState();
     const previous = st.selectedLayerIds.length ? st.selectedLayerIds : [this.activeLayerId];
-    const selected = [id, ...previous.filter(existing => existing !== id && !!this.byId(existing))];
-    this.activeLayerId = id;
+    const selected = [...previous.filter(existing => !!this.byId(existing)), ...(!previous.includes(id) ? [id] : [])];
+    this.activeLayerId = selected[0] ?? id;
     if (!getToolDescriptor(st.tool ?? '')?.capabilities.multiSelect) st.deactivateTool();
-    st.set({ multiSelectMode: true, selectedLayerIds: selected });
+    st.set({ multiSelectMode: true, selectedLayerIds: selected, shortcutTarget: { type: 'layer', id: this.activeLayerId } });
     this.engine.syncStore();
   }
 

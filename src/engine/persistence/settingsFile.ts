@@ -1,6 +1,7 @@
 import { SIZE_MM_MAX, SIZE_MM_MIN } from '../units';
 import { normalizeToolInstance } from '../../tools/registry';
 import type { SavedAppSettings, SavedAppSettingsFile } from './db';
+import { defaultShortcutBindings, validateShortcutBindings } from '../../shortcuts';
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -107,8 +108,14 @@ export function validateAppSettings(value: unknown): SavedAppSettings {
     penSizeMm: raw.penSizeMm,
     colorHistory: [...raw.colorHistory] as string[],
     timelapseEnabled: raw.timelapseEnabled,
+    shortcuts: raw.shortcuts === undefined ? defaultShortcutBindings() : validateShortcutBindings(raw.shortcuts),
   };
-  if (!sameValue(normalized, raw)) throw new Error('設定ファイルに未対応の項目があります');
+  const assigned = Object.values(normalized.shortcuts).filter(Boolean);
+  if (new Set(assigned).size !== assigned.length) throw new Error('ショートカットの割り当てが重複しています');
+  if (raw.shortcuts === undefined) {
+    const { shortcuts: _shortcuts, ...legacyShape } = normalized;
+    if (!sameValue(legacyShape, raw)) throw new Error('設定ファイルに未対応の項目があります');
+  } else if (!sameValue(normalized, raw)) throw new Error('設定ファイルに未対応の項目があります');
   return normalized;
 }
 

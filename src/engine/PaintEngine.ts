@@ -36,10 +36,11 @@ import { ClipboardService } from './core/ClipboardService';
 import { FillService } from './core/FillService';
 import { PolygonSplitService } from './core/PolygonSplitService';
 import { SettingsService } from './core/SettingsService';
-import { layerTypeProps } from './layer-types/registry';
+import { layerHandler, layerTypeProps } from './layer-types/registry';
 import type { RasterLayer } from './layers';
 import type { LayerParameterValue } from './layerParameters';
 import { mmToPx } from './units';
+import { rotatedRectBounds } from './shapes/snap';
 
 export interface SelectedObjectTransform { id: string; before: LayerProps; width?: number; height?: number }
 
@@ -115,6 +116,7 @@ export class PaintEngine {
         this.lastViewState = view;
         this.scheduleSave();
       }
+      this.requestOverlayRender();
     };
     this.autosave.attachLifecycle();
   }
@@ -157,7 +159,7 @@ export class PaintEngine {
   // ---------------------------------------------------------------- attach
 
   attach(main: HTMLCanvasElement, overlay: HTMLCanvasElement, wrapper: HTMLElement, area: HTMLElement): void {
-    this.compositor.attachCanvases(main, overlay);
+    this.compositor.attachCanvases(main, overlay, area);
     this.view.attach(area, wrapper);
     this.input.attachListeners(area);
     this.compositor.startLoop();
@@ -236,6 +238,20 @@ export class PaintEngine {
 
   getLayerCanvas(id: string): HTMLCanvasElement | null { return this.layerService.getLayerCanvas(id); }
   getShape(id: string): ShapeParams | null { return this.layerService.getShape(id); }
+  objectBounds(id: string): { x: number; y: number; w: number; h: number } | null {
+    const layer = this.layerService.byId(id);
+    if (!layer) return null;
+    const bounds = layerHandler(layer).objectTransform?.bounds(layer, this.compositor.measureEnv());
+    if (!bounds) return null;
+    return layer.type === 'text' ? rotatedRectBounds(bounds, layer.text.rotation ?? 0) : bounds;
+  }
+  visibleObjectBounds(excludeId: string): { x: number; y: number; w: number; h: number }[] {
+    return this.layerService.layers.flatMap(layer => {
+      if (layer.id === excludeId || !layer.visible || (layer.type !== 'shape' && layer.type !== 'text')) return [];
+      const bounds = this.objectBounds(layer.id);
+      return bounds ? [bounds] : [];
+    });
+  }
   bumpLayer(id: string, rect?: DirtyRect): void { this.layerService.bumpLayer(id, rect); }
   invalidateLayer(id: string, rect: DirtyRect): void { this.layerService.bumpLayer(id, rect); }
 
@@ -281,8 +297,8 @@ export class PaintEngine {
   finishShapeEdit(point: StrokePoint): boolean { return this.shapeEdit.finishShapeEdit(point); }
   cancelShapeEdit(): void { this.shapeEdit.cancelShapeEdit(); }
   drawActiveShapeHandles(ctx: CanvasRenderingContext2D): void { this.shapeEdit.drawActiveShapeHandles(ctx); }
-  setPolygonVertexEdgeConstrained(value: boolean): void { this.shapeEdit.setPolygonVertexEdgeConstrained(value); }
-  deleteSelectedPolygonVertex(): void { this.shapeEdit.deleteSelectedVertex(); }
+  setShapeHandleEdgeConstrained(value: boolean): void { this.shapeEdit.setShapeHandleEdgeConstrained(value); }
+  deleteSelectedShapeVertex(): void { this.shapeEdit.deleteSelectedVertex(); }
 
   // ---------------------------------------------------------------- tools / misc
 
@@ -342,6 +358,7 @@ export class PaintEngine {
     const st = useStore.getState();
     const inst = st.tools.find((t) => t.id === id);
     if (!inst) return;
+    st.set({ shortcutTarget: { type: 'tool', id } });
     if (id === st.activeToolId) {
       this.layerService.finishFloating();
       this.activeTool().cancel?.();

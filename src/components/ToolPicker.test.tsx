@@ -32,7 +32,7 @@ let host: HTMLDivElement;
 const original = useStore.getState();
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
-  const tools = defaultTools();
+  const tools = defaultTools().slice(0, 2);
   useStore.setState({ tools, toolStacks: [], toolLayout: tools.map(t => ({ type: 'tool', toolId: t.id })) });
   host = document.body.appendChild(document.createElement('div'));
   root = createRoot(host);

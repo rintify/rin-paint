@@ -18,6 +18,7 @@ export class SettingsService {
         || state.colorHistory !== previous.colorHistory || state.tools !== previous.tools
         || state.toolLayout !== previous.toolLayout || state.toolStacks !== previous.toolStacks
         || state.activeToolId !== previous.activeToolId || state.timelapseEnabled !== previous.timelapseEnabled
+        || state.shortcuts !== previous.shortcuts
       ) this.scheduleSave();
     });
     window.addEventListener('pagehide', () => void this.flush());
@@ -37,6 +38,7 @@ export class SettingsService {
       penSizeMm: state.penSizeMm,
       colorHistory: [...state.colorHistory],
       timelapseEnabled: state.timelapseEnabled,
+      shortcuts: { ...state.shortcuts },
     };
   }
 
@@ -66,6 +68,7 @@ export class SettingsService {
       penSizeMm: active?.sizeMm ?? settings.penSizeMm,
       colorHistory: [...settings.colorHistory],
       timelapseEnabled: settings.timelapseEnabled,
+      shortcuts: { ...settings.shortcuts },
     });
     this.engine.recorderPublic().setEnabled(settings.timelapseEnabled);
   }

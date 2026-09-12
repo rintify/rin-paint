@@ -15,6 +15,7 @@ import {
   collectSnapLines,
   constrainVertexToEdges,
   snapAngleToRightAngles,
+  snapPointToPoints,
   snapTranslation,
   type SnapLines,
 } from '../shapes/snap';
@@ -39,6 +40,8 @@ interface ShapeEdit {
   xGuide: number | null;
   yGuide: number | null;
   vertexWorld?: VertexWorld;
+  vertexSnapPoints?: ShapePoint[];
+  snappedPoint?: ShapePoint | null;
 }
 
 /** 回転ハンドルは外接矩形の上辺からこれだけ離す (画面 px) */
@@ -59,7 +62,7 @@ function shapeDirty(shape: ShapeParams): DirtyRect {
 
 export class ShapeEditController {
   private shapeEdit: ShapeEdit | null = null;
-  private selectedVertex: { layerId: string; index: number } | null = null;
+  private selectedHandle: { layerId: string; mode: ShapeEditMode; index?: number } | null = null;
 
   constructor(private engine: PaintEngine) {}
 
@@ -73,23 +76,26 @@ export class ShapeEditController {
     this.syncVertexState();
   }
 
-  setPolygonVertexEdgeConstrained(value: boolean): void {
-    if (value && !this.selectedVertex) value = false;
-    useStore.getState().set({ polygonVertexEdgeConstrained: value });
+  setShapeHandleEdgeConstrained(value: boolean): void {
+    if (value && !this.selectedHandle) value = false;
+    useStore.getState().set({ shapeHandleEdgeConstrained: value });
   }
 
   private syncVertexState(): void {
-    const selected = this.selectedVertex;
+    const selected = this.selectedHandle;
     const layer = selected ? this.engine.layerService.shapeById(selected.layerId) : null;
     const vertices = layer ? shapeKindHandler(layer.shape).edit.vertexCount(layer.shape) : 0;
     const valid = !!layer
       && selected!.layerId === this.engine.layerService.activeLayerId
-      && selected!.index < vertices;
-    if (!valid) this.selectedVertex = null;
+      && (selected!.mode === 'vertex'
+        ? selected!.index !== undefined && selected!.index < vertices
+        : layer.shape.kind === 'rect' || layer.shape.kind === 'ellipse');
+    if (!valid) this.selectedHandle = null;
     useStore.getState().set({
-      polygonVertexSelected: valid,
-      polygonVertexCanDelete: valid && vertices > 3,
-      polygonVertexEdgeConstrained: valid ? useStore.getState().polygonVertexEdgeConstrained : false,
+      shapeHandleSelected: valid,
+      shapeHandleCanDelete: valid && selected?.mode === 'vertex' && vertices > 3,
+      shapeHandleIsVertex: valid && selected?.mode === 'vertex',
+      shapeHandleEdgeConstrained: valid ? useStore.getState().shapeHandleEdgeConstrained : false,
     });
   }
 
@@ -106,6 +112,13 @@ export class ShapeEditController {
     return collectSnapLines(this.engine.artboard, others);
   }
 
+  private collectVertexSnapPoints(editingId: string, selectedIndex: number): ShapePoint[] {
+    return this.engine.layerService.layers.flatMap(layer => {
+      if (layer.type !== 'shape' || !layer.visible || layer.shape.kind !== 'polygon') return [];
+      return shapePoints(layer.shape).filter((_, index) => layer.id !== editingId || index !== selectedIndex);
+    });
+  }
+
   private clearGuides(edit: ShapeEdit): void {
     edit.xGuide = null;
     edit.yGuide = null;
@@ -113,7 +126,7 @@ export class ShapeEditController {
 
   beginShapeEdit(point: StrokePoint, _event?: PointerEvent): boolean {
     const layer = this.engine.layerService.shapeById(this.engine.layerService.activeLayerId);
-    if (!layer) { this.selectedVertex = null; this.syncVertexState(); return false; }
+    if (!layer) { this.selectedHandle = null; this.syncVertexState(); return false; }
     const shape = layer.shape;
     const edit = shapeKindHandler(shape).edit;
     const radius = HANDLE_RADIUS * this.engine.uiScale();
@@ -130,14 +143,17 @@ export class ShapeEditController {
     /** 辺の中点を掴んだときのように、ヒットと同時に図形が変わる場合 */
     if (hit?.shape) layer.shape = hit.shape;
 
-    if (mode === 'vertex') this.selectedVertex = { layerId: layer.id, index: hit!.vertexIndex! };
-    else if (mode !== 'rotate') this.selectedVertex = null;
+    const cornerIndex = ({ nw: 0, ne: 1, se: 2, sw: 3 } as Partial<Record<ShapeEditMode, number>>)[mode];
+    if (mode === 'vertex') this.selectedHandle = { layerId: layer.id, mode, index: hit!.vertexIndex! };
+    else if (cornerIndex !== undefined && (shape.kind === 'rect' || shape.kind === 'ellipse')) this.selectedHandle = { layerId: layer.id, mode, index: cornerIndex };
+    else if (mode !== 'rotate') this.selectedHandle = null;
 
     let vertexWorld: VertexWorld | undefined;
-    if (mode === 'vertex' && hit?.vertexIndex !== undefined) {
+    const handleIndex = mode === 'vertex' ? hit?.vertexIndex : cornerIndex;
+    if (handleIndex !== undefined && (mode === 'vertex' || shape.kind === 'rect' || shape.kind === 'ellipse')) {
       const world = shapePoints(layer.shape);
       const count = world.length;
-      const index = hit.vertexIndex;
+      const index = handleIndex;
       vertexWorld = {
         prev: world[(index - 1 + count) % count],
         selected: world[index],
@@ -156,6 +172,10 @@ export class ShapeEditController {
       xGuide: null,
       yGuide: null,
       vertexWorld,
+      vertexSnapPoints: mode === 'vertex' && hit?.vertexIndex !== undefined
+        ? this.collectVertexSnapPoints(layer.id, hit.vertexIndex)
+        : undefined,
+      snappedPoint: null,
     };
     this.syncVertexState();
     if (hit?.shape) {
@@ -178,6 +198,7 @@ export class ShapeEditController {
     }
     let next: ShapeParams = cloneShape(edit.before);
     this.clearGuides(edit);
+    edit.snappedPoint = null;
     if (edit.mode === 'move') {
       const dx = point.x - edit.start.x;
       const dy = point.y - edit.start.y;
@@ -208,9 +229,14 @@ export class ShapeEditController {
       }
     } else {
       let target = point;
-      if (edit.mode === 'vertex' && edit.vertexWorld && ((event?.shiftKey ?? false) || useStore.getState().polygonVertexEdgeConstrained)) {
+      if (edit.vertexWorld && ((event?.shiftKey ?? false) || useStore.getState().shapeHandleEdgeConstrained)) {
         const constrained = constrainVertexToEdges(point, edit.vertexWorld.prev, edit.vertexWorld.selected, edit.vertexWorld.next);
         target = { ...point, x: constrained.x, y: constrained.y };
+      }
+      if (edit.mode === 'vertex' && layer.snapEnabled && edit.vertexSnapPoints) {
+        const snapped = snapPointToPoints(target, edit.vertexSnapPoints, SNAP_SCREEN_PX * this.engine.uiScale());
+        target = { ...target, x: snapped.point.x, y: snapped.point.y };
+        edit.snappedPoint = snapped.snappedTo;
       }
       const result = shapeKindHandler(edit.before).edit.dragHandle({
         mode: edit.mode,
@@ -259,15 +285,15 @@ export class ShapeEditController {
   }
 
   deleteSelectedVertex(): void {
-    const selected = this.selectedVertex;
+    const selected = this.selectedHandle;
     const layer = selected ? this.engine.layerService.shapeById(selected.layerId) : null;
-    if (!selected || !layer) return;
+    if (!selected || selected.mode !== 'vertex' || selected.index === undefined || !layer) return;
     const before = cloneShape(layer.shape);
     const result = shapeKindHandler(before).edit.deleteVertex(before, selected.index);
     if (!result) return;
     if (!result.shape) { if (result.error) this.engine.notify(result.error); return; }
     this.engine.layerService.assignProps(layer, { shape: result.shape });
-    this.selectedVertex = null;
+    this.selectedHandle = null;
     this.syncVertexState();
     this.engine.history.push({ kind: 'layerProps', layerId: layer.id, before: { shape: before }, after: { shape: cloneShape(layer.shape) } }, '多角形の頂点を削除');
     this.engine.committed();
@@ -288,9 +314,9 @@ export class ShapeEditController {
 
   drawActiveShapeHandles(ctx: CanvasRenderingContext2D): void {
     const layer = this.engine.layerService.shapeById(this.engine.layerService.activeLayerId);
-    if (!layer) { if (this.selectedVertex) { this.selectedVertex = null; this.syncVertexState(); } return; }
-    if (this.selectedVertex && this.selectedVertex.layerId !== layer.id) {
-      this.selectedVertex = null;
+    if (!layer) { if (this.selectedHandle) { this.selectedHandle = null; this.syncVertexState(); } return; }
+    if (this.selectedHandle && this.selectedHandle.layerId !== layer.id) {
+      this.selectedHandle = null;
       this.syncVertexState();
     }
     const shape = layer.shape, bounds = shapeBounds(shape), scale = this.engine.uiScale(), center = shapeCenter(shape);
@@ -319,6 +345,16 @@ export class ShapeEditController {
       }
       ctx.setLineDash([]);
     }
+    const snappedPoint = this.shapeEdit?.snappedPoint;
+    if (snappedPoint) {
+      ctx.strokeStyle = '#4f8cff';
+      ctx.fillStyle = '#4f8cff33';
+      ctx.lineWidth = 2 * scale;
+      ctx.beginPath();
+      ctx.arc(snappedPoint.x, snappedPoint.y, 8 * scale, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
     ctx.strokeStyle = invalid ? '#e53935' : '#4f8cff'; ctx.fillStyle = '#fff'; ctx.lineWidth = 1.5 * scale;
     if (invalid) {
       ctx.beginPath();
@@ -330,7 +366,7 @@ export class ShapeEditController {
     ctx.setLineDash([4 * scale, 3 * scale]); ctx.strokeRect(bounds.x, bounds.y, bounds.w, bounds.h); ctx.setLineDash([]);
     for (let index = 0; index < points.length; index++) {
       const point = points[index];
-      ctx.fillStyle = this.selectedVertex?.layerId === layer.id && this.selectedVertex.index === index ? '#4f8cff' : '#fff';
+      ctx.fillStyle = this.selectedHandle?.layerId === layer.id && this.selectedHandle.index === index ? '#4f8cff' : '#fff';
       ctx.beginPath(); ctx.rect(point.x - 4 * scale, point.y - 4 * scale, 8 * scale, 8 * scale); ctx.fill(); ctx.stroke();
       const insertion = insertions[index];
       if (!insertion) continue;

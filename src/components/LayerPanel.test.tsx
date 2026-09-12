@@ -20,8 +20,8 @@ const actions = vi.hoisted(() => ({
   beginMultiSelect: vi.fn((id: string) => {
     const state = useStore.getState();
     const previous = state.selectedLayerIds.length ? state.selectedLayerIds : [state.activeLayerId];
-    const selected = [id, ...previous.filter(existing => existing !== id)];
-    state.set({ multiSelectMode: true, selectedLayerIds: selected, activeLayerId: id });
+    const selected = [...previous, ...(!previous.includes(id) ? [id] : [])];
+    state.set({ multiSelectMode: true, selectedLayerIds: selected, activeLayerId: selected[0] });
   }),
 }));
 const mockEngine = vi.hoisted(() => ({
@@ -208,10 +208,10 @@ describe('layer settings entry points', () => {
     expect(actions.beginMultiSelect).toHaveBeenCalledWith('shape');
     expect(actions.setActiveLayer).not.toHaveBeenCalled();
     expect(useStore.getState().multiSelectMode).toBe(true);
-    expect(useStore.getState().selectedLayerIds).toEqual(['shape', 'raster']);
+    expect(useStore.getState().selectedLayerIds).toEqual(['raster', 'shape']);
     vi.useRealTimers();
   });
-  it('enters multi-select with the shift-clicked layer as primary', async () => {
+  it('enters multi-select while keeping the first layer primary', async () => {
     actions.setActiveLayer.mockClear();
     actions.beginMultiSelect.mockClear();
     await renderPanel();
@@ -222,14 +222,14 @@ describe('layer settings entry points', () => {
     expect(actions.beginMultiSelect).toHaveBeenCalledWith('shape');
     expect(actions.setActiveLayer).not.toHaveBeenCalled();
     expect(useStore.getState().multiSelectMode).toBe(true);
-    expect(useStore.getState().selectedLayerIds).toEqual(['shape', 'raster']);
+    expect(useStore.getState().selectedLayerIds).toEqual(['raster', 'shape']);
   });
   it('shows a snap switch for a shape layer and keeps it out of mixed-type multi-select', async () => {
     await renderPanel();
     await click([...container.querySelectorAll('.layer-row')].find(el => el.textContent?.includes('直線'))!);
     const snap = container.querySelector('[aria-label="スナップ"]');
     expect(snap).not.toBeNull();
-    expect(container.textContent).toContain('移動の端・中央と90°回転');
+    expect(container.textContent).toContain('移動の端・中央、90°回転、多角形の頂点');
     await act(async () => {
       snap!.dispatchEvent(new Event('change', { bubbles: true }));
     });

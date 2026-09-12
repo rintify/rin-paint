@@ -113,6 +113,28 @@ export function TextSettingsPanel() {
             </ToggleButton>
           </ToggleButtonGroup>
         </Box>
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1 }}>
+          <TextField
+            select
+            label="横位置"
+            value={settings.horizontalAlign}
+            onChange={(event) => engine.updateActiveToolSettings({ horizontalAlign: event.target.value })}
+          >
+            <MenuItem value="left">左揃え</MenuItem>
+            <MenuItem value="center">中央揃え</MenuItem>
+            <MenuItem value="right">右揃え</MenuItem>
+          </TextField>
+          <TextField
+            select
+            label="縦位置"
+            value={settings.verticalAlign}
+            onChange={(event) => engine.updateActiveToolSettings({ verticalAlign: event.target.value })}
+          >
+            <MenuItem value="top">上揃え</MenuItem>
+            <MenuItem value="center">中央揃え</MenuItem>
+            <MenuItem value="bottom">下揃え</MenuItem>
+          </TextField>
+        </Box>
         <Button variant="outlined" startIcon={<UploadFileOutlinedIcon />} onClick={addFont}>
           フォントファイルを追加
         </Button>
