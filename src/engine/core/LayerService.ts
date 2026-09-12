@@ -304,6 +304,7 @@ export class LayerService {
     const id = useStore.getState().textEditingId;
     if (!id) return false;
     useStore.getState().set({ textEditingId: null });
+    this.engine.requestRender();
     const layer = this.byId(id);
     if (layer?.type !== 'text' || layer.childIds.length > 0 || !isEmptyText(layer.text)) return false;
     const location = this.locationOf(id);
@@ -391,6 +392,7 @@ export class LayerService {
     if (this.engine.isBusy() || this.byId(id)?.type !== 'text') return;
     this.setActiveLayer(id);
     useStore.getState().set({ textEditingId: id });
+    this.engine.requestRender();
   }
 
   addRasterLayer(): void {

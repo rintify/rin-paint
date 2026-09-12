@@ -313,6 +313,10 @@ export class Compositor {
     capture?: { effectId: string; contribution: CanvasLease | null },
   ): CanvasLease {
     const eng = this.engine;
+    // The contenteditable text is the synchronous on-canvas preview while typing.
+    // Omitting its asynchronously rasterized copy keeps the visible glyphs and
+    // the browser caret on the same DOM layout.
+    const editingTextId = drawToolOverlay ? eng.getTextEditingId?.() ?? null : null;
     const art = this.borrowCanvas(region.w, region.h);
     const artCtx = art.ctx;
     artCtx.save();
@@ -322,7 +326,9 @@ export class Compositor {
     artCtx.filter = 'none';
     artCtx.restore();
     const env = this.drawEnv(drawToolOverlay, region.w, region.h, region.x, region.y);
-    const participates = (layer: Layer) => layer.visible && (included === null || included.has(layer.id));
+    const participates = (layer: Layer) => layer.visible
+      && !(layer.type === 'text' && layer.id === editingTextId)
+      && (included === null || included.has(layer.id));
     const activeEffectInChain = (layer: Layer): boolean => {
       if (!layerHandler(layer).effect) return false;
       if (participates(layer) || capture?.effectId === layer.id) return true;

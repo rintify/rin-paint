@@ -198,6 +198,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
         top: frameOrigin.top,
         width,
         height,
+        opacity: layer.opacity,
         transform: `scale(${fitScale}) rotate(${text.rotation ?? 0}rad)`,
         transformOrigin: 'center',
         '--text-handle-size': `${10 / displayScale}px`,

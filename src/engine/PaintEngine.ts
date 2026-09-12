@@ -163,6 +163,7 @@ export class PaintEngine {
   /** @internal */ shapeLayerById(id: string) { return this.layerService.shapeById(id); }
   /** @internal */ getRootLayerIds(): string[] { return this.layerService.rootLayerIds; }
   /** @internal */ getActiveLayerId(): string { return this.layerService.activeLayerId; }
+  /** @internal */ getTextEditingId(): string | null { return useStore.getState().textEditingId; }
   /** @internal */ activeTool(): Tool {
     const kind = useStore.getState().tool;
     return kind && isToolKind(kind) ? this.toolInstance(kind) : this.nullTool;
