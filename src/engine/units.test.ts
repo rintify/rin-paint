@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_SIZE_MM,
+  formatDeg,
   formatMm,
   gapCloseMmToPx,
   mmToPx,
   pxToMm,
+  roundDeg,
   roundMm,
 } from './units';
 
@@ -24,6 +26,12 @@ describe('mm / px conversion', () => {
     expect(formatMm(1.185)).toBe('1.19');
     expect(formatMm(1.184)).toBe('1.18');
     expect(formatMm(0.01)).toBe('0.01');
+  });
+
+  it('formats degrees to two decimal places', () => {
+    expect(formatDeg(Math.PI / 4 * 180 / Math.PI)).toBe('45.00');
+    expect(formatDeg(37.412398)).toBe('37.41');
+    expect(roundDeg(-90.006)).toBe(-90.01);
   });
 
   it('converts gap-close mm to integer px with a 1px floor', () => {

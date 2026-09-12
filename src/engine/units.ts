@@ -25,6 +25,15 @@ export function formatMm(mm: number): string {
   return roundMm(mm).toFixed(2);
 }
 
+/** 0.01° is about 1px at the edge of a 4096px canvas. */
+export function roundDeg(deg: number): number {
+  return Math.round(deg * 100) / 100;
+}
+
+export function formatDeg(deg: number): string {
+  return roundDeg(deg).toFixed(2);
+}
+
 export function clampSizeMm(mm: number): number {
   return Math.max(SIZE_MM_MIN, Math.min(SIZE_MM_MAX, mm));
 }

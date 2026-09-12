@@ -1,7 +1,7 @@
 import { FormControl, MenuItem, Select, Stack, Switch, Typography } from '@mui/material';
 import type { ReactNode } from 'react';
 import { STANDARD_FONTS } from '../../engine/text/render';
-import { clampSizeMm, mmToPx, pxToMm, roundMm } from '../../engine/units';
+import { clampSizeMm, formatDeg, mmToPx, pxToMm, roundDeg, roundMm } from '../../engine/units';
 import { CanvasMmField } from '../CanvasMmField';
 import { ColorField } from '../ColorField';
 import { NumericField } from '../NumericField';
@@ -133,16 +133,20 @@ function numberRenderer({ parameter, value, mixed, labelColor, trailing, onCommi
     );
   }
   const suffix = unit?.kind === 'degree' ? '度' : unit?.kind === 'pt' ? 'pt' : unit?.kind === 'none' ? unit.suffix : undefined;
+  const numeric = typeof value === 'number'
+    ? (unit?.kind === 'degree' ? roundDeg(value) : value)
+    : null;
   return (
     <NumericField
       size="small"
       fullWidth
       label={parameter.label}
-      value={typeof value === 'number' ? value : null}
+      value={numeric}
       min={parameter.editor.min}
       max={parameter.editor.max}
       unit={suffix}
-      onCommit={onCommit}
+      format={unit?.kind === 'degree' ? formatDeg : undefined}
+      onCommit={next => onCommit(unit?.kind === 'degree' ? roundDeg(next) : next)}
       trailing={trailing}
       labelColor={labelColor}
     />
