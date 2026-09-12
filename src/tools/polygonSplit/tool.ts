@@ -5,6 +5,7 @@ import type { Tool } from '../types';
 import { normalizePolygonSplitToolSettings } from './settings';
 
 export class PolygonSplitTool implements Tool {
+  readonly allowsDirectShapeEdit = false;
   private start: StrokePoint | null = null;
   private current: StrokePoint | null = null;
 

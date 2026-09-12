@@ -44,6 +44,7 @@ export interface DefaultToolSetup {
 export function defaultToolSetup(): DefaultToolSetup {
   // registry -> PaintEngine -> store の循環初期化を避けるため、初期値はデータだけで定義する。
   const definitions: { kind: ToolKind; name: string; shape?: boolean; settings?: unknown }[] = [
+    { kind: 'cursor', name: 'カーソル' },
     { kind: 'pen', name: 'ペン', settings: { ...DEFAULT_PEN_DETAIL_SETTINGS } },
     { kind: 'line', name: '直線', shape: true },
     { kind: 'rect', name: '四角', shape: true, settings: { ...DEFAULT_SHAPE_TOOL_SETTINGS } },

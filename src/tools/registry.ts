@@ -2,6 +2,7 @@ import type { PaintEngine } from '../engine/PaintEngine';
 import type { ToolInstance } from '../model/tool';
 import { clampSizeMm, roundMm } from '../engine/units';
 import { blurTool } from './blur';
+import { cursorTool } from './cursor';
 import { fillTool } from './fill';
 import { lassoTool } from './lasso';
 import { moveTool } from './move';
@@ -17,6 +18,7 @@ import { eyedropperTool } from './eyedropper';
 import type { Tool, ToolDescriptor } from './types';
 
 export const TOOL_REGISTRY = {
+  cursor: cursorTool,
   pen: penTool,
   line: lineTool,
   rect: rectTool,
@@ -104,6 +106,12 @@ export const TOOL_KIND_LABELS = Object.fromEntries(
   TOOL_KINDS.map((kind) => [kind, TOOL_REGISTRY[kind].label]),
 ) as Record<ToolKind, string>;
 
+export {
+  DEFAULT_CURSOR_TOOL_SETTINGS,
+  normalizeCursorToolSettings,
+  resolveCursorToolSettings,
+  type CursorToolSettings,
+} from './cursor/settings';
 export {
   DEFAULT_EYEDROPPER_TOOL_SETTINGS,
   normalizeEyedropperToolSettings,

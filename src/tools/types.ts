@@ -13,6 +13,8 @@ export interface ToolSession {
 export interface Tool {
   /** 長押し判定を待たず、pointerdown から操作を始めるツール。 */
   readonly startsImmediately?: boolean;
+  /** 選択中の図形・画像をキャンバス上で直接移動・変形していいか。未指定は許可。 */
+  readonly allowsDirectShapeEdit?: boolean;
   onDown(p: StrokePoint, e: PointerEvent): void;
   onMove(p: StrokePoint, e: PointerEvent): void;
   onUp(p: StrokePoint, e: PointerEvent): void;

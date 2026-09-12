@@ -28,7 +28,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   const tools = defaultTools();
-  useStore.setState({ tools, activeToolId: tools[0].id, tool: 'pen' });
+  useStore.setState({ tools, activeToolId: tools[0].id, tool: tools[0].kind as ToolKind });
 });
 
 describe('shape tool aspect lock', () => {

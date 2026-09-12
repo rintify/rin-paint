@@ -53,6 +53,8 @@ export interface LayerRenderer<K extends LayerType> {
     apply(scope: EffectScope, layer: LayerOf<K>, env: LayerDrawEnv): void;
     paddingPx?(layer: LayerOf<K>, env: LayerDrawEnv): number;
     dependencyLayerIds?(layer: LayerOf<K>): readonly string[];
+    /** 効果自身が足した可視画素をクリック選択の対象にする。 */
+    clickableAddedPixels?: boolean;
   };
   eraser?: {
     applies(layer: LayerOf<K>): boolean;

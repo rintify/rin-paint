@@ -10,6 +10,12 @@ import { EffectCache } from './EffectCache';
 
 interface RenderRect { x: number; y: number; w: number; h: number }
 
+interface LayerHitCapture {
+  layerId: string;
+  contribution: CanvasLease | null;
+  target: HTMLCanvasElement | null;
+}
+
 function clampDirty(rect: DirtyRect, width: number, height: number): DirtyRect | null {
   const value = {
     minX: Math.max(0, Math.floor(rect.minX)),
@@ -221,6 +227,15 @@ export class Compositor {
     return this.main;
   }
 
+  renderLayerHitMask(layerId: string, region?: RenderRect): CanvasLease {
+    const { w, h } = this.engine.artboard;
+    const bounds = region ?? { x: 0, y: 0, w, h };
+    const hit: LayerHitCapture = { layerId, contribution: null, target: null };
+    const art = this.renderArt(bounds, null, false, undefined, hit);
+    art.release();
+    return hit.contribution ?? this.borrowCanvas(bounds.w, bounds.h);
+  }
+
   samplePixel(x: number, y: number, includedLayerId: string | null): Uint8ClampedArray {
     const cx = Math.max(0, Math.min(this.engine.artboard.w - 1, Math.round(x)));
     const cy = Math.max(0, Math.min(this.engine.artboard.h - 1, Math.round(y)));
@@ -313,6 +328,7 @@ export class Compositor {
     included: Set<string> | null,
     drawToolOverlay: boolean,
     capture?: { effectId: string; contribution: CanvasLease | null },
+    hit?: LayerHitCapture,
   ): CanvasLease {
     const eng = this.engine;
     // The contenteditable text is the synchronous on-canvas preview while typing.
@@ -333,7 +349,7 @@ export class Compositor {
       && (included === null || included.has(layer.id));
     const activeEffectInChain = (layer: Layer): boolean => {
       if (!layerHandler(layer).renderer.effect) return false;
-      if (participates(layer) || capture?.effectId === layer.id) return true;
+      if (participates(layer) || capture?.effectId === layer.id || hit?.layerId === layer.id) return true;
       return layer.childIds.some(id => {
         const child = eng.layerById(id);
         return !!child && activeEffectInChain(child);
@@ -360,6 +376,31 @@ export class Compositor {
       layerHandler(layer).renderer.draw(target, layer, env);
       target.restore();
     };
+    const retainHitCoverage = (targetCanvas: HTMLCanvasElement) => {
+      if (!hit?.contribution || hit.target !== targetCanvas) return;
+      hit.contribution.ctx.save();
+      hit.contribution.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      hit.contribution.ctx.globalAlpha = 1;
+      hit.contribution.ctx.globalCompositeOperation = 'destination-in';
+      hit.contribution.ctx.drawImage(targetCanvas, 0, 0);
+      hit.contribution.ctx.restore();
+    };
+    const captureContent = (targetCanvas: HTMLCanvasElement, layer: Layer) => {
+      if (!hit || hit.layerId !== layer.id || hit.contribution) return;
+      const own = this.borrowCanvas(region.w, region.h);
+      drawLayer(own.ctx, layer);
+      hit.contribution = own;
+      hit.target = targetCanvas;
+    };
+    const captureDifference = (targetCanvas: HTMLCanvasElement, before: CanvasLease) => {
+      const contribution = this.borrowCanvas(region.w, region.h);
+      contribution.ctx.drawImage(targetCanvas, 0, 0);
+      contribution.ctx.globalCompositeOperation = 'destination-out';
+      contribution.ctx.drawImage(before.canvas, 0, 0);
+      contribution.ctx.globalCompositeOperation = 'source-over';
+      before.release();
+      return contribution;
+    };
     const renderSequence = (
       ids: string[],
       target: CanvasRenderingContext2D,
@@ -371,22 +412,25 @@ export class Compositor {
         if (!layer) continue;
         const handler = layerHandler(layer);
         if (handler.renderer.effect) {
-          if (participates(layer) || capture?.effectId === layer.id) {
-            const capturesThisEffect = capture?.effectId === layer.id;
-            const before = capturesThisEffect ? this.borrowCanvas(region.w, region.h) : null;
+          const capturingEyedropper = capture?.effectId === layer.id;
+          const capturingHitEffect = !!hit && hit.layerId === layer.id && !!handler.renderer.effect.clickableAddedPixels;
+          if (participates(layer) || capturingEyedropper || capturingHitEffect) {
+            const capturingDifference = capturingEyedropper || capturingHitEffect;
+            const before = capturingDifference ? this.borrowCanvas(region.w, region.h) : null;
             before?.ctx.drawImage(targetCanvas, 0, 0);
             handler.renderer.effect.apply(effectScope(targetCanvas, state.revision), layer, env);
             resetTarget(target);
             state.revision = mixRevision(state.revision, `${layer.id}:${eng.getRenderRevision?.(layer.id) ?? 0}`);
-            if (capturesThisEffect && capture) {
-              const contribution = this.borrowCanvas(region.w, region.h);
-              contribution.ctx.drawImage(targetCanvas, 0, 0);
-              contribution.ctx.globalCompositeOperation = 'destination-out';
-              contribution.ctx.drawImage(before!.canvas, 0, 0);
-              contribution.ctx.globalCompositeOperation = 'source-over';
-              before!.release();
-              capture.contribution = contribution;
-              return true;
+            if (capturingDifference && before) {
+              const contribution = captureDifference(targetCanvas, before);
+              if (capturingEyedropper && capture) {
+                capture.contribution = contribution;
+                return true;
+              }
+              hit!.contribution = contribution;
+              hit!.target = targetCanvas;
+            } else {
+              retainHitCoverage(targetCanvas);
             }
           }
           if (renderSequence(layer.childIds, target, targetCanvas, state)) return true;
@@ -407,6 +451,7 @@ export class Compositor {
           local.setTransform(1, 0, 0, 1, 0, 0);
           resetTarget(local);
           if (participates(layer)) {
+            captureContent(scope.canvas, layer);
             drawLayer(local, layer);
           }
           const stopped = renderSequence(layer.childIds, local, scope.canvas, localState);
@@ -419,11 +464,13 @@ export class Compositor {
           resetTarget(target);
           target.drawImage(local.canvas, 0, 0);
           target.restore();
+          if (hit?.target === scope.canvas) hit.target = targetCanvas;
           scope.release();
           state.revision = mixRevision(state.revision, localState.revision);
           continue;
         }
         if (participates(layer)) {
+          captureContent(targetCanvas, layer);
           drawLayer(target, layer);
           state.revision = mixRevision(state.revision, `${layer.id}:${eng.getRenderRevision?.(layer.id) ?? 0}`);
         }

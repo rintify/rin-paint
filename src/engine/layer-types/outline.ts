@@ -62,6 +62,7 @@ export const outlineLayerType: LayerDefinition<'outline'> = {
     bakeOnto() {},
     contentCanvas: () => null,
     effect: {
+      clickableAddedPixels: true,
       paddingPx(layer, env) {
         return Math.ceil(layer.state.outline.widthMm * env.ppi / 25.4 + 1);
       },

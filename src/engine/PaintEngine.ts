@@ -10,7 +10,14 @@ import {
   type CanvasSpec,
   type ProjectFont,
 } from '../model';
-import { createTool, isToolKind, type ToolKind } from '../tools/registry';
+import {
+  createTool,
+  isToolKind,
+  normalizeEyedropperToolSettings,
+  resolveCursorToolSettings,
+  type EyedropperSource,
+  type ToolKind,
+} from '../tools/registry';
 import type { ActiveToolSettings, Tool, ToolSession } from '../tools/types';
 import { LassoTool } from '../tools/lasso/tool';
 import { MoveTool } from '../tools/move/tool';
@@ -27,6 +34,7 @@ import type { SavedPage } from './persistence/db';
 import { TimelapseRecorder } from './timelapse/recorder';
 import { ViewController, type ViewState } from './view';
 import { Compositor } from './core/Compositor';
+import { LayerPicker, type LayerPickHit } from './core/LayerPicker';
 import { LayerService } from './core/LayerService';
 import { HistoryService } from './core/HistoryService';
 import { InputController } from './core/InputController';
@@ -47,10 +55,6 @@ import type { LayerParameterValue } from './parameters/types';
 import { mmToPx } from './units';
 import { imageToolBoxPx } from '../tools/image/settings';
 import { canvasFromImageFile } from './image/load';
-import {
-  normalizeEyedropperToolSettings,
-  type EyedropperSource,
-} from '../tools/eyedropper/settings';
 
 export interface SelectedObjectTransform { id: string; before: LayerProps; width?: number; height?: number }
 
@@ -59,6 +63,7 @@ export class PaintEngine {
   readonly events = new EngineEvents();
 
   /** @internal */ readonly compositor = new Compositor(this);
+  /** @internal */ readonly layerPicker = new LayerPicker(this);
   /** @internal */ readonly layerService = new LayerService(this);
   /** @internal */ readonly historyService = new HistoryService(this);
   /** @internal */ readonly input = new InputController(this);
@@ -84,12 +89,6 @@ export class PaintEngine {
   private initPromise: Promise<void> | null = null;
   private lastViewState: ViewState = this.view.snapshot();
   private toolBeforeEyedropperId: string | null = null;
-
-  private readonly nullTool: Tool = {
-    onDown: () => undefined,
-    onMove: () => undefined,
-    onUp: () => undefined,
-  };
 
   /** @internal — tests cast to HistoryTree */
   get history(): HistoryTree { return this.historyService.history; }
@@ -167,7 +166,21 @@ export class PaintEngine {
   /** @internal */ getTextEditingId(): string | null { return useStore.getState().textEditingId; }
   /** @internal */ activeTool(): Tool {
     const kind = useStore.getState().tool;
-    return kind && isToolKind(kind) ? this.toolInstance(kind) : this.nullTool;
+    return this.toolInstance(kind && isToolKind(kind) ? kind : 'cursor');
+  }
+  /** @internal */ cursorToolSettings() {
+    const state = useStore.getState();
+    const selected = state.activeToolId
+      ? state.tools.find((tool) => tool.id === state.activeToolId)
+      : undefined;
+    return resolveCursorToolSettings({
+      selectedKind: state.tool,
+      selectedSettings: selected?.kind === 'cursor' ? selected.settings : undefined,
+      firstVisibleCursor: this.firstToolOfKind('cursor'),
+    });
+  }
+  pickLayerAt(x: number, y: number): LayerPickHit | null {
+    return this.layerPicker.pickAt(x, y);
   }
   /** @internal */ drawLoupeIfAny(ctx: CanvasRenderingContext2D): void { this.input.drawLoupeIfAny(ctx); }
 

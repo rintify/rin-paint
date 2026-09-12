@@ -57,7 +57,7 @@ export class InputController {
   constructor(private engine: PaintEngine) {}
 
   private beginEditableShape(point: StrokePoint, event: PointerEvent): boolean {
-    return useStore.getState().tool !== 'polygonSplit'
+    return this.engine.activeTool().allowsDirectShapeEdit !== false
       && this.engine.beginShapeEdit(point, event);
   }
 

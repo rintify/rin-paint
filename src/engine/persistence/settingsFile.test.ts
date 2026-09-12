@@ -28,6 +28,17 @@ describe('app settings file', () => {
     expect(JSON.stringify(file)).not.toMatch(/pageOrder|fonts|rootLayerIds|activeLayerId|referenceImage/i);
   });
 
+  it('keeps existing layouts that do not include a cursor tool', () => {
+    expect(validateAppSettings(settings()).tools.map(tool => tool.kind)).toEqual(['lasso', 'blur']);
+  });
+
+  it('accepts a cursor tool instance without extra settings', () => {
+    const value = settings();
+    value.tools.push({ id: 'cursor', kind: 'cursor', name: 'カーソル', sizeMm: 1, color: '#112233' });
+    value.toolLayout = [...value.toolLayout, { type: 'tool', toolId: 'cursor' }];
+    expect(validateAppSettings(value).tools.map(tool => tool.kind)).toEqual(['lasso', 'blur', 'cursor']);
+  });
+
   it.each([
     ['wrong version', (file: SavedAppSettingsFile) => { (file as { version: number }).version = 2; }],
     ['unknown tool', (file: SavedAppSettingsFile) => { file.settings.tools[0]!.kind = 'unknown'; }],
