@@ -33,5 +33,9 @@ describe('shape geometry', () => {
     const shape = polygonFromWorldPoints(ell, { color: '#000', strokeWidth: 2, paintMode: 'stroke' });
     expect(shape.cx).toBeCloseTo(5 / 3);
     expect(shape.cy).toBeCloseTo(5 / 3);
+    const styled = polygonFromWorldPoints(ell, {
+      color: '#000', strokeWidth: 2, paintMode: 'stroke', strokeJoin: 'miter', cornerRadius: 12,
+    });
+    expect(styled).toMatchObject({ strokeJoin: 'miter', cornerRadius: 12 });
   });
 });

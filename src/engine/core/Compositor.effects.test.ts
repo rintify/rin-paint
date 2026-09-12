@@ -198,6 +198,17 @@ describe('effect scopes', () => {
     expect(rgba(high, 6, 8)[0]).toBeLessThan(200);
   });
 
+  it('switches outline expansion corners between round and sharp', () => {
+    const source = raster('source', ctx => { ctx.fillStyle = '#fff'; ctx.fillRect(8, 8, 1, 1); });
+    const outline = createOutlineLayer('縁どり', 'outline');
+    outline.outline = { color: '#000000', widthMm: 2, alphaThreshold: .5, cornerStyle: 'round' };
+    const round = render([source, outline], [source.id, outline.id]);
+    outline.outline.cornerStyle = 'sharp';
+    const sharp = render([source, outline], [source.id, outline.id]);
+    expect(rgba(round, 6, 6)).toEqual([255, 255, 255, 255]);
+    expect(rgba(sharp, 6, 6)[0]).toBeLessThan(200);
+  });
+
   it('recomposites only the invalidated pixels when no spatial effect expands them', () => {
     const source = raster('source', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 16, 16); });
     const { main, compositor, revisions } = createRenderer([source], [source.id]);

@@ -21,6 +21,7 @@ function normalize(value: Partial<OutlineParams> | undefined): OutlineParams {
     alphaThreshold: Number.isFinite(threshold)
       ? Math.max(0, Math.min(1, threshold))
       : DEFAULT_OUTLINE.alphaThreshold,
+    cornerStyle: value?.cornerStyle === 'sharp' ? 'sharp' : 'round',
   };
 }
 
@@ -43,7 +44,7 @@ export const outlineLayerType: LayerTypeHandler<OutlineLayer> = {
       return Math.ceil(layer.outline.widthMm * env.ppi / 25.4 + 1);
     },
     apply(scope, layer, env) {
-      applyOutline(scope, layer.id, layer.outline.color, layer.outline.widthMm, layer.outline.alphaThreshold, layer.opacity, env);
+      applyOutline(scope, layer.id, layer.outline.color, layer.outline.widthMm, layer.outline.alphaThreshold, layer.outline.cornerStyle ?? 'round', layer.opacity, env);
     },
   },
   bakeOnto() {}, contentCanvas: () => null,
@@ -62,6 +63,12 @@ export const outlineLayerType: LayerTypeHandler<OutlineLayer> = {
       key: 'outline.alphaThreshold', label: '透明度閾値 (%)', control: 'number', min: 0, max: 100,
       read: layer => Math.round(outlineOf(layer).alphaThreshold * 100),
       write: (layer, value) => ({ outline: { ...outlineOf(layer), alphaThreshold: Number(value) / 100 } }),
+    },
+    {
+      key: 'outline.cornerStyle', label: '縁の角', control: 'select',
+      options: [{ value: 'round', label: '丸' }, { value: 'sharp', label: '角' }],
+      read: layer => outlineOf(layer).cornerStyle ?? 'round',
+      write: (layer, value) => ({ outline: { ...outlineOf(layer), cornerStyle: value === 'sharp' ? 'sharp' : 'round' } }),
     },
   ],
 };

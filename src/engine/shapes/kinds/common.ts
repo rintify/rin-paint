@@ -81,6 +81,37 @@ export function appendClosedPolyline(ctx: CanvasRenderingContext2D, points: Shap
   ctx.closePath();
 }
 
+/** 頂点の両側を同じ割合だけ切り詰め、arcTo で角を丸めた閉じたパスを作る。 */
+export function appendRoundedClosedPolyline(ctx: CanvasRenderingContext2D, points: ShapePoint[], requestedRadius: number): void {
+  const radius = Math.max(0, requestedRadius);
+  if (radius <= 0 || points.length < 3) { appendClosedPolyline(ctx, points); return; }
+  const corners = points.map((point, index) => {
+    const prev = points[(index - 1 + points.length) % points.length];
+    const next = points[(index + 1) % points.length];
+    const a = Math.hypot(prev.x - point.x, prev.y - point.y);
+    const b = Math.hypot(next.x - point.x, next.y - point.y);
+    if (a < 1e-8 || b < 1e-8) return { radius: 0, entry: point };
+    const ux = (prev.x - point.x) / a, uy = (prev.y - point.y) / a;
+    const vx = (next.x - point.x) / b, vy = (next.y - point.y) / b;
+    const angle = Math.acos(Math.max(-1, Math.min(1, ux * vx + uy * vy)));
+    const tangent = Math.tan(angle / 2);
+    if (!Number.isFinite(tangent) || tangent < 1e-8) return { radius: 0, entry: point };
+    const actualRadius = Math.min(radius, Math.min(a, b) * .5 * tangent);
+    const entryDistance = actualRadius / tangent;
+    return {
+      radius: actualRadius,
+      entry: { x: point.x + ux * entryDistance, y: point.y + uy * entryDistance },
+    };
+  });
+  // 生の頂点から開始すると closePath が最後の丸角を横切り、角の外へ突き出す。
+  ctx.moveTo(corners[0].entry.x, corners[0].entry.y);
+  points.forEach((point, index) => {
+    const next = points[(index + 1) % points.length];
+    ctx.arcTo(point.x, point.y, next.x, next.y, corners[index].radius);
+  });
+  ctx.closePath();
+}
+
 export function withinBounds(bounds: ShapeBounds, point: ShapePoint, slack: number): boolean {
   return point.x >= bounds.x - slack && point.x <= bounds.x + bounds.w + slack
     && point.y >= bounds.y - slack && point.y <= bounds.y + bounds.h + slack;

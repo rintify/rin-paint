@@ -209,6 +209,19 @@ export class Compositor {
     return this.main;
   }
 
+  samplePixel(x: number, y: number, includedLayerId: string | null): Uint8ClampedArray {
+    const cx = Math.max(0, Math.min(this.engine.artboard.w - 1, Math.round(x)));
+    const cy = Math.max(0, Math.min(this.engine.artboard.h - 1, Math.round(y)));
+    if (includedLayerId === null) {
+      this.ensureComposited();
+      return this.artCacheCtx.getImageData(cx, cy, 1, 1).data;
+    }
+    const art = this.renderArt({ x: cx, y: cy, w: 1, h: 1 }, new Set([includedLayerId]), false);
+    const data = art.ctx.getImageData(0, 0, 1, 1).data;
+    art.release();
+    return data;
+  }
+
   startLoop(): void {
     this.dirty = true;
     this.fullDirty = true;

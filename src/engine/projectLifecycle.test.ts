@@ -633,6 +633,42 @@ describe('shape snap, constraints, and persistence', () => {
     engine.cancelShapeEdit();
   });
 
+  it('snaps polygon vertices to vertex axis lines and the same guides used by shape movement', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({ kind: 'rect', x: 200, y: 250, width: 40, height: 40, color: '#000', strokeWidth: 1, paintMode: 'stroke' });
+    engine.addShapeLayer({
+      kind: 'polygon', cx: 0, cy: 0, rotation: 0, color: '#000', strokeWidth: 1, paintMode: 'stroke',
+      points: [{ x: 100, y: 100 }, { x: 140, y: 100 }, { x: 100, y: 140 }],
+    });
+    const id = useStore.getState().activeLayerId;
+    engine.beginShapeEdit(pt(140, 100));
+    engine.updateShapeEdit(pt(204, 137));
+    expect(engine.getShape(id)).toEqual(expect.objectContaining({
+      kind: 'polygon',
+      points: [expect.anything(), expect.objectContaining({ x: 200, y: 140 }), expect.anything()],
+    }));
+    expect(shapeEdit().snapGuides()).toEqual({ x: 200, y: 140 });
+    engine.cancelShapeEdit();
+  });
+
+  it('merges a dragged polygon vertex when it snaps onto an adjacent vertex', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({
+      kind: 'polygon', cx: 0, cy: 0, rotation: 0, color: '#000', strokeWidth: 1, paintMode: 'stroke',
+      points: [{ x: 20, y: 20 }, { x: 60, y: 20 }, { x: 60, y: 60 }, { x: 20, y: 60 }],
+    });
+    const id = useStore.getState().activeLayerId;
+    engine.beginShapeEdit(pt(60, 20));
+    engine.updateShapeEdit(pt(23, 22));
+    engine.finishShapeEdit(pt(23, 22));
+    const shape = engine.getShape(id);
+    expect(shape?.kind).toBe('polygon');
+    expect(shape && shape.kind === 'polygon' ? shape.points : []).toHaveLength(3);
+    await engine.undo();
+    const restored = engine.getShape(id);
+    expect(restored && restored.kind === 'polygon' ? restored.points : []).toHaveLength(4);
+  });
+
   it('constrains rectangle and ellipse corner transforms along their original edges', async () => {
     await engine.newProject();
     engine.addShapeLayer({ kind: 'rect', x: 20, y: 20, width: 40, height: 30, rotation: 0, color: '#000', strokeWidth: 1, paintMode: 'stroke' });

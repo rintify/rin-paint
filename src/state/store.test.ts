@@ -10,9 +10,9 @@ describe('tool management', () => {
   it('provides every tool kind once and groups the shape tools by default', () => {
     const setup = defaultToolSetup();
     expect(setup.tools.map(tool => tool.kind)).toEqual([
-      'pen', 'line', 'rect', 'ellipse', 'polygon', 'fill', 'polygonSplit', 'lasso', 'blur', 'text',
+      'pen', 'line', 'rect', 'ellipse', 'polygon', 'fill', 'eyedropper', 'polygonSplit', 'lasso', 'blur', 'text',
     ]);
-    expect(new Set(setup.tools.map(tool => tool.kind)).size).toBe(10);
+    expect(new Set(setup.tools.map(tool => tool.kind)).size).toBe(11);
     expect(setup.toolStacks).toHaveLength(1);
     expect(setup.toolStacks[0].name).toBe('図形');
     expect(setup.toolStacks[0].toolIds.map(id => setup.tools.find(tool => tool.id === id)?.kind))
@@ -73,10 +73,12 @@ describe('tool management', () => {
     useStore.setState({ ...original, tools: defaultTools() });
     useStore.getState().addTool('rect');
     const id = useStore.getState().activeToolId;
-    useStore.getState().updateActiveToolSettings({ constrainAspect: true });
+    useStore.getState().updateActiveToolSettings({ constrainAspect: true, strokeJoin: 'miter', cornerRadiusMm: 4.25 });
     expect(useStore.getState().tools.find(tool => tool.id === id)?.settings).toMatchObject({
       paintMode: 'stroke',
       constrainAspect: true,
+      strokeJoin: 'miter',
+      cornerRadiusMm: 4.25,
     });
   });
 });

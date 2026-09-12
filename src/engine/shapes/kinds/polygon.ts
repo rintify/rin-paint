@@ -1,7 +1,7 @@
 import { normalizeShapePaintMode, type PolygonShapeParams, type ShapePoint } from '../../../model';
 import { cloneShape, pointInPolygon, pointsBounds, polygonSelfIntersects, rotateAround } from '../geometry';
 import {
-  appendClosedPolyline,
+  appendRoundedClosedPolyline,
   paintClosed,
   rotationControlField,
   shapeFields,
@@ -34,10 +34,10 @@ export const polygonShapeKind: ShapeKindHandler<PolygonShapeParams> = {
   label: '多角形',
   fillable: true,
 
-  normalize: shape => ({ ...shape, rotation: shape.rotation ?? 0 }),
+  normalize: shape => ({ ...shape, rotation: shape.rotation ?? 0, cornerRadius: Math.max(0, shape.cornerRadius ?? 0) }),
 
   draw(ctx, shape, artboard) {
-    paintClosed(ctx, normalizeShapePaintMode(shape.paintMode), artboard, () => appendClosedPolyline(ctx, worldPoints(shape)));
+    paintClosed(ctx, normalizeShapePaintMode(shape.paintMode), artboard, () => appendRoundedClosedPolyline(ctx, worldPoints(shape), shape.cornerRadius ?? 0));
   },
 
   paintMode: shape => normalizeShapePaintMode(shape.paintMode),
@@ -62,6 +62,7 @@ export const polygonShapeKind: ShapeKindHandler<PolygonShapeParams> = {
     cx: shape.cx * factor, cy: shape.cy * factor,
     points: shape.points.map(point => ({ x: point.x * factor, y: point.y * factor })),
     strokeWidth: shape.strokeWidth * factor,
+    cornerRadius: (shape.cornerRadius ?? 0) * factor,
   }),
 
   transform(shape, { transform, scale, angle }) {
@@ -71,6 +72,7 @@ export const polygonShapeKind: ShapeKindHandler<PolygonShapeParams> = {
       cx: moved.x, cy: moved.y,
       points: shape.points.map(point => ({ x: point.x * scale, y: point.y * scale })),
       strokeWidth: shape.strokeWidth * scale, rotation: (shape.rotation ?? 0) + angle,
+      cornerRadius: (shape.cornerRadius ?? 0) * scale,
     };
   },
 

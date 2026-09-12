@@ -1,4 +1,4 @@
-import { Box, Stack, Typography } from '@mui/material';
+import { Box, FormControl, MenuItem, Select, Stack, Typography } from '@mui/material';
 import { useEngine } from '../EngineContext';
 import type { LayerMeta, OutlineParams } from '../../model';
 import { CommitSlider } from './CommitSlider';
@@ -20,6 +20,19 @@ export function OutlineControls({ meta }: { meta: LayerMeta }) {
           onChange={event => commit(outline, { ...outline, color: event.target.value }, '縁の色')}
           sx={{ minWidth: 0, flex: 1, height: 34 }}
         />
+      </Stack>
+      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+        <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>縁の角</Typography>
+        <FormControl size="small" fullWidth>
+          <Select
+            value={outline.cornerStyle ?? 'round'}
+            onChange={event => commit(outline, { ...outline, cornerStyle: event.target.value as 'round' | 'sharp' }, '縁の角')}
+            inputProps={{ 'aria-label': '縁の角' }}
+          >
+            <MenuItem value="round">丸</MenuItem>
+            <MenuItem value="sharp">角</MenuItem>
+          </Select>
+        </FormControl>
       </Stack>
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
         <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>太さ (mm)</Typography>

@@ -22,6 +22,7 @@ import {
   shapeControlFields,
   shapeFillable,
   shapePaintMode,
+  shapeStrokeJoin,
   shapePanelActions,
   shapePanelNote,
   type ShapePanelAction,
@@ -32,6 +33,7 @@ import {
   type LayerMeta,
   type ShapePaintMode,
   type ShapeParams,
+  type ShapeStrokeJoin,
 } from '../../model';
 
 const PAINT_MODES: { value: ShapePaintMode; label: string }[] = [
@@ -119,7 +121,7 @@ export function ShapeControls({ meta }: { meta: LayerMeta }) {
             slotProps={{ input: { 'aria-label': 'スナップ' } }}
           />
         </Stack>
-        <Typography variant="caption" color="text.secondary">移動の端・中央、90°回転、多角形の頂点</Typography>
+        <Typography variant="caption" color="text.secondary">移動の端・中央、90°回転、多角形の頂点・縦横ライン</Typography>
       </Stack>
       <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.75 }}>
         {fields.map(field => (
@@ -146,6 +148,34 @@ export function ShapeControls({ meta }: { meta: LayerMeta }) {
               {PAINT_MODES.map(mode => <MenuItem key={mode.value} value={mode.value}>{mode.label}</MenuItem>)}
             </Select>
           </FormControl>
+        </Stack>
+      )}
+      {(shape.kind === 'rect' || shape.kind === 'polygon') && (
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>線の角</Typography>
+          <FormControl size="small" fullWidth>
+            <Select
+              value={shapeStrokeJoin(shape)}
+              onChange={event => update(current => ({ ...current, strokeJoin: event.target.value as ShapeStrokeJoin }))}
+              inputProps={{ 'aria-label': '線の角' }}
+            >
+              <MenuItem value="round">丸</MenuItem>
+              <MenuItem value="miter">角</MenuItem>
+            </Select>
+          </FormControl>
+        </Stack>
+      )}
+      {(shape.kind === 'rect' || shape.kind === 'polygon') && (
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>角丸半径</Typography>
+          <MmInlineControl
+            valueMm={pxToMm(shape.cornerRadius ?? 0, ppi)}
+            min={0}
+            max={SIZE_MM_MAX}
+            onChange={mm => update(current => current.kind === 'rect' || current.kind === 'polygon'
+              ? { ...current, cornerRadius: mmToPx(Math.max(0, roundMm(mm)), ppi) }
+              : current)}
+          />
         </Stack>
       )}
       <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>

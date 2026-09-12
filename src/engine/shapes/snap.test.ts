@@ -9,6 +9,7 @@ import {
   rotatedRectBounds,
   snapAngleToRightAngles,
   snapPointToPoints,
+  snapPointToLines,
   snapTranslation,
 } from './snap';
 
@@ -127,6 +128,13 @@ describe('point snap', () => {
       snappedTo: { x: 13, y: 13 },
     });
     expect(snapPointToPoints(p(20, 20), [{ x: 10, y: 10 }], 4)).toEqual({ point: p(20, 20), snappedTo: null });
+  });
+
+  it('snaps each coordinate independently to vertical and horizontal guide lines', () => {
+    expect(snapPointToLines(p(13, 28), {
+      x: [{ value: 10, rank: 1 }],
+      y: [{ value: 30, rank: 1 }],
+    }, 4)).toEqual({ point: p(10, 30), xGuide: 10, yGuide: 30 });
   });
 });
 

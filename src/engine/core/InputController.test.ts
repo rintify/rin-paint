@@ -45,3 +45,20 @@ describe('InputController shortcuts', () => {
     area.remove();
   });
 });
+
+describe('InputController eyedropper sampling', () => {
+  it('requests either the active layer or the final composite', () => {
+    const samplePixel = vi.fn(() => new Uint8ClampedArray([18, 52, 86, 255]));
+    const engine = {
+      getActiveLayerId: () => 'active',
+      layerById: () => ({}),
+      compositor: { samplePixel },
+    } as unknown as PaintEngine;
+    const controller = new InputController(engine);
+
+    expect(controller.getPixel(4, 7, 'active-layer')).toBe('#123456');
+    expect(samplePixel).toHaveBeenNthCalledWith(1, 4, 7, 'active');
+    expect(controller.getPixel(4, 7, 'final-color')).toBe('#123456');
+    expect(samplePixel).toHaveBeenNthCalledWith(2, 4, 7, null);
+  });
+});

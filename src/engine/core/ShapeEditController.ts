@@ -8,6 +8,7 @@ import {
   shapeKindHandler,
   shapePoints,
   shapeRotation,
+  shapeVisualPadding,
   translateShape,
   type ShapeEditMode,
 } from '../shapes';
@@ -16,6 +17,7 @@ import {
   constrainVertexToEdges,
   snapAngleToRightAngles,
   snapPointToPoints,
+  snapPointToLines,
   snapTranslation,
   type SnapLines,
 } from '../shapes/snap';
@@ -41,7 +43,9 @@ interface ShapeEdit {
   yGuide: number | null;
   vertexWorld?: VertexWorld;
   vertexSnapPoints?: ShapePoint[];
+  vertexSnapLines?: SnapLines;
   snappedPoint?: ShapePoint | null;
+  mergeVertexOnFinish?: boolean;
 }
 
 /** 回転ハンドルは外接矩形の上辺からこれだけ離す (画面 px) */
@@ -51,7 +55,7 @@ const SNAP_SCREEN_PX = 8;
 
 function shapeDirty(shape: ShapeParams): DirtyRect {
   const bounds = shapeBounds(shape);
-  const pad = Math.max(3, shape.strokeWidth / 2 + 2);
+  const pad = Math.max(3, shapeVisualPadding(shape));
   return {
     minX: bounds.x - pad,
     minY: bounds.y - pad,
@@ -119,6 +123,15 @@ export class ShapeEditController {
     });
   }
 
+  private collectVertexSnapLines(editingId: string, selectedIndex: number): SnapLines {
+    const lines = this.collectMoveSnapLines(editingId);
+    const vertices = this.collectVertexSnapPoints(editingId, selectedIndex);
+    const rank = Math.max(lines.x.length, lines.y.length) + 1;
+    lines.x.push(...vertices.map(point => ({ value: point.x, rank })));
+    lines.y.push(...vertices.map(point => ({ value: point.y, rank })));
+    return lines;
+  }
+
   private clearGuides(edit: ShapeEdit): void {
     edit.xGuide = null;
     edit.yGuide = null;
@@ -175,6 +188,9 @@ export class ShapeEditController {
       vertexSnapPoints: mode === 'vertex' && hit?.vertexIndex !== undefined
         ? this.collectVertexSnapPoints(layer.id, hit.vertexIndex)
         : undefined,
+      vertexSnapLines: mode === 'vertex' && hit?.vertexIndex !== undefined
+        ? this.collectVertexSnapLines(layer.id, hit.vertexIndex)
+        : undefined,
       snappedPoint: null,
     };
     this.syncVertexState();
@@ -199,6 +215,7 @@ export class ShapeEditController {
     let next: ShapeParams = cloneShape(edit.before);
     this.clearGuides(edit);
     edit.snappedPoint = null;
+    edit.mergeVertexOnFinish = false;
     if (edit.mode === 'move') {
       const dx = point.x - edit.start.x;
       const dy = point.y - edit.start.y;
@@ -237,6 +254,20 @@ export class ShapeEditController {
         const snapped = snapPointToPoints(target, edit.vertexSnapPoints, SNAP_SCREEN_PX * this.engine.uiScale());
         target = { ...target, x: snapped.point.x, y: snapped.point.y };
         edit.snappedPoint = snapped.snappedTo;
+        if (snapped.snappedTo) {
+          edit.xGuide = snapped.snappedTo.x;
+          edit.yGuide = snapped.snappedTo.y;
+        }
+        if (snapped.snappedTo && edit.vertexWorld) {
+          const same = (a: ShapePoint, b: ShapePoint) => Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6;
+          edit.mergeVertexOnFinish = same(snapped.snappedTo, edit.vertexWorld.prev) || same(snapped.snappedTo, edit.vertexWorld.next);
+        }
+        if (!snapped.snappedTo && edit.vertexSnapLines) {
+          const lineSnapped = snapPointToLines(target, edit.vertexSnapLines, SNAP_SCREEN_PX * this.engine.uiScale());
+          target = { ...target, x: lineSnapped.point.x, y: lineSnapped.point.y };
+          edit.xGuide = lineSnapped.xGuide;
+          edit.yGuide = lineSnapped.yGuide;
+        }
       }
       const result = shapeKindHandler(edit.before).edit.dragHandle({
         mode: edit.mode,
@@ -267,12 +298,29 @@ export class ShapeEditController {
     if (!edit) return false;
     this.shapeEdit = null;
     const layer = this.engine.layerService.shapeById(edit.layerId);
-    if (layer && edit.invalid) {
+    if (layer && edit.invalid && !edit.mergeVertexOnFinish) {
       layer.shape = cloneShape(edit.lastValid ?? edit.before);
       this.engine.notify(shapeKindHandler(layer.shape).edit.invalidMessage ?? '直前の有効な状態へ戻しました');
       this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(edit.before), shapeDirty(layer.shape)));
       this.engine.requestOverlayRender();
       this.engine.syncStore();
+    }
+    if (layer && edit.mergeVertexOnFinish && edit.vertexIndex !== undefined && layer.shape.kind === 'polygon') {
+      const merged = shapeKindHandler(layer.shape).edit.deleteVertex(layer.shape, edit.vertexIndex);
+      if (merged?.shape) {
+        layer.shape = merged.shape;
+        this.selectedHandle = null;
+        this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(edit.before), shapeDirty(layer.shape)));
+        this.engine.requestOverlayRender();
+        this.engine.syncStore();
+      } else if (layer.shape.points.length <= 3) {
+        const rejected = cloneShape(layer.shape);
+        layer.shape = cloneShape(edit.before);
+        this.engine.notify('多角形は3頂点未満にできないため、頂点を統合できません');
+        this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(rejected), shapeDirty(layer.shape)));
+        this.engine.requestOverlayRender();
+        this.engine.syncStore();
+      }
     }
     if (layer && JSON.stringify(layer.shape) !== JSON.stringify(edit.before)) {
       this.engine.history.push({ kind: 'layerProps', layerId: layer.id, before: { shape: cloneShape(edit.before) }, after: { shape: cloneShape(layer.shape) } }, edit.vertexIndex !== undefined ? '多角形の頂点を編集' : '図形を編集');

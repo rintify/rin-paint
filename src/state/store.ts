@@ -15,6 +15,7 @@ import { DEFAULT_FILL_TOOL_SETTINGS } from '../tools/fill/settings';
 import { DEFAULT_SHAPE_TOOL_SETTINGS } from '../tools/shape/settings';
 import { DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS } from '../tools/polygonSplit/settings';
 import { DEFAULT_TEXT_TOOL_SETTINGS } from '../tools/text/settings';
+import { DEFAULT_EYEDROPPER_TOOL_SETTINGS } from '../tools/eyedropper/settings';
 import { getToolDescriptor, isToolKind, type ToolKind } from '../tools/registry';
 import { normalizeToolLayout } from './toolLayout';
 import { defaultShortcutBindings, type ShortcutBindings, type ShortcutId } from '../shortcuts';
@@ -48,6 +49,7 @@ export function defaultToolSetup(): DefaultToolSetup {
     { kind: 'ellipse', name: '楕円', shape: true, settings: { ...DEFAULT_SHAPE_TOOL_SETTINGS } },
     { kind: 'polygon', name: '多角形', shape: true, settings: { ...DEFAULT_SHAPE_TOOL_SETTINGS } },
     { kind: 'fill', name: '塗りつぶし', settings: { ...DEFAULT_FILL_TOOL_SETTINGS } },
+    { kind: 'eyedropper', name: 'スポイト', settings: { ...DEFAULT_EYEDROPPER_TOOL_SETTINGS } },
     { kind: 'polygonSplit', name: '多角形分断', settings: { ...DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS } },
     { kind: 'lasso', name: '選択' },
     { kind: 'blur', name: 'ぼかし' },

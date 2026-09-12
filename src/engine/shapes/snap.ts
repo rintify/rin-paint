@@ -33,6 +33,12 @@ export interface SnapPointResult<T extends Point = Point> {
   snappedTo: Point | null;
 }
 
+export interface SnapPointToLinesResult<T extends Point = Point> {
+  point: T;
+  xGuide: number | null;
+  yGuide: number | null;
+}
+
 const ZERO_EDGE = 1e-8;
 
 /** 軸平行外接矩形の左・中央・右 / 上・中央・下 */
@@ -119,6 +125,17 @@ export function snapPointToPoints<T extends Point>(point: T, candidates: Point[]
   return best
     ? { point: { ...point, x: best.point.x, y: best.point.y }, snappedTo: { ...best.point } }
     : { point, snappedTo: null };
+}
+
+/** 点の X/Y をそれぞれ最寄りの縦横ラインへ吸着する。 */
+export function snapPointToLines<T extends Point>(point: T, lines: SnapLines, tolerance: number): SnapPointToLinesResult<T> {
+  const xHit = pickSnap([point.x], lines.x, tolerance);
+  const yHit = pickSnap([point.y], lines.y, tolerance);
+  return {
+    point: { ...point, x: point.x + (xHit?.correction ?? 0), y: point.y + (yHit?.correction ?? 0) },
+    xGuide: xHit?.guide ?? null,
+    yGuide: yHit?.guide ?? null,
+  };
 }
 
 /** 中心回転した矩形の軸平行外接矩形。 */

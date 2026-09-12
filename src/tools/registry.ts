@@ -11,6 +11,7 @@ import { ellipseTool } from './ellipse';
 import { polygonTool } from './polygon';
 import { polygonSplitTool } from './polygonSplit';
 import { textTool } from './text';
+import { eyedropperTool } from './eyedropper';
 import type { Tool, ToolDescriptor } from './types';
 
 export const TOOL_REGISTRY = {
@@ -20,6 +21,7 @@ export const TOOL_REGISTRY = {
   ellipse: ellipseTool,
   polygon: polygonTool,
   fill: fillTool,
+  eyedropper: eyedropperTool,
   polygonSplit: polygonSplitTool,
   lasso: lassoTool,
   blur: blurTool,
@@ -48,6 +50,8 @@ function legacySettings(kind: ToolKind, raw: Record<string, unknown>): unknown {
       return raw.textSettings;
     case 'fill':
       return raw.fillSettings;
+    case 'eyedropper':
+      return raw.eyedropperSettings;
     case 'rect':
     case 'ellipse':
     case 'polygon':
@@ -94,6 +98,12 @@ export const TOOL_KIND_LABELS = Object.fromEntries(
   TOOL_KINDS.map((kind) => [kind, TOOL_REGISTRY[kind].label]),
 ) as Record<ToolKind, string>;
 
+export {
+  DEFAULT_EYEDROPPER_TOOL_SETTINGS,
+  normalizeEyedropperToolSettings,
+  type EyedropperSource,
+  type EyedropperToolSettings,
+} from './eyedropper/settings';
 export {
   DEFAULT_PEN_DETAIL_SETTINGS,
   normalizePenDetailSettings,

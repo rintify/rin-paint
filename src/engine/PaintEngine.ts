@@ -41,6 +41,10 @@ import type { RasterLayer } from './layers';
 import type { LayerParameterValue } from './layerParameters';
 import { mmToPx } from './units';
 import { rotatedRectBounds } from './shapes/snap';
+import {
+  normalizeEyedropperToolSettings,
+  type EyedropperSource,
+} from '../tools/eyedropper/settings';
 
 export interface SelectedObjectTransform { id: string; before: LayerProps; width?: number; height?: number }
 
@@ -71,6 +75,7 @@ export class PaintEngine {
   readonly view = new ViewController(this.artboard);
   private initPromise: Promise<void> | null = null;
   private lastViewState: ViewState = this.view.snapshot();
+  private toolBeforeEyedropperId: string | null = null;
 
   private readonly nullTool: Tool = {
     onDown: () => undefined,
@@ -198,7 +203,35 @@ export class PaintEngine {
 
   // ---------------------------------------------------------------- input / eyedropper
 
-  getPixel(x: number, y: number): string { return this.input.getPixel(x, y); }
+  getPixel(x: number, y: number, source: EyedropperSource = 'active-layer'): string {
+    return this.input.getPixel(x, y, source);
+  }
+  beginEyedropper(point: StrokePoint, pointerId: number, source: EyedropperSource, restorePreviousTool = false): void {
+    this.input.beginEyedropper(point, pointerId, source, restorePreviousTool);
+  }
+  cancelEyedropper(): void { this.input.cancelEyedropper(); }
+  longPressEyedropperSource(): EyedropperSource {
+    const state = useStore.getState();
+    const orderedIds = state.toolLayout.flatMap((item) => {
+      if (item.type === 'tool') return [item.toolId];
+      return state.toolStacks.find((stack) => stack.id === item.stackId)?.toolIds ?? [];
+    });
+    const first = [...orderedIds, ...state.tools.map((tool) => tool.id)]
+      .map((id) => state.tools.find((tool) => tool.id === id))
+      .find((tool) => tool?.kind === 'eyedropper');
+    return normalizeEyedropperToolSettings(first?.settings).source;
+  }
+  applyPickedColor(color: string, restorePreviousTool: boolean): void {
+    const state = useStore.getState();
+    if (restorePreviousTool && this.toolBeforeEyedropperId
+      && state.tools.some((tool) => tool.id === this.toolBeforeEyedropperId)) {
+      state.activateTool(this.toolBeforeEyedropperId);
+    }
+    const next = useStore.getState();
+    next.setPenColor(color);
+    next.pushColor(color);
+    this.toolBeforeEyedropperId = null;
+  }
 
   // ---------------------------------------------------------------- layers / objects / history
 
@@ -358,6 +391,9 @@ export class PaintEngine {
     const st = useStore.getState();
     const inst = st.tools.find((t) => t.id === id);
     if (!inst) return;
+    if (inst.kind === 'eyedropper' && st.tool !== 'eyedropper') {
+      this.toolBeforeEyedropperId = st.activeToolId;
+    }
     st.set({ shortcutTarget: { type: 'tool', id } });
     if (id === st.activeToolId) {
       this.layerService.finishFloating();

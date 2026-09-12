@@ -152,11 +152,13 @@ interface OutlineDistanceField {
   seedMaxX: number;
   seedMaxY: number;
   squared: Float32Array;
+  squaredMetric: boolean;
 }
 
 function buildOutlineDistanceField(
   scope: EffectScope,
   threshold: number,
+  cornerStyle: 'round' | 'sharp',
   env: LayerDrawEnv,
 ): OutlineDistanceField | null {
   const width = scope.width, height = scope.height;
@@ -188,25 +190,42 @@ function buildOutlineDistanceField(
     const alpha = pixels[((y + y0) * width + x + x0) * 4 + 3];
     squared[y * boxW + x] = alpha > 0 && alpha >= limit ? 0 : infinity;
   }
-  const lineLength = Math.max(boxW, boxH);
-  const inputLine = new Float64Array(lineLength);
-  const outputLine = new Float64Array(lineLength);
-  const sites = new Int32Array(lineLength);
-  const bounds = new Float64Array(lineLength + 1);
-  for (let y = 0; y < boxH; y++) {
-    inputLine.set(squared.subarray(y * boxW, (y + 1) * boxW), 0);
-    distanceTransform1d(inputLine, outputLine, boxW, sites, bounds);
-    squared.set(outputLine.subarray(0, boxW), y * boxW);
-  }
-  for (let x = 0; x < boxW; x++) {
-    for (let y = 0; y < boxH; y++) inputLine[y] = squared[y * boxW + x];
-    distanceTransform1d(inputLine, outputLine, boxH, sites, bounds);
-    for (let y = 0; y < boxH; y++) squared[y * boxW + x] = outputLine[y];
+  if (cornerStyle === 'sharp') {
+    // 8近傍を同コストで伝播すると、正方形（チェビシェフ距離）の膨張になる。
+    const relax = (x: number, y: number, nx: number, ny: number) => {
+      if (nx < 0 || ny < 0 || nx >= boxW || ny >= boxH) return;
+      const at = y * boxW + x, candidate = squared[ny * boxW + nx] + 1;
+      if (candidate < squared[at]) squared[at] = candidate;
+    };
+    for (let y = 0; y < boxH; y++) for (let x = 0; x < boxW; x++) {
+      relax(x, y, x - 1, y); relax(x, y, x, y - 1);
+      relax(x, y, x - 1, y - 1); relax(x, y, x + 1, y - 1);
+    }
+    for (let y = boxH - 1; y >= 0; y--) for (let x = boxW - 1; x >= 0; x--) {
+      relax(x, y, x + 1, y); relax(x, y, x, y + 1);
+      relax(x, y, x + 1, y + 1); relax(x, y, x - 1, y + 1);
+    }
+  } else {
+    const lineLength = Math.max(boxW, boxH);
+    const inputLine = new Float64Array(lineLength);
+    const outputLine = new Float64Array(lineLength);
+    const sites = new Int32Array(lineLength);
+    const bounds = new Float64Array(lineLength + 1);
+    for (let y = 0; y < boxH; y++) {
+      inputLine.set(squared.subarray(y * boxW, (y + 1) * boxW), 0);
+      distanceTransform1d(inputLine, outputLine, boxW, sites, bounds);
+      squared.set(outputLine.subarray(0, boxW), y * boxW);
+    }
+    for (let x = 0; x < boxW; x++) {
+      for (let y = 0; y < boxH; y++) inputLine[y] = squared[y * boxW + x];
+      distanceTransform1d(inputLine, outputLine, boxH, sites, bounds);
+      for (let y = 0; y < boxH; y++) squared[y * boxW + x] = outputLine[y];
+    }
   }
   readback.release();
   return {
     x: x0, y: y0, width: boxW, height: boxH,
-    seedMinX, seedMinY, seedMaxX, seedMaxY, squared,
+    seedMinX, seedMinY, seedMaxX, seedMaxY, squared, squaredMetric: cornerStyle !== 'sharp',
   };
 }
 
@@ -217,6 +236,7 @@ export function applyOutline(
   color: string,
   widthMm: number,
   threshold: number,
+  cornerStyle: 'round' | 'sharp',
   opacity: number,
   env: LayerDrawEnv,
 ): void {
@@ -225,11 +245,11 @@ export function applyOutline(
   if (radius <= 0 || opacity <= 0) return;
   const key = [
     'outline-distance', cacheId, scope.inputRevision,
-    scope.x, scope.y, width, height, clampUnit(threshold), env.ppi,
+    scope.x, scope.y, width, height, clampUnit(threshold), cornerStyle, env.ppi,
   ].join('|');
   let field = env.effectCache.get<OutlineDistanceField | null>(key);
   if (field === undefined) {
-    field = buildOutlineDistanceField(scope, threshold, env);
+    field = buildOutlineDistanceField(scope, threshold, cornerStyle, env);
     env.effectCache.set(key, field, field?.squared.byteLength ?? 1);
   }
   if (!field) return;
@@ -244,17 +264,16 @@ export function applyOutline(
   const [red, green, blue] = parseHex(color);
   const maxDistance = radius + 0.5;
   const innerDistance = Math.max(0, radius - 0.5);
-  const innerSquared = innerDistance * innerDistance;
-  const maxSquared = maxDistance * maxDistance;
   for (let x = 0; x < boxW; x++) {
     for (let y = 0; y < boxH; y++) {
       const fieldX = minX + x - field.x;
       const fieldY = minY + y - field.y;
-      const squared = field.squared[fieldY * field.width + fieldX];
-      const coverage = squared <= innerSquared
+      const stored = field.squared[fieldY * field.width + fieldX];
+      const distance = field.squaredMetric ? Math.sqrt(stored) : stored;
+      const coverage = distance <= innerDistance
         ? 1
-        : squared <= maxSquared
-          ? Math.max(0, Math.min(1, maxDistance - Math.sqrt(squared)))
+        : distance <= maxDistance
+          ? Math.max(0, Math.min(1, maxDistance - distance))
           : 0;
       if (!coverage) continue;
       const offset = (y * boxW + x) * 4;

@@ -178,7 +178,13 @@ export class PolygonSplitService {
         producedByOriginal.set(result.id, []);
         continue;
       }
-      const style = { color: layer.shape.color, strokeWidth: layer.shape.strokeWidth, paintMode: shapePaintMode(layer.shape) };
+      const style = {
+        color: layer.shape.color,
+        strokeWidth: layer.shape.strokeWidth,
+        paintMode: shapePaintMode(layer.shape),
+        strokeJoin: layer.shape.strokeJoin,
+        cornerRadius: layer.shape.kind === 'polygon' || layer.shape.kind === 'rect' ? layer.shape.cornerRadius : undefined,
+      };
       layer.shape = polygonFromWorldPoints(result.fragments[0], style);
       ls.bumpLayer(layer.id);
       newRootIds.push(layer.id);

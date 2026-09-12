@@ -1,7 +1,7 @@
 import { normalizeShapePaintMode, type RectShapeParams, type ShapePoint } from '../../../model';
 import { centeredCorners, pointsBounds, rotateAround } from '../geometry';
 import {
-  appendClosedPolyline,
+  appendRoundedClosedPolyline,
   dragBounds,
   hitCorner,
   NO_VERTICES,
@@ -38,10 +38,10 @@ export const rectShapeKind: ShapeKindHandler<RectShapeParams> = {
     };
   },
 
-  normalize: shape => ({ ...shape, rotation: shape.rotation ?? 0 }),
+  normalize: shape => ({ ...shape, rotation: shape.rotation ?? 0, cornerRadius: Math.max(0, shape.cornerRadius ?? 0) }),
 
   draw(ctx, shape, artboard) {
-    paintClosed(ctx, normalizeShapePaintMode(shape.paintMode), artboard, () => appendClosedPolyline(ctx, corners(shape)));
+    paintClosed(ctx, normalizeShapePaintMode(shape.paintMode), artboard, () => appendRoundedClosedPolyline(ctx, corners(shape), shape.cornerRadius ?? 0));
   },
 
   paintMode: shape => normalizeShapePaintMode(shape.paintMode),
@@ -66,6 +66,7 @@ export const rectShapeKind: ShapeKindHandler<RectShapeParams> = {
     x: shape.x * factor, y: shape.y * factor,
     width: shape.width * factor, height: shape.height * factor,
     strokeWidth: shape.strokeWidth * factor,
+    cornerRadius: (shape.cornerRadius ?? 0) * factor,
   }),
 
   transform(shape, { transform, scale, angle }) {
@@ -75,6 +76,7 @@ export const rectShapeKind: ShapeKindHandler<RectShapeParams> = {
       ...shape,
       x: moved.x - w / 2, y: moved.y - h / 2, width: w, height: h,
       strokeWidth: shape.strokeWidth * scale, rotation: (shape.rotation ?? 0) + angle,
+      cornerRadius: (shape.cornerRadius ?? 0) * scale,
     };
   },
 

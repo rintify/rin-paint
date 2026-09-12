@@ -1,6 +1,7 @@
 import {
   TRANSPARENT,
   normalizeShapePaintMode,
+  normalizeShapeStrokeJoin,
   type PolygonShapeParams,
   type ShapePaintMode,
   type ShapeParams,
@@ -39,6 +40,9 @@ export type {
   ShapeTransform,
   ShapeVertexDelete,
 } from './kinds/types';
+
+/** Canvas 2D の標準値。描画と部分再描画領域の計算で共有する。 */
+export const SHAPE_MITER_LIMIT = 10;
 
 /** 2 点ドラッグだけで描ける種類 */
 export type DragShapeKind = 'line' | 'rect' | 'ellipse';
@@ -98,9 +102,37 @@ export function drawShape(
   }
   ctx.lineWidth = shapeStrokeWidth(shape);
   ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+  ctx.lineJoin = normalizeShapeStrokeJoin(shape.strokeJoin);
+  ctx.miterLimit = SHAPE_MITER_LIMIT;
   shapeKindHandler(shape).draw(ctx, shape, artboard);
   ctx.restore();
+}
+
+export function shapeStrokeJoin(shape: ShapeParams) {
+  return normalizeShapeStrokeJoin(shape.strokeJoin);
+}
+
+/** 線が代表点の外側へ描かれ得る最大量。部分再描画で残像を残さないための余白。 */
+export function shapeVisualPadding(shape: ShapeParams): number {
+  const stroke = Math.max(0, shape.strokeWidth);
+  const half = stroke / 2;
+  if (shapeStrokeJoin(shape) !== 'miter') return half + 2;
+  const points = shapePoints(shape);
+  if (points.length < 3) return half + 2;
+  let extent = half;
+  points.forEach((point, index) => {
+    const prev = points[(index - 1 + points.length) % points.length];
+    const next = points[(index + 1) % points.length];
+    const ax = prev.x - point.x, ay = prev.y - point.y;
+    const bx = next.x - point.x, by = next.y - point.y;
+    const a = Math.hypot(ax, ay), b = Math.hypot(bx, by);
+    if (a < 1e-8 || b < 1e-8) return;
+    const cos = Math.max(-1, Math.min(1, (ax * bx + ay * by) / (a * b)));
+    const sinHalf = Math.sqrt(Math.max(0, (1 - cos) / 2));
+    const miter = sinHalf > 1e-8 ? half / sinHalf : stroke * SHAPE_MITER_LIMIT;
+    extent = Math.max(extent, Math.min(miter, stroke * SHAPE_MITER_LIMIT));
+  });
+  return extent + 2;
 }
 
 export function shapeBounds(shape: ShapeParams): ShapeBounds {
@@ -167,7 +199,14 @@ export function shapePanelActions(shape: ShapeParams): ShapePanelAction[] {
   return shapeKindHandler(shape).panelActions(shape);
 }
 
-export function polygonFromWorldPoints(points: ShapePoint[], style: Pick<PolygonShapeParams, 'color' | 'strokeWidth' | 'paintMode'>): PolygonShapeParams {
+export function polygonFromWorldPoints(points: ShapePoint[], style: Pick<PolygonShapeParams, 'color' | 'strokeWidth' | 'paintMode' | 'strokeJoin' | 'cornerRadius'>): PolygonShapeParams {
   const { x: cx, y: cy } = polygonCentroid(points);
-  return { kind: 'polygon', cx, cy, points: points.map((point) => ({ x: point.x - cx, y: point.y - cy })), rotation: 0, color: style.color, strokeWidth: style.strokeWidth, paintMode: normalizeShapePaintMode(style.paintMode) };
+  return {
+    kind: 'polygon', cx, cy,
+    points: points.map((point) => ({ x: point.x - cx, y: point.y - cy })),
+    rotation: 0, color: style.color, strokeWidth: style.strokeWidth,
+    paintMode: normalizeShapePaintMode(style.paintMode),
+    strokeJoin: normalizeShapeStrokeJoin(style.strokeJoin),
+    cornerRadius: Math.max(0, style.cornerRadius ?? 0),
+  };
 }

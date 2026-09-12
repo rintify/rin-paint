@@ -1,6 +1,7 @@
 import { Box, Typography } from '@mui/material';
 import { PaintModeSelect } from '../shape/PaintModeSelect';
 import { SizePanel } from '../shape/SizePanel';
+import { CornerControls } from '../shape/CornerControls';
 
 export function PolygonSettingsPanel() {
   return (
@@ -10,6 +11,7 @@ export function PolygonSettingsPanel() {
       </Typography>
       <SizePanel />
       <PaintModeSelect />
+      <CornerControls />
     </Box>
   );
 }

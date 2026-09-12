@@ -90,7 +90,7 @@ export function ColorControls() {
         ))}
       </Box>
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-        同じ位置付近を0.5秒長押しでスポイト (アクティブレイヤーの色を拾います)
+        同じ位置付近を0.5秒長押しでスポイト（最初のスポイトツールの取得元を使用）
       </Typography>
     </Box>
   );

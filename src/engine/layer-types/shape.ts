@@ -11,6 +11,7 @@ import {
   shapeFillable,
   shapeKindLabel,
   shapePaintMode,
+  shapeStrokeJoin,
   shapeParameterFields,
   shapeRotation,
   transformShape,
@@ -71,6 +72,19 @@ function shapeDescriptors(shape: ShapeParams): LayerParameterDescriptor[] {
     ],
     read: shapeRead(shapePaintMode),
     write: shapeWrite((current, value) => setShapePaintMode(current, value as ShapePaintMode)),
+  });
+  if (shape.kind === 'rect' || shape.kind === 'polygon') descriptors.push({
+    key: 'strokeJoin', label: '線の角', control: 'select',
+    options: [{ value: 'round', label: '丸' }, { value: 'miter', label: '角' }],
+    read: shapeRead(shapeStrokeJoin),
+    write: shapeWrite((current, value) => ({ ...current, strokeJoin: value === 'miter' ? 'miter' : 'round' })),
+  });
+  if (shape.kind === 'rect' || shape.kind === 'polygon') descriptors.push({
+    key: 'cornerRadius', label: '角丸半径', control: 'number', canvasLength: true, min: 0,
+    read: shapeRead(current => current.kind === 'rect' || current.kind === 'polygon' ? current.cornerRadius ?? 0 : 0),
+    write: shapeWrite((current, value) => current.kind === 'rect' || current.kind === 'polygon'
+      ? { ...current, cornerRadius: Math.max(0, Number(value)) }
+      : current),
   });
   descriptors.push(...shapeParameterFields(shape).map(field => ({
     key: field.key, label: field.label, control: 'number' as const, min: field.min,

@@ -4,12 +4,15 @@ import { checkerPattern } from '../brush';
 import type { ViewState } from '../view';
 import type { PaintEngine } from '../PaintEngine';
 import { shortcutIdForEvent } from '../../shortcuts';
+import type { EyedropperSource } from '../../tools/eyedropper/settings';
 
 interface Loupe {
   x: number;
   y: number;
   pointerId: number;
   color: string;
+  source: EyedropperSource;
+  restorePreviousTool: boolean;
 }
 
 interface Gesture {
@@ -127,6 +130,12 @@ export class InputController {
     const p = this.toPoint(e);
     this.activePointer = e.pointerId;
     this.area?.setPointerCapture(e.pointerId);
+    const activeTool = eng.activeTool();
+    if (activeTool.startsImmediately) {
+      activeTool.onDown(p, e);
+      e.preventDefault();
+      return;
+    }
     const pointerId = e.pointerId;
     this.pendingPress = {
       pointerId,
@@ -142,13 +151,7 @@ export class InputController {
         this.pendingPress = null;
         this.activePointer = null;
         const point = pending.latest;
-        this.loupe = {
-          x: point.x,
-          y: point.y,
-          pointerId,
-          color: eng.getPixel(point.x, point.y),
-        };
-        eng.requestOverlayRender();
+        this.beginEyedropper(point, pointerId, eng.longPressEyedropperSource(), false);
       }, EYEDROPPER_HOLD_MS),
     };
     e.preventDefault();
@@ -229,7 +232,7 @@ export class InputController {
       const p = this.toPoint(e);
       this.loupe.x = Math.max(0, Math.min(eng.artboard.w - 1, p.x));
       this.loupe.y = Math.max(0, Math.min(eng.artboard.h - 1, p.y));
-      this.loupe.color = eng.getPixel(this.loupe.x, this.loupe.y);
+      this.loupe.color = eng.getPixel(this.loupe.x, this.loupe.y, this.loupe.source);
       eng.requestOverlayRender();
       return;
     }
@@ -268,12 +271,11 @@ export class InputController {
       return;
     }
     if (this.loupe && e.pointerId === this.loupe.pointerId) {
-      const color = this.loupe.color;
+      const { color, restorePreviousTool } = this.loupe;
       this.loupe = null;
+      if (this.activePointer === e.pointerId) this.activePointer = null;
       eng.requestOverlayRender();
-      const st = useStore.getState();
-      st.setPenColor(color);
-      st.pushColor(color);
+      eng.applyPickedColor(color, restorePreviousTool);
       return;
     }
     if (this.activePointer !== e.pointerId) return;
@@ -310,6 +312,7 @@ export class InputController {
     }
     if (this.loupe && e.pointerId === this.loupe.pointerId) {
       this.loupe = null;
+      if (this.activePointer === e.pointerId) this.activePointer = null;
       eng.requestOverlayRender();
       return;
     }
@@ -360,7 +363,7 @@ export class InputController {
       }
       if (e.target === document.body) e.preventDefault();
     } else if (command === 'operation.cancel') {
-      this.loupe = null;
+      this.cancelEyedropper();
       eng.lassoCancel();
     }
   };
@@ -379,13 +382,34 @@ export class InputController {
     this.pendingPress = null;
   }
 
-  getPixel(x: number, y: number): string {
+  beginEyedropper(
+    point: StrokePoint,
+    pointerId: number,
+    source: EyedropperSource,
+    restorePreviousTool: boolean,
+  ): void {
+    this.loupe = {
+      x: point.x,
+      y: point.y,
+      pointerId,
+      source,
+      restorePreviousTool,
+      color: this.getPixel(point.x, point.y, source),
+    };
+    this.engine.requestOverlayRender();
+  }
+
+  cancelEyedropper(): void {
+    if (!this.loupe) return;
+    this.loupe = null;
+    this.engine.requestOverlayRender();
+  }
+
+  getPixel(x: number, y: number, source: EyedropperSource = 'active-layer'): string {
     const eng = this.engine;
-    const layer = eng.layerService.rasterById(eng.layerService.activeLayerId);
-    if (!layer) return TRANSPARENT;
-    const cx = Math.max(0, Math.min(eng.artboard.w - 1, Math.round(x)));
-    const cy = Math.max(0, Math.min(eng.artboard.h - 1, Math.round(y)));
-    const d = layer.ctx.getImageData(cx, cy, 1, 1).data;
+    const layerId = source === 'active-layer' ? eng.getActiveLayerId() : null;
+    if (layerId !== null && !eng.layerById(layerId)) return TRANSPARENT;
+    const d = eng.compositor.samplePixel(x, y, layerId);
     if (d[3] < 128) return TRANSPARENT;
     const hex = (v: number) => v.toString(16).padStart(2, '0');
     return `#${hex(d[0])}${hex(d[1])}${hex(d[2])}`;

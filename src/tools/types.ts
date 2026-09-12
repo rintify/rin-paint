@@ -11,6 +11,8 @@ export interface ToolSession {
 }
 
 export interface Tool {
+  /** 長押し判定を待たず、pointerdown から操作を始めるツール。 */
+  readonly startsImmediately?: boolean;
   onDown(p: StrokePoint, e: PointerEvent): void;
   onMove(p: StrokePoint, e: PointerEvent): void;
   onUp(p: StrokePoint, e: PointerEvent): void;
