@@ -7,10 +7,13 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
+  FormControl,
   IconButton,
+  InputLabel,
   ListItemText,
   Menu,
   MenuItem,
+  Select,
   TextField,
   Tooltip,
   Typography,
@@ -20,6 +23,11 @@ import { exportTimelapse } from '../engine/timelapse/exporter';
 import { importReferenceImage } from '../referenceImage';
 import { useStore } from '../state/store';
 import { canvasPixels, validateCanvasSpec } from '../engine/canvasSpec';
+import {
+  matchingPaperTemplate,
+  PAPER_SIZE_TEMPLATES,
+  paperSizeDimensions,
+} from '../model/canvas';
 import { appAlert, appConfirm } from './AppDialogs';
 import { useEngine } from './EngineContext';
 import { pickFile } from './hooks/pickFile';
@@ -39,6 +47,10 @@ async function startTimelapse(): Promise<void> {
   }
 }
 
+function formatMm(value: number): string {
+  return String(Number(value.toFixed(3)));
+}
+
 function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
   const engine = useEngine();
   const spec = useStore((s) => s.canvasSpec);
@@ -51,6 +63,16 @@ function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
   const next = { widthMm: w === initialW ? spec.widthMm : Number(w), heightMm: h === initialH ? spec.heightMm : Number(h), ppi: Number(ppi) };
   const error = validateCanvasSpec(next);
   const pixels = canvasPixels(next);
+  const matched = matchingPaperTemplate(next.widthMm, next.heightMm);
+  const landscape = next.widthMm > next.heightMm;
+
+  const applyPaper = (id: string, nextLandscape: boolean) => {
+    const template = PAPER_SIZE_TEMPLATES.find(item => item.id === id);
+    if (!template) return;
+    const size = paperSizeDimensions(template, nextLandscape);
+    setW(formatMm(size.widthMm));
+    setH(formatMm(size.heightMm));
+  };
 
   const apply = async () => {
     if (error || applying) return;
@@ -64,6 +86,26 @@ function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
     <Dialog open onClose={applying ? undefined : onClose} maxWidth="xs" fullWidth>
       <DialogTitle>キャンバスサイズ</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
+        <FormControl size="small" fullWidth>
+          <InputLabel id="paper-template-label">用紙サイズ</InputLabel>
+          <Select
+            labelId="paper-template-label"
+            label="用紙サイズ"
+            value={matched?.id ?? 'custom'}
+            onChange={event => {
+              const id = String(event.target.value);
+              if (id === 'custom') return;
+              applyPaper(id, landscape);
+            }}
+          >
+            <MenuItem value="custom">カスタム</MenuItem>
+            {PAPER_SIZE_TEMPLATES.map(template => (
+              <MenuItem key={template.id} value={template.id}>
+                {template.label}（{template.widthMm} × {template.heightMm} mm）
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
         <TextField
           label="幅 (mm)"
           type="text"
@@ -84,6 +126,14 @@ function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
             htmlInput: { min: 0.01, step: 0.1 },
           }}
         />
+        <Button
+          onClick={() => {
+            setW(h);
+            setH(w);
+          }}
+        >
+          縦横を入れ替え
+        </Button>
         <TextField label="解像度 (ppi)" type="text" inputMode="decimal" value={ppi} onChange={e => setPpi(e.target.value)} />
         <Typography variant="body2" color={error ? 'error' : 'text.secondary'}>{error ?? `${pixels.width} × ${pixels.height} px`}</Typography>
         <Typography variant="caption" color="text.secondary">
