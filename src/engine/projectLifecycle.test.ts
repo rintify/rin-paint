@@ -327,6 +327,33 @@ describe('canvas history and new project', () => {
     expect(useStore.getState().selectedLayerIds).toEqual([id]);
   });
 
+  it('selects then clears descendants from a long-pressed parent', async () => {
+    await engine.newProject();
+    const parentId = useStore.getState().activeLayerId;
+    engine.addRasterLayer();
+    const childId = useStore.getState().activeLayerId;
+    engine.addRasterLayer();
+    const grandChildId = useStore.getState().activeLayerId;
+    engine.moveLayerAsTopChild(grandChildId, childId);
+    engine.moveLayerAsTopChild(childId, parentId);
+    engine.setActiveLayer(parentId);
+    engine.toggleDescendantSelection(parentId);
+    expect(useStore.getState().multiSelectMode).toBe(true);
+    expect(useStore.getState().selectedLayerIds).toEqual([parentId, childId, grandChildId]);
+    engine.toggleDescendantSelection(parentId);
+    expect(useStore.getState().selectedLayerIds).toEqual([parentId]);
+    expect(useStore.getState().activeLayerId).toBe(parentId);
+    expect(useStore.getState().multiSelectMode).toBe(false);
+    engine.addRasterLayer();
+    const otherId = useStore.getState().activeLayerId;
+    engine.setActiveLayer(parentId);
+    engine.beginMultiSelect(otherId);
+    engine.toggleDescendantSelection(parentId);
+    engine.toggleDescendantSelection(parentId);
+    expect(useStore.getState().selectedLayerIds).toEqual([otherId]);
+    expect(useStore.getState().multiSelectMode).toBe(true);
+  });
+
   it('stores raster merges as tiles-v1 across undo, redo and reload', async () => {
     await engine.newProject();
     const lowerId = useStore.getState().activeLayerId;

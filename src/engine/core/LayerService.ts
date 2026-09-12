@@ -701,14 +701,54 @@ export class LayerService {
     const previous = st.selectedLayerIds.length ? st.selectedLayerIds : [this.activeLayerId];
     const selected = [...previous.filter(existing => !!this.byId(existing)), ...(!previous.includes(id) ? [id] : [])];
     this.activeLayerId = selected[0] ?? id;
-    if (!getToolDescriptor(st.tool ?? '')?.capabilities.multiSelect) st.deactivateTool();
-    st.set({ multiSelectMode: true, selectedLayerIds: selected, shortcutTarget: { type: 'layer', id: this.activeLayerId } });
-    this.engine.syncStore();
+    this.applyMultiSelection(selected);
+  }
+
+  toggleDescendantSelection(id: string): void {
+    const layer = this.byId(id);
+    if (!layer?.childIds.length) return;
+    const descendants = this.descendantIds(id).slice(1);
+    const st = useStore.getState();
+    const current = (st.selectedLayerIds.length ? st.selectedLayerIds : [this.activeLayerId])
+      .filter(existing => !!this.byId(existing));
+    const selected = new Set(current);
+    const allDescendantsSelected = descendants.every(descendant => selected.has(descendant));
+    if (st.multiSelectMode && selected.has(id) && allDescendantsSelected) {
+      selected.delete(id);
+      for (const descendant of descendants) selected.delete(descendant);
+      const next = [...selected];
+      if (!next.length) {
+        this.activeLayerId = id;
+        this.exitMultiSelect();
+        return;
+      }
+      if (!next.includes(this.activeLayerId)) this.activeLayerId = next[0]!;
+      this.applyMultiSelection(next);
+      return;
+    }
+    if (!st.multiSelectMode) {
+      this.activeLayerId = id;
+      this.applyMultiSelection([id, ...descendants]);
+      return;
+    }
+    selected.add(id);
+    for (const descendant of descendants) selected.add(descendant);
+    this.applyMultiSelection([...selected]);
   }
 
   exitMultiSelect(): void {
     const st = useStore.getState();
     st.set({ multiSelectMode: false, selectedLayerIds: this.activeLayerId ? [this.activeLayerId] : [] });
+    this.engine.syncStore();
+  }
+
+  private applyMultiSelection(selected: string[]): void {
+    const ids = [...new Set(selected.filter(id => !!this.byId(id)))];
+    if (!ids.length) return;
+    const st = useStore.getState();
+    if (!ids.includes(this.activeLayerId)) this.activeLayerId = ids[0]!;
+    if (!getToolDescriptor(st.tool ?? '')?.capabilities.multiSelect) st.deactivateTool();
+    st.set({ multiSelectMode: true, selectedLayerIds: ids, shortcutTarget: { type: 'layer', id: this.activeLayerId } });
     this.engine.syncStore();
   }
 

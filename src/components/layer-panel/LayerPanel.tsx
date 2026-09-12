@@ -1,4 +1,5 @@
 import AddIcon from '@mui/icons-material/Add';
+import LibraryAddCheckIcon from '@mui/icons-material/LibraryAddCheck';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
@@ -84,8 +85,10 @@ export function LayerPanel() {
   const longPress = useLongPress(() => {
     const id = longPressTarget.current;
     if (!id) return;
+    const layer = byId.get(id) ?? metadata.current.get(id);
+    if (!layer?.childIds.length) return;
     ignoreClick.current = true;
-    engine.beginMultiSelect(id);
+    engine.toggleDescendantSelection(id);
     setPalette({ id, open: true });
   });
   const visible = dragId && frozen.current ? frozen.current : desired;
@@ -282,6 +285,20 @@ export function LayerPanel() {
               ペースト
             </Button>
           )}
+          <Tooltip title={multi ? '複数選択を解除' : '複数選択'}>
+            <IconButton
+              size="small"
+              color={multi ? 'primary' : 'default'}
+              aria-label={multi ? '複数選択を解除' : '複数選択'}
+              aria-pressed={multi}
+              onClick={() => {
+                if (multi) engine.exitMultiSelect();
+                else engine.beginMultiSelect(activeId);
+              }}
+            >
+              <LibraryAddCheckIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
           <Tooltip title="レイヤーを追加">
             <IconButton size="small" onClick={() => engine.addRasterLayer()} aria-label="レイヤーを追加">
               <AddIcon fontSize="small" />

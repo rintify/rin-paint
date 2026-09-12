@@ -23,12 +23,47 @@ const actions = vi.hoisted(() => ({
     const selected = [...previous, ...(!previous.includes(id) ? [id] : [])];
     state.set({ multiSelectMode: true, selectedLayerIds: selected, activeLayerId: selected[0] });
   }),
+  exitMultiSelect: vi.fn(() => {
+    const state = useStore.getState();
+    state.set({ multiSelectMode: false, selectedLayerIds: state.activeLayerId ? [state.activeLayerId] : [] });
+  }),
+  toggleDescendantSelection: vi.fn((id: string) => {
+    const state = useStore.getState();
+    const layer = state.layers.find(item => item.id === id);
+    const descendants: string[] = [];
+    const visit = (parentId: string) => {
+      const parent = state.layers.find(item => item.id === parentId);
+      for (const childId of parent?.childIds ?? []) {
+        descendants.push(childId);
+        visit(childId);
+      }
+    };
+    visit(id);
+    if (!layer?.childIds.length) return;
+    const selected = new Set(state.selectedLayerIds.length ? state.selectedLayerIds : [state.activeLayerId]);
+    const allSelected = descendants.every(descendant => selected.has(descendant));
+    if (state.multiSelectMode && selected.has(id) && allSelected) {
+      selected.delete(id);
+      for (const descendant of descendants) selected.delete(descendant);
+    } else {
+      selected.add(id);
+      for (const descendant of descendants) selected.add(descendant);
+    }
+    const next = [...selected];
+    if (!next.length) {
+      state.set({ multiSelectMode: false, selectedLayerIds: [id], activeLayerId: id });
+      return;
+    }
+    state.set({ multiSelectMode: true, selectedLayerIds: next, activeLayerId: next[0] });
+  }),
 }));
 const mockEngine = vi.hoisted(() => ({
   artboard: { w: 1600, h: 1200 },
   getLayerCanvas: () => null,
   setActiveLayer: actions.setActiveLayer,
   beginMultiSelect: actions.beginMultiSelect,
+  exitMultiSelect: actions.exitMultiSelect,
+  toggleDescendantSelection: actions.toggleDescendantSelection,
   canMoveLayer: () => true,
   getShape: () => null,
   removeLayer: actions.remove,
@@ -193,22 +228,44 @@ describe('layer settings entry points', () => {
     expect(actions.merge).toHaveBeenCalledWith('shape');
     expect(useStore.getState().activeLayerId).toBe('raster');
   });
-  it('does not toggle the long-pressed layer off via the following click', async () => {
+  it('enters and exits multi-select from the header toggle', async () => {
+    actions.beginMultiSelect.mockClear();
+    actions.exitMultiSelect.mockClear();
+    await renderPanel();
+    await click(container.querySelector('[aria-label="複数選択"]'));
+    expect(actions.beginMultiSelect).toHaveBeenCalledWith('raster');
+    expect(useStore.getState().multiSelectMode).toBe(true);
+    await click(container.querySelector('[aria-label="複数選択を解除"]'));
+    expect(actions.exitMultiSelect).toHaveBeenCalledOnce();
+    expect(useStore.getState().multiSelectMode).toBe(false);
+  });
+  it('selects descendants on long-press and ignores the following click', async () => {
     vi.useFakeTimers();
     actions.setActiveLayer.mockClear();
     actions.beginMultiSelect.mockClear();
+    actions.toggleDescendantSelection.mockClear();
+    const nested: LayerMeta[] = [
+      { ...base, id: 'parent', name: '親', type: 'raster', childIds: ['child'] },
+      { ...base, id: 'child', name: '子', type: 'shape', parentId: 'parent', canRemove: true, shape: { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 1, color: '#123456' } },
+    ];
+    useStore.getState().set({
+      layers: nested,
+      rootLayerIds: ['parent'],
+      activeLayerId: 'parent',
+      selectedLayerIds: ['parent'],
+    });
     await renderPanel();
-    const row = [...container.querySelectorAll('.layer-row')].find(el => el.textContent?.includes('直線'))!;
+    const row = [...container.querySelectorAll('.layer-row')].find(el => el.textContent?.includes('親'))!;
     await act(async () => {
       row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
       await vi.advanceTimersByTimeAsync(500);
       row.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 10, clientY: 10 }));
       row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(actions.beginMultiSelect).toHaveBeenCalledWith('shape');
+    expect(actions.toggleDescendantSelection).toHaveBeenCalledWith('parent');
+    expect(actions.beginMultiSelect).not.toHaveBeenCalled();
     expect(actions.setActiveLayer).not.toHaveBeenCalled();
-    expect(useStore.getState().multiSelectMode).toBe(true);
-    expect(useStore.getState().selectedLayerIds).toEqual(['raster', 'shape']);
+    expect(useStore.getState().selectedLayerIds).toEqual(['parent', 'child']);
     vi.useRealTimers();
   });
   it('enters multi-select while keeping the first layer primary', async () => {

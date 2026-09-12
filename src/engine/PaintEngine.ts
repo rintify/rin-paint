@@ -495,6 +495,7 @@ export class PaintEngine {
 
   renameLayer(id: string, name: string): boolean { return this.layerService.renameLayer(id, name); }
   beginMultiSelect(id: string): void { this.layerService.beginMultiSelect(id); }
+  toggleDescendantSelection(id: string): void { this.layerService.toggleDescendantSelection(id); }
   exitMultiSelect(): void { this.layerService.exitMultiSelect(); }
   commitSelectedLayerProps(before: LayerProps, after: LayerProps, label: string): void {
     this.layerService.commitSelectedLayerProps(before, after, label);
