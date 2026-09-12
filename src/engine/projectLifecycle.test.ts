@@ -732,3 +732,56 @@ describe('shape snap, constraints, and persistence', () => {
     expect(fromGui).toMatchObject({ kind: 'rect', width: 8, height: 8 });
   });
 });
+
+describe('selection and layer transform', () => {
+  const pt = (x: number, y: number) => ({ x, y, pressure: 1 });
+
+  function activateKind(kind: 'lasso' | 'move'): void {
+    const existing = useStore.getState().tools.find(tool => tool.kind === kind);
+    if (existing) engine.selectToolInstance(existing.id);
+    else engine.addToolInstance(kind);
+  }
+
+  it('still floats a lassoed raster and commits the moved pixels', async () => {
+    await engine.newProject();
+    const rasterId = useStore.getState().activeLayerId;
+    engine.getLayerCanvas(rasterId)!.getContext('2d')!.fillStyle = '#ff0000';
+    engine.getLayerCanvas(rasterId)!.getContext('2d')!.fillRect(10, 10, 20, 20);
+    activateKind('lasso');
+    const lasso = engine.lasso;
+    lasso.onDown(pt(5, 5));
+    lasso.onMove(pt(40, 5));
+    lasso.onMove(pt(40, 40));
+    lasso.onMove(pt(5, 40));
+    lasso.onUp();
+    expect(useStore.getState().selectionActive).toBe(true);
+    lasso.onDown(pt(20, 20));
+    lasso.onMove(pt(40, 20));
+    lasso.onUp();
+    engine.commitFloatSelection();
+    await awaitHistoryReady();
+    expect(pixel(rasterId, 15, 15)[3]).toBe(0);
+    expect(pixel(rasterId, 35, 15)[0]).toBeGreaterThan(200);
+  });
+
+  it('floats selected raster and shape layers when the move tool is activated', async () => {
+    await engine.newProject();
+    const rasterId = useStore.getState().activeLayerId;
+    engine.getLayerCanvas(rasterId)!.getContext('2d')!.fillStyle = '#ff0000';
+    engine.getLayerCanvas(rasterId)!.getContext('2d')!.fillRect(10, 10, 20, 20);
+    engine.addShapeLayer({ kind: 'rect', x: 40, y: 40, width: 20, height: 20, color: '#00ff00', strokeWidth: 1, paintMode: 'fill-inside' });
+    const shapeId = useStore.getState().activeLayerId;
+    engine.beginMultiSelect(rasterId);
+    activateKind('move');
+    expect(useStore.getState().selectionActive).toBe(true);
+    const move = engine.move;
+    move.onDown(pt(25, 25));
+    move.onMove(pt(45, 25));
+    move.onUp();
+    engine.commitFloatSelection();
+    await awaitHistoryReady();
+    expect(pixel(rasterId, 15, 15)[3]).toBe(0);
+    expect(pixel(rasterId, 35, 15)[0]).toBeGreaterThan(200);
+    expect(engine.getShape(shapeId)).toMatchObject({ x: 60, y: 40 });
+  });
+});

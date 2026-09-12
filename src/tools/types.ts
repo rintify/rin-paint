@@ -17,6 +17,10 @@ export interface Tool {
   onMove(p: StrokePoint, e: PointerEvent): void;
   onUp(p: StrokePoint, e: PointerEvent): void;
   cancel?(): void;
+  /** ツールがアクティブになった直後。未確定状態の開始などに使う。 */
+  onActivate?(): void;
+  /** レイヤー選択が変わった直後。選択に追従するツールが使う。 */
+  onLayerSelectionChange?(): void;
   drawOverlay?(ctx: CanvasRenderingContext2D): void;
   /** trueの間だけ操作ガイドのアニメーションフレームを継続する。 */
   overlayAnimated?(): boolean;

@@ -13,7 +13,9 @@ import {
 import { createTool, isToolKind, type ToolKind } from '../tools/registry';
 import type { ActiveToolSettings, Tool, ToolSession } from '../tools/types';
 import { LassoTool } from '../tools/lasso/tool';
+import { MoveTool } from '../tools/move/tool';
 import { PolygonTool } from '../tools/polygon/tool';
+import { isFloatTool, type FloatSelection } from '../tools/transform/floatSelection';
 import { type DirtyRect } from './brush';
 import {
   type HistoryTree,
@@ -100,7 +102,17 @@ export class PaintEngine {
   }
 
   get lasso(): LassoTool { return this.toolInstance('lasso') as LassoTool; }
+  get move(): MoveTool { return this.toolInstance('move') as MoveTool; }
   get polygon(): PolygonTool { return this.toolInstance('polygon') as PolygonTool; }
+
+  activeFloat(): FloatSelection | null {
+    const tool = this.activeTool();
+    return isFloatTool(tool) ? tool.floatSelection : null;
+  }
+
+  notifyLayerSelectionChange(): void {
+    this.activeTool().onLayerSelectionChange?.();
+  }
 
   /** @internal */ activeSession(): ToolSession | null {
     return this.activeTool().session ?? null;
@@ -424,6 +436,7 @@ export class PaintEngine {
       this.activeTool().cancel?.();
     }
     st.activateTool(id);
+    this.activeTool().onActivate?.();
     this.requestRender();
     this.syncStore();
   }
@@ -437,6 +450,7 @@ export class PaintEngine {
       this.activeTool().cancel?.();
     }
     st.addTool(kind);
+    this.activeTool().onActivate?.();
     this.requestRender();
     this.syncStore();
   }
@@ -525,13 +539,21 @@ export class PaintEngine {
   async deletePage(id: string): Promise<void> { return this.pages.deletePage(id); }
   async reorderPages(from: number, to: number): Promise<void> { return this.pages.reorderPages(from, to); }
 
-  setSelectionFreeTransform(on: boolean): void { this.lasso.setFreeTransform(on); }
+  setSelectionFreeTransform(on: boolean): void { this.activeFloat()?.setFreeTransform(on); }
   async resizeCanvas(spec: CanvasSpec): Promise<void> { return this.project.resizeCanvas(spec); }
   async newProject(): Promise<void> { return this.project.newProject(); }
 
-  lassoCommit(): void { this.lasso.commit(); this.syncStore(); }
-  lassoDuplicate(): void { this.lasso.duplicate(); }
-  lassoCancel(): void { this.lasso.cancelSelection(); this.scheduleSave(); }
+  commitFloatSelection(): void { this.activeSession()?.commit(); this.syncStore(); }
+  duplicateFloatSelection(): void {
+    const tool = this.activeTool();
+    if ('duplicate' in tool && typeof (tool as { duplicate?: () => void }).duplicate === 'function') {
+      (tool as { duplicate: () => void }).duplicate();
+    }
+  }
+  cancelFloatSelection(): void { this.activeSession()?.cancel(); this.scheduleSave(); }
+  lassoCommit(): void { this.commitFloatSelection(); }
+  lassoDuplicate(): void { this.duplicateFloatSelection(); }
+  lassoCancel(): void { this.cancelFloatSelection(); }
 
   transferReferenceImage(
     image: CanvasImageSource,
@@ -640,8 +662,8 @@ export class PaintEngine {
       redoBranches: this.history.current.children.map((c, i) => ({ index: i, label: c.label })),
       historyCount: this.history.nodeCount(),
       historyPrunableCount: this.history.prunableCount(10),
-      selectionActive: this.lasso.phase === 'float',
-      freeTransform: this.lasso.phase === 'float' && this.lasso.free,
+      selectionActive: this.activeFloat()?.phase === 'float',
+      freeTransform: this.activeFloat()?.phase === 'float' && !!this.activeFloat()?.free,
     });
   }
 

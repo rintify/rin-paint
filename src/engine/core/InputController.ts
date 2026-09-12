@@ -364,7 +364,7 @@ export class InputController {
       if (e.target === document.body) e.preventDefault();
     } else if (command === 'operation.cancel') {
       this.cancelEyedropper();
-      eng.lassoCancel();
+      eng.cancelFloatSelection();
     }
   };
 

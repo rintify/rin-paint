@@ -602,6 +602,7 @@ export class LayerService {
       }
       this.engine.syncStore();
       this.engine.shapeEdit.refreshVertexState();
+      this.engine.notifyLayerSelectionChange();
       return;
     }
     if (id === this.activeLayerId) return;
@@ -611,6 +612,7 @@ export class LayerService {
     this.engine.syncStore();
     this.engine.shapeEdit.refreshVertexState();
     this.engine.scheduleSave();
+    this.engine.notifyLayerSelectionChange();
   }
 
   previewLayerProps(id: string, props: LayerProps): void {
@@ -740,6 +742,7 @@ export class LayerService {
     const st = useStore.getState();
     st.set({ multiSelectMode: false, selectedLayerIds: this.activeLayerId ? [this.activeLayerId] : [] });
     this.engine.syncStore();
+    this.engine.notifyLayerSelectionChange();
   }
 
   private applyMultiSelection(selected: string[]): void {
@@ -750,6 +753,7 @@ export class LayerService {
     if (!getToolDescriptor(st.tool ?? '')?.capabilities.multiSelect) st.deactivateTool();
     st.set({ multiSelectMode: true, selectedLayerIds: ids, shortcutTarget: { type: 'layer', id: this.activeLayerId } });
     this.engine.syncStore();
+    this.engine.notifyLayerSelectionChange();
   }
 
   commitSelectedLayerProps(before: LayerProps, after: LayerProps, label: string): void {

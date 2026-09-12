@@ -4,6 +4,7 @@ import { clampSizeMm, roundMm } from '../engine/units';
 import { blurTool } from './blur';
 import { fillTool } from './fill';
 import { lassoTool } from './lasso';
+import { moveTool } from './move';
 import { lineTool } from './line';
 import { penTool } from './pen';
 import { rectTool } from './rect';
@@ -24,6 +25,7 @@ export const TOOL_REGISTRY = {
   eyedropper: eyedropperTool,
   polygonSplit: polygonSplitTool,
   lasso: lassoTool,
+  move: moveTool,
   blur: blurTool,
   text: textTool,
 } as const;

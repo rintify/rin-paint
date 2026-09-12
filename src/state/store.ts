@@ -52,6 +52,7 @@ export function defaultToolSetup(): DefaultToolSetup {
     { kind: 'eyedropper', name: 'スポイト', settings: { ...DEFAULT_EYEDROPPER_TOOL_SETTINGS } },
     { kind: 'polygonSplit', name: '多角形分断', settings: { ...DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS } },
     { kind: 'lasso', name: '選択' },
+    { kind: 'move', name: '移動変形' },
     { kind: 'blur', name: 'ぼかし' },
     { kind: 'text', name: '文字', settings: { ...DEFAULT_TEXT_TOOL_SETTINGS } },
   ];

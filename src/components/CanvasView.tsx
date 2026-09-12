@@ -151,11 +151,11 @@ export function CanvasView() {
           >
             自由変形
           </Button>
-          <Button onClick={() => engine.lassoDuplicate()}>複製</Button>
-          <Button variant="contained" onClick={() => engine.lassoCommit()}>
+          <Button onClick={() => engine.duplicateFloatSelection()}>複製</Button>
+          <Button variant="contained" onClick={() => engine.commitFloatSelection()}>
             確定
           </Button>
-          <Button onClick={() => engine.lassoCancel()}>キャンセル</Button>
+          <Button onClick={() => engine.cancelFloatSelection()}>キャンセル</Button>
         </Paper>
       )}
       {polygonDraftActive && (
