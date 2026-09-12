@@ -1,15 +1,17 @@
 import LinkIcon from '@mui/icons-material/Link';
 import LinkOffIcon from '@mui/icons-material/LinkOff';
-import { Box, Button, FormControl, IconButton, MenuItem, Select, Stack, Switch, Tooltip, Typography } from '@mui/material';
+import { FormControl, IconButton, MenuItem, Select, Stack, Switch, Tooltip, Typography } from '@mui/material';
 import { commonLayerParameterDescriptors, parameterSemanticId } from '../../engine/layerParameters';
 import { STANDARD_FONTS } from '../../engine/text/render';
 import { clampSizeMm, mmToPx, pxToMm, roundMm, SIZE_MM_MAX, SIZE_MM_MIN } from '../../engine/units';
-import { TRANSPARENT, type LayerMeta } from '../../model';
+import type { LayerMeta } from '../../model';
 import { useStore } from '../../state/store';
 import { useEngine } from '../EngineContext';
 import { CanvasMmField } from '../CanvasMmField';
-import { MmInlineControl } from '../MmControl';
+import { SliderField } from '../SliderField';
 import { NumericField } from '../NumericField';
+import { ColorField } from '../ColorField';
+import { LabeledControl } from '../inspectorLayout';
 
 function sharedValue(values: (number | string | boolean | null)[]) {
   if (!values.length) return { mixed: true, value: null };
@@ -25,7 +27,7 @@ export function MultiParameterControls({ layers }: { layers: LayerMeta[] }) {
   const descriptors = commonLayerParameterDescriptors(layers, ppi);
   if (!descriptors.length) return null;
   return (
-    <Stack spacing={1}>
+    <Stack spacing={1.5}>
       <Typography variant="caption" color="text.secondary">共通パラメータ</Typography>
       {descriptors.map(descriptor => {
         const shared = sharedValue(layers.map(layer => descriptor.read(layer)));
@@ -40,8 +42,7 @@ export function MultiParameterControls({ layers }: { layers: LayerMeta[] }) {
           && layer.compatibleLinkParameterIds?.includes(semanticId)
           && !layer.parameterLink.linkedParameterIds.includes(semanticId));
         const indicatorSx = {
-          width: 24, height: 24, minWidth: 24, p: 0, flex: '0 0 24px',
-          boxSizing: 'border-box', border: '1px solid transparent',
+          width: 28, height: 28, p: 0.25,
         } as const;
         const linkIndicator = linkedLayers.length ? (
           <Tooltip title={linkState === 'mixed' ? `${linkedLayers.length}レイヤーのリンクを解除` : 'クリックしてリンクを解除'}>
@@ -54,7 +55,7 @@ export function MultiParameterControls({ layers }: { layers: LayerMeta[] }) {
           </Tooltip>
         ) : relinkable.length ? (
           <Tooltip title={`${relinkable.length}レイヤーをそれぞれのリンク元へ再リンク`}>
-            <IconButton disableRipple aria-label={`${descriptor.label}を再リンク`} sx={{ ...indicatorSx, color: 'text.disabled', borderStyle: 'dashed', borderColor: 'text.disabled' }} onClick={() => void Promise.all(
+            <IconButton disableRipple aria-label={`${descriptor.label}を再リンク`} sx={{ ...indicatorSx, color: 'text.secondary', opacity: 0.55 }} onClick={() => void Promise.all(
               relinkable.map(layer => engine.relinkLayerParameter(layer.id, semanticId)),
             )}><LinkOffIcon fontSize="small" /></IconButton>
           </Tooltip>
@@ -63,122 +64,110 @@ export function MultiParameterControls({ layers }: { layers: LayerMeta[] }) {
           engine.updateSelectedParameter(descriptor.key, next);
         };
         if (descriptor.control === 'switch') return (
-          <Stack key={descriptor.key} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-            <Typography variant="caption" color={labelColor} sx={{ width: 72, flex: 'none' }}>{label}</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-              {shared.mixed ? '—' : value ? (descriptor.trueLabel ?? '表示') : (descriptor.falseLabel ?? '非表示')}
-            </Typography>
-            <Switch
-              checked={value === true}
-              onChange={event => {
-                engine.updateSelectedParameter(descriptor.key, event.target.checked);
-              }}
-              slotProps={{ input: { 'aria-label': descriptor.label } }}
-            />
-            {linkIndicator}
-          </Stack>
+          <LabeledControl key={descriptor.key} label={label} color={labelColor}>
+            <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+              <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
+                {shared.mixed ? '—' : value ? (descriptor.trueLabel ?? '表示') : (descriptor.falseLabel ?? '非表示')}
+              </Typography>
+              <Switch
+                checked={value === true}
+                onChange={event => {
+                  engine.updateSelectedParameter(descriptor.key, event.target.checked);
+                }}
+                slotProps={{ input: { 'aria-label': descriptor.label } }}
+              />
+              {linkIndicator}
+            </Stack>
+          </LabeledControl>
         );
         if (descriptor.control === 'number' && descriptor.canvasLength && descriptor.key === 'strokeWidth') {
           const strokeMm = typeof value === 'number' ? pxToMm(value, ppi) : null;
           return (
-            <Stack key={descriptor.key} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-              <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>
-                {label} (mm){shared.mixed ? ' —' : ''}
-              </Typography>
-              {strokeMm === null ? (
-                <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>—</Typography>
-              ) : (
-                <MmInlineControl
-                  valueMm={strokeMm}
-                  min={SIZE_MM_MIN}
-                  max={SIZE_MM_MAX}
-                  onPreview={mm => engine.previewSelectedParameter(descriptor.key, mmToPx(clampSizeMm(roundMm(mm)), ppi))}
-                  onCommit={(before, after) => engine.commitSelectedParameterPreview(
-                    descriptor.key,
-                    mmToPx(clampSizeMm(roundMm(before)), ppi),
-                    mmToPx(clampSizeMm(roundMm(after)), ppi),
-                  )}
-                />
+            <SliderField
+              key={descriptor.key}
+              label={label}
+              value={strokeMm}
+              min={SIZE_MM_MIN}
+              max={SIZE_MM_MAX}
+              unit="mm"
+              scale="mm"
+              color={labelColor}
+              trailing={linkIndicator}
+              onPreview={mm => engine.previewSelectedParameter(descriptor.key, mmToPx(clampSizeMm(roundMm(mm)), ppi))}
+              onCommit={(before, after) => engine.commitSelectedParameterPreview(
+                descriptor.key,
+                mmToPx(clampSizeMm(roundMm(before ?? after)), ppi),
+                mmToPx(clampSizeMm(roundMm(after)), ppi),
               )}
-              {linkIndicator}
-            </Stack>
+            />
           );
         }
         if (descriptor.control === 'number' && descriptor.canvasLength) {
-          if (typeof value !== 'number') {
+          if (!shared.mixed && descriptor.nullable && value === null) {
             return (
-              <Stack key={descriptor.key} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-                <Typography variant="caption" color={labelColor} sx={{ width: 72 }}>{label}</Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {!shared.mixed && descriptor.nullable ? '自動' : '—'}
-                </Typography>
-              </Stack>
+              <Typography key={descriptor.key} variant="body2" color="text.secondary">
+                {label}: 自動
+              </Typography>
             );
           }
           return (
-            <Stack key={descriptor.key} direction="row" spacing={0.25} sx={{ alignItems: 'center' }}>
             <CanvasMmField
+              key={descriptor.key}
               size="small"
               label={label}
-              valuePx={value}
+              valuePx={typeof value === 'number' ? value : null}
               minPx={descriptor.min}
               onCommitPx={commit}
+              trailing={linkIndicator}
+              labelColor={labelColor}
             />
-            {linkIndicator}
-            </Stack>
           );
         }
         if (descriptor.control === 'number') return (
-          <Stack key={descriptor.key} direction="row" spacing={0.25} sx={{ alignItems: 'center' }}>
           <NumericField
+            key={descriptor.key}
             size="small"
+            fullWidth
             label={label}
             value={typeof value === 'number' ? value : null}
             min={descriptor.min}
             max={descriptor.max}
             onCommit={commit}
+            trailing={linkIndicator}
+            labelColor={labelColor}
           />
-          {linkIndicator}
-          </Stack>
         );
         if (descriptor.control === 'color') return (
-          <Stack key={descriptor.key} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-            <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>
-              {label}{shared.mixed ? ' —' : ''}
-            </Typography>
-            <Box
-              component="input"
-              aria-label={`共通の${descriptor.label}`}
-              type="color"
-              value={typeof value === 'string' && value !== TRANSPARENT ? value : '#ffffff'}
-              onChange={event => commit(event.target.value)}
-              sx={{ minWidth: 0, flex: 1, height: 34 }}
-            />
-            {descriptor.allowTransparent && (
-              <Button size="small" variant={value === TRANSPARENT ? 'contained' : 'outlined'} onClick={() => commit(TRANSPARENT)}>透明</Button>
-            )}
-            {linkIndicator}
-          </Stack>
+          <ColorField
+            key={descriptor.key}
+            label={label}
+            labelColor={labelColor}
+            value={typeof value === 'string' ? value : null}
+            allowTransparent={descriptor.allowTransparent}
+            trailing={linkIndicator}
+            onChange={commit}
+          />
         );
         const options = descriptor.key === 'fontId'
           ? [...STANDARD_FONTS, ...projectFonts].map(font => ({ value: font.id, label: font.name }))
           : descriptor.options ?? [];
         return (
-          <Stack key={descriptor.key} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-            <Typography variant="caption" color={labelColor} sx={{ width: 72, flex: 'none' }}>{label}</Typography>
-            <FormControl size="small" fullWidth>
-              <Select
-                displayEmpty
-                aria-label={descriptor.label}
-                value={typeof value === 'string' ? value : ''}
-                onChange={event => commit(event.target.value)}
-              >
-                {shared.mixed && <MenuItem value="" disabled>—</MenuItem>}
-                {options.map(option => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
-              </Select>
-            </FormControl>
-            {linkIndicator}
-          </Stack>
+          <LabeledControl key={descriptor.key} label={label} color={labelColor}>
+            <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+              <FormControl size="small" fullWidth>
+                <Select
+                  displayEmpty
+                  aria-label={descriptor.label}
+                  value={typeof value === 'string' ? value : ''}
+                  onChange={event => commit(event.target.value)}
+                >
+                  {shared.mixed && <MenuItem value="" disabled>—</MenuItem>}
+                  {options.map(option => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+                </Select>
+              </FormControl>
+              {linkIndicator}
+            </Stack>
+          </LabeledControl>
         );
       })}
     </Stack>

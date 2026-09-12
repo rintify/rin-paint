@@ -1,7 +1,7 @@
-import { Stack, Typography } from '@mui/material';
+import { Stack } from '@mui/material';
 import { useEngine } from '../EngineContext';
 import type { AdjustParams, LayerMeta } from '../../model';
-import { CommitSlider } from './CommitSlider';
+import { SliderField } from '../SliderField';
 import { MaskControls } from './MaskControls';
 import { ParameterLinkIndicator } from './ParameterLinkIndicator';
 import { linkedParameterColor } from './parameterLinkUi';
@@ -17,36 +17,27 @@ export function AdjustControls({ meta }: { meta: LayerMeta }) {
   const engine = useEngine();
   const params = meta.params!;
   return (
-    <>
+    <Stack spacing={1.5}>
       {ADJUST_SLIDERS.map((p) => (
-        <Stack direction="row" spacing={1} key={p.key} sx={{ alignItems: 'center' }}>
-          <Typography variant="caption" color={linkedParameterColor(meta, `adjust.${p.key}`)} sx={{ width: 72, flex: 'none' }}>
-            {p.label}
-          </Typography>
-          <CommitSlider
-            value={params[p.key]}
-            min={p.min}
-            max={p.max}
-            onPreview={(v) => engine.previewLayerProps(meta.id, { params: { ...params, [p.key]: v } })}
-            onCommit={(b, a) =>
-              engine.commitLayerProps(
-                meta.id,
-                { params: { ...params, [p.key]: b ?? params[p.key] } },
-                { params: { ...params, [p.key]: a } },
-                '色調補正',
-              )}
-          />
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ width: 36, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flex: 'none' }}
-          >
-            {params[p.key]}
-          </Typography>
-          <ParameterLinkIndicator meta={meta} semanticId={`adjust.${p.key}`} />
-        </Stack>
+        <SliderField
+          key={p.key}
+          label={p.label}
+          value={params[p.key]}
+          min={p.min}
+          max={p.max}
+          color={linkedParameterColor(meta, `adjust.${p.key}`)}
+          trailing={<ParameterLinkIndicator meta={meta} semanticId={`adjust.${p.key}`} />}
+          onPreview={v => engine.previewLayerProps(meta.id, { params: { ...params, [p.key]: v } })}
+          onCommit={(b, a) =>
+            engine.commitLayerProps(
+              meta.id,
+              { params: { ...params, [p.key]: b ?? params[p.key] } },
+              { params: { ...params, [p.key]: a } },
+              '色調補正',
+            )}
+        />
       ))}
       <MaskControls meta={meta} />
-    </>
+    </Stack>
   );
 }

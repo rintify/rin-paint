@@ -1,4 +1,4 @@
-import { Box, Slider, Typography } from '@mui/material';
+import { SliderField } from '../components/SliderField';
 
 export function DetailSlider({
   label,
@@ -12,29 +12,13 @@ export function DetailSlider({
   max?: number;
 }) {
   return (
-    <Box
-      sx={{
-        display: 'grid',
-        gridTemplateColumns: '92px minmax(120px, 1fr) 32px',
-        alignItems: 'center',
-        gap: 1.25,
-        mb: 1,
-      }}
-    >
-      <Typography variant="body2">{label}</Typography>
-      <Slider
-        min={0}
-        max={max}
-        value={value}
-        onChange={(_, v) => onChange(Array.isArray(v) ? v[0] : v)}
-      />
-      <Typography
-        variant="body2"
-        color="text.secondary"
-        sx={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}
-      >
-        {value}
-      </Typography>
-    </Box>
+    <SliderField
+      label={label}
+      value={value}
+      min={0}
+      max={max}
+      onPreview={onChange}
+      onCommit={(_before, after) => onChange(after)}
+    />
   );
 }

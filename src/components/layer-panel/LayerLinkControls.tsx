@@ -1,10 +1,8 @@
 import LinkIcon from '@mui/icons-material/Link';
 import LinkOffIcon from '@mui/icons-material/LinkOff';
 import {
-  Alert,
   Box,
   Button,
-  Card,
   Dialog,
   DialogActions,
   DialogContent,
@@ -19,6 +17,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import type { LayerMeta } from '../../model';
 import { useEngine } from '../EngineContext';
+import { InfoCard } from '../inspectorLayout';
 
 export function LayerLinkControls({
   meta,
@@ -48,16 +47,17 @@ export function LayerLinkControls({
   }, [sourceDialogRequested, onSourceDialogOpened]);
   return (
     <>
-      <Stack spacing={1} sx={{ mb: 1.25 }}>
+      <Stack spacing={1.5} sx={{ mb: 1.5 }}>
         {link && (
-          <Card variant="outlined" sx={{ p: 1, borderColor: source?.missing ? 'warning.main' : 'secondary.main', bgcolor: source?.missing ? 'warning.50' : 'action.hover' }}>
+          <InfoCard tone={source?.missing ? 'warning' : 'link'}>
             <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.2 }}>リンク元</Typography>
-            <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
+            <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
               {source?.missing ? <LinkOffIcon color="warning" fontSize="small" /> : <LinkIcon color="secondary" fontSize="small" />}
               <Button
                 size="small"
+                fullWidth
                 color={source?.missing ? 'warning' : 'secondary'}
-                sx={{ minWidth: 0, justifyContent: 'flex-start', flex: 1, textTransform: 'none' }}
+                sx={{ justifyContent: 'flex-start' }}
                 onClick={() => void engine.focusLayerReference(link.source)}
               >
                 ページ {(source?.pageIndex ?? link.sourcePageIndexHint) + 1} / {source?.name ?? link.sourceNameHint}
@@ -66,11 +66,13 @@ export function LayerLinkControls({
             <Typography variant="caption" color="text.secondary">
               {link.linkedParameterIds.length} / {(meta.compatibleLinkParameterIds ?? []).length}項目をリンク中
             </Typography>
-            {source?.missing && <Alert severity="warning" sx={{ mt: 0.75, py: 0 }}>リンク元が見つかりません</Alert>}
-          </Card>
+            {source?.missing && (
+              <Typography variant="caption" color="warning.main">リンク元が見つかりません</Typography>
+            )}
+          </InfoCard>
         )}
         {!!targets.length && (
-          <Card variant="outlined" sx={{ p: 1, bgcolor: 'action.hover', borderColor: 'divider' }}>
+          <InfoCard tone="link">
             <Typography variant="caption" sx={{ fontWeight: 700 }}>このレイヤーはリンク元になっています（{targets.length}件）</Typography>
             {targets.slice(0, 4).map(target => (
               <Button
@@ -78,14 +80,14 @@ export function LayerLinkControls({
                 fullWidth
                 size="small"
                 color="secondary"
-                sx={{ justifyContent: 'flex-start', textTransform: 'none' }}
+                sx={{ justifyContent: 'flex-start' }}
                 onClick={() => void engine.focusLayerReference(target.address)}
               >
                 ページ {target.pageIndex + 1} / {target.name}（{target.linkedCount}項目）
               </Button>
             ))}
             {targets.length > 4 && <Button size="small" color="secondary" onClick={() => setTargetsOpen(true)}>すべて表示（{targets.length}件）</Button>}
-          </Card>
+          </InfoCard>
         )}
       </Stack>
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="sm">
@@ -98,7 +100,7 @@ export function LayerLinkControls({
             label="レイヤー名で検索"
             value={query}
             onChange={event => setQuery(event.target.value)}
-            sx={{ mt: 0.5, mb: 1 }}
+            sx={{ mt: 1, mb: 1.5 }}
           />
           <List dense sx={{ maxHeight: 420, overflow: 'auto' }}>
             {filtered.map(candidate => (

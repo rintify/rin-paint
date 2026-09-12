@@ -63,7 +63,7 @@ function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
   return (
     <Dialog open onClose={applying ? undefined : onClose} maxWidth="xs" fullWidth>
       <DialogTitle>キャンバスサイズ</DialogTitle>
-      <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, pt: 1 }}>
+      <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
         <TextField
           label="幅 (mm)"
           type="text"

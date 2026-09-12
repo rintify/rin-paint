@@ -96,7 +96,7 @@ export function ToolPicker() {
                 }}
                 onMouseLeave={scheduleHoverClose}
                 title={stack.name}
-                variant={active ? 'contained' : 'text'}
+                variant={active ? 'contained' : 'outlined'}
                 color={active ? 'primary' : 'inherit'}
                 className="tool-rail-button tool-stack-button"
               >
@@ -121,7 +121,7 @@ export function ToolPicker() {
               disabled={multi && !descriptor?.capabilities.multiSelect}
               onClick={() => engine.selectToolInstance(tool.id)}
               title={tool.name}
-              variant={active ? 'contained' : 'text'}
+              variant={active ? 'contained' : 'outlined'}
               color={active ? 'primary' : 'inherit'}
               className="tool-rail-button"
             >
@@ -165,7 +165,7 @@ export function ToolPicker() {
                 <Button
                   key={id}
                   disabled={multi && !descriptor?.capabilities.multiSelect}
-                  variant={active ? 'contained' : 'text'}
+                  variant={active ? 'contained' : 'outlined'}
                   color={active ? 'primary' : 'inherit'}
                   className="tool-rail-button tool-stack-popover-tool"
                   onClick={() => {

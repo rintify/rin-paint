@@ -1,4 +1,4 @@
-import { Button, MenuItem, Stack, Switch, TextField, Typography } from '@mui/material';
+import { Button, FormControl, MenuItem, Select, Stack, Switch, TextField, Typography } from '@mui/material';
 import { useState } from 'react';
 import { formatRange, setRuby, styleAt } from '../engine/text/model';
 import { STANDARD_FONTS } from '../engine/text/render';
@@ -12,6 +12,8 @@ import { NumericField } from './NumericField';
 import { CanvasMmField } from './CanvasMmField';
 import { ParameterLinkIndicator } from './layer-panel/ParameterLinkIndicator';
 import { linkedParameterColor } from './layer-panel/parameterLinkUi';
+import { ColorField } from './ColorField';
+import { FieldStack, LabeledControl } from './inspectorLayout';
 
 export function TextControls({ meta }: { meta: LayerMeta }) {
   const engine = useEngine();
@@ -43,185 +45,211 @@ export function TextControls({ meta }: { meta: LayerMeta }) {
     });
   };
   return (
-    <Stack spacing={1.25} data-text-controls>
+    <Stack spacing={1.5} data-text-controls>
       <Typography variant="caption" color="text.secondary">
         {selected ? '選択した文字の書式' : 'これから入力する文字の書式'}
       </Typography>
-      <Stack spacing={0.25}>
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          <Typography variant="caption" color={linkedParameterColor(meta, 'interaction.snap')} sx={{ width: 72, flex: 'none' }}>スナップ</Typography>
-          <Switch
-            checked={meta.snapEnabled !== false}
-            onChange={event => engine.commitLayerProps(
-              meta.id,
-              { snapEnabled: meta.snapEnabled !== false },
-              { snapEnabled: event.target.checked },
-              'スナップを変更',
-            )}
-            slotProps={{ input: { 'aria-label': 'スナップ' } }}
-          />
-          <ParameterLinkIndicator meta={meta} semanticId="interaction.snap" />
-        </Stack>
+      <Stack spacing={0.75}>
+        <LabeledControl label="スナップ" color={linkedParameterColor(meta, 'interaction.snap')}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            <Switch
+              checked={meta.snapEnabled !== false}
+              onChange={event => engine.commitLayerProps(
+                meta.id,
+                { snapEnabled: meta.snapEnabled !== false },
+                { snapEnabled: event.target.checked },
+                'スナップを変更',
+              )}
+              slotProps={{ input: { 'aria-label': 'スナップ' } }}
+            />
+            <ParameterLinkIndicator meta={meta} semanticId="interaction.snap" />
+          </Stack>
+        </LabeledControl>
         <Typography variant="caption" color="text.secondary">移動の端・中央と90°回転</Typography>
       </Stack>
-      <Stack direction="row" spacing={1}>
-        <Stack direction="row" spacing={0.25} sx={{ alignItems: 'center', minWidth: 0 }}>
-          <CanvasMmField size="small" label="X" valuePx={text.x} onCommitPx={value => change(before => ({ ...before, x: value }))} />
-          <ParameterLinkIndicator meta={meta} semanticId="frame.leftMm" />
-        </Stack>
-        <Stack direction="row" spacing={0.25} sx={{ alignItems: 'center', minWidth: 0 }}>
-          <CanvasMmField size="small" label="Y" valuePx={text.y} onCommitPx={value => change(before => ({ ...before, y: value }))} />
-          <ParameterLinkIndicator meta={meta} semanticId="frame.topMm" />
-        </Stack>
-      </Stack>
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+      <FieldStack>
         <CanvasMmField
           size="small"
-          label="枠幅"
-          valuePx={text.width ?? engine.textFrameSize(meta.id)?.width ?? 0}
-          disabled={text.width === null}
-          onCommitPx={value => change(before => ({ ...before, width: value }))}
+          label="X"
+          valuePx={text.x}
+          onCommitPx={value => change(before => ({ ...before, x: value }))}
+          trailing={<ParameterLinkIndicator meta={meta} semanticId="frame.leftMm" />}
+          labelColor={linkedParameterColor(meta, 'frame.leftMm')}
         />
-        <Typography variant="caption">自動</Typography>
-        <Switch
-          checked={text.width === null}
-          slotProps={{ input: { 'aria-label': '枠幅を自動にする' } }}
-          onChange={event => change(before => ({
-            ...before,
-            width: event.target.checked ? null : (engine.textFrameSize(meta.id)?.width ?? 1),
-          }))}
-        />
-        <ParameterLinkIndicator meta={meta} semanticId="frame.widthMm" />
-      </Stack>
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
         <CanvasMmField
           size="small"
-          label="枠高さ"
-          valuePx={text.height ?? engine.textFrameSize(meta.id)?.height ?? 0}
-          disabled={text.height === null}
-          onCommitPx={value => change(before => ({ ...before, height: value }))}
+          label="Y"
+          valuePx={text.y}
+          onCommitPx={value => change(before => ({ ...before, y: value }))}
+          trailing={<ParameterLinkIndicator meta={meta} semanticId="frame.topMm" />}
+          labelColor={linkedParameterColor(meta, 'frame.topMm')}
         />
-        <Typography variant="caption">自動</Typography>
-        <Switch
-          checked={text.height === null}
-          slotProps={{ input: { 'aria-label': '枠高さを自動にする' } }}
-          onChange={event => change(before => ({
-            ...before,
-            height: event.target.checked ? null : (engine.textFrameSize(meta.id)?.height ?? 1),
-          }))}
-        />
-        <ParameterLinkIndicator meta={meta} semanticId="frame.heightMm" />
-      </Stack>
-      <TextField
-        select
+      </FieldStack>
+      <LabeledControl label="枠幅" color={linkedParameterColor(meta, 'frame.widthMm')}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <CanvasMmField
+            size="small"
+            valuePx={text.width ?? engine.textFrameSize(meta.id)?.width ?? 0}
+            disabled={text.width === null}
+            onCommitPx={value => change(before => ({ ...before, width: value }))}
+          />
+          <Typography variant="caption">自動</Typography>
+          <Switch
+            checked={text.width === null}
+            slotProps={{ input: { 'aria-label': '枠幅を自動にする' } }}
+            onChange={event => change(before => ({
+              ...before,
+              width: event.target.checked ? null : (engine.textFrameSize(meta.id)?.width ?? 1),
+            }))}
+          />
+          <ParameterLinkIndicator meta={meta} semanticId="frame.widthMm" />
+        </Stack>
+      </LabeledControl>
+      <LabeledControl label="枠高さ" color={linkedParameterColor(meta, 'frame.heightMm')}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <CanvasMmField
+            size="small"
+            valuePx={text.height ?? engine.textFrameSize(meta.id)?.height ?? 0}
+            disabled={text.height === null}
+            onCommitPx={value => change(before => ({ ...before, height: value }))}
+          />
+          <Typography variant="caption">自動</Typography>
+          <Switch
+            checked={text.height === null}
+            slotProps={{ input: { 'aria-label': '枠高さを自動にする' } }}
+            onChange={event => change(before => ({
+              ...before,
+              height: event.target.checked ? null : (engine.textFrameSize(meta.id)?.height ?? 1),
+            }))}
+          />
+          <ParameterLinkIndicator meta={meta} semanticId="frame.heightMm" />
+        </Stack>
+      </LabeledControl>
+      <LabeledControl label="フォント">
+        <FormControl size="small" fullWidth>
+          <Select
+            value={style.fontId}
+            disabled={session.composing}
+            inputProps={{ 'aria-label': 'フォント' }}
+            onChange={e => {
+              if (e.target.value === '__add') addFont();
+              else format({ fontId: e.target.value });
+            }}
+          >
+            {[...STANDARD_FONTS, ...fonts].map(f => (
+              <MenuItem key={f.id} value={f.id}>{f.name}</MenuItem>
+            ))}
+            <MenuItem value="__add">フォントファイルを追加…</MenuItem>
+          </Select>
+        </FormControl>
+      </LabeledControl>
+      <NumericField
         size="small"
-        label="フォント"
-        value={style.fontId}
+        fullWidth
+        label="サイズ"
+        value={style.sizePt}
+        min={1}
+        max={512}
         disabled={session.composing}
-        onChange={e => {
-          if (e.target.value === '__add') addFont();
-          else format({ fontId: e.target.value });
-        }}
-      >
-        {[...STANDARD_FONTS, ...fonts].map(f => (
-          <MenuItem key={f.id} value={f.id}>{f.name}</MenuItem>
-        ))}
-        <MenuItem value="__add">フォントファイルを追加…</MenuItem>
-      </TextField>
-      <Stack direction="row" spacing={1}>
-        <NumericField
-          size="small"
-          label="サイズ (pt)"
-          value={style.sizePt}
-          min={1}
-          max={512}
-          disabled={session.composing}
-          onCommit={n => format({ sizePt: n })}
-        />
-        <TextField
-          size="small"
-          label="文字色"
-          type="color"
-          value={style.color}
-          disabled={session.composing}
-          onChange={e => format({ color: e.target.value })}
-          sx={{ width: 100 }}
-        />
-      </Stack>
-      <Stack direction="row" spacing={1}>
-        <TextField
-          size="small"
-          label="ルビ"
-          value={ruby}
-          onChange={e => setReading(e.target.value)}
-          disabled={!selected || session.composing}
-        />
-        <Button
-          disabled={
-            !selected
-            || session.composing
-            || text.content.slice(selection.start, selection.end).includes('\n')
-          }
-          onClick={() => change(before => setRuby(before, selection.start, selection.end, ruby))}
-        >
-          {ruby.trim() ? '設定' : '解除'}
-        </Button>
-      </Stack>
+        onCommit={n => format({ sizePt: n })}
+        unit="pt"
+      />
+      <ColorField
+        label="文字色"
+        value={style.color}
+        disabled={session.composing}
+        onChange={color => format({ color })}
+      />
+      <LabeledControl label="ルビ">
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <TextField
+            size="small"
+            fullWidth
+            value={ruby}
+            onChange={e => setReading(e.target.value)}
+            disabled={!selected || session.composing}
+            slotProps={{ htmlInput: { 'aria-label': 'ルビ' } }}
+          />
+          <Button
+            disabled={
+              !selected
+              || session.composing
+              || text.content.slice(selection.start, selection.end).includes('\n')
+            }
+            onClick={() => change(before => setRuby(before, selection.start, selection.end, ruby))}
+          >
+            {ruby.trim() ? '設定' : '解除'}
+          </Button>
+        </Stack>
+      </LabeledControl>
       <Typography variant="caption" color="text.secondary">
         ルビは同じ行の文字を選択して設定します。
       </Typography>
-      <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
-        <TextField
-          select fullWidth size="small" label="文字全体の方向" value={text.direction}
-          disabled={session.composing}
-          onChange={e => change(before => ({ ...before, direction: e.target.value as TextParams['direction'] }))}
-        >
-          <MenuItem value="horizontal">横書き</MenuItem>
-          <MenuItem value="vertical">縦書き</MenuItem>
-        </TextField>
-        <ParameterLinkIndicator meta={meta} semanticId="text.direction" />
-      </Stack>
-      <Stack direction="row" spacing={1}>
-        <TextField
-          select
-          fullWidth
-          size="small"
-          label="横位置"
-          value={text.horizontalAlign ?? 'left'}
-          disabled={session.composing}
-          onChange={e => change(before => ({ ...before, horizontalAlign: e.target.value as TextParams['horizontalAlign'] }))}
-        >
-          <MenuItem value="left">左揃え</MenuItem>
-          <MenuItem value="center">中央揃え</MenuItem>
-          <MenuItem value="right">右揃え</MenuItem>
-        </TextField>
-        <ParameterLinkIndicator meta={meta} semanticId="text.horizontalAlign" />
-        <TextField
-          select
-          fullWidth
-          size="small"
-          label="縦位置"
-          value={text.verticalAlign ?? 'top'}
-          disabled={session.composing}
-          onChange={e => change(before => ({ ...before, verticalAlign: e.target.value as TextParams['verticalAlign'] }))}
-        >
-          <MenuItem value="top">上揃え</MenuItem>
-          <MenuItem value="center">中央揃え</MenuItem>
-          <MenuItem value="bottom">下揃え</MenuItem>
-        </TextField>
-        <ParameterLinkIndicator meta={meta} semanticId="text.verticalAlign" />
-      </Stack>
-      <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
-        <NumericField
-          fullWidth size="small" label="行間 (倍)" value={text.lineHeight} min={1} max={5}
-          disabled={session.composing}
-          onCommit={value => change(before => ({ ...before, lineHeight: value }))}
-        />
-        <ParameterLinkIndicator meta={meta} semanticId="text.lineHeight" />
-      </Stack>
+      <LabeledControl label="方向" color={linkedParameterColor(meta, 'text.direction')}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <FormControl size="small" fullWidth>
+            <Select
+              value={text.direction}
+              disabled={session.composing}
+              inputProps={{ 'aria-label': '文字全体の方向' }}
+              onChange={e => change(before => ({ ...before, direction: e.target.value as TextParams['direction'] }))}
+            >
+              <MenuItem value="horizontal">横書き</MenuItem>
+              <MenuItem value="vertical">縦書き</MenuItem>
+            </Select>
+          </FormControl>
+          <ParameterLinkIndicator meta={meta} semanticId="text.direction" />
+        </Stack>
+      </LabeledControl>
+      <FieldStack>
+        <LabeledControl label="横位置" color={linkedParameterColor(meta, 'text.horizontalAlign')}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            <FormControl size="small" fullWidth>
+              <Select
+                value={text.horizontalAlign ?? 'left'}
+                disabled={session.composing}
+                inputProps={{ 'aria-label': '横位置' }}
+                onChange={e => change(before => ({ ...before, horizontalAlign: e.target.value as TextParams['horizontalAlign'] }))}
+              >
+                <MenuItem value="left">左揃え</MenuItem>
+                <MenuItem value="center">中央揃え</MenuItem>
+                <MenuItem value="right">右揃え</MenuItem>
+              </Select>
+            </FormControl>
+            <ParameterLinkIndicator meta={meta} semanticId="text.horizontalAlign" />
+          </Stack>
+        </LabeledControl>
+        <LabeledControl label="縦位置" color={linkedParameterColor(meta, 'text.verticalAlign')}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            <FormControl size="small" fullWidth>
+              <Select
+                value={text.verticalAlign ?? 'top'}
+                disabled={session.composing}
+                inputProps={{ 'aria-label': '縦位置' }}
+                onChange={e => change(before => ({ ...before, verticalAlign: e.target.value as TextParams['verticalAlign'] }))}
+              >
+                <MenuItem value="top">上揃え</MenuItem>
+                <MenuItem value="center">中央揃え</MenuItem>
+                <MenuItem value="bottom">下揃え</MenuItem>
+              </Select>
+            </FormControl>
+            <ParameterLinkIndicator meta={meta} semanticId="text.verticalAlign" />
+          </Stack>
+        </LabeledControl>
+      </FieldStack>
+      <NumericField
+        fullWidth size="small" label="行間" value={text.lineHeight} min={1} max={5}
+        disabled={session.composing}
+        onCommit={value => change(before => ({ ...before, lineHeight: value }))}
+        unit="倍"
+        trailing={<ParameterLinkIndicator meta={meta} semanticId="text.lineHeight" />}
+        labelColor={linkedParameterColor(meta, 'text.lineHeight')}
+      />
       <NumericField
         size="small"
-        label="回転 (度)"
+        fullWidth
+        label="回転"
+        unit="度"
         value={Math.round(((text.rotation ?? 0) * 1800) / Math.PI) / 10}
         min={-3600}
         max={3600}

@@ -1,6 +1,7 @@
-import { FormControl, MenuItem, Select, Stack, Typography } from '@mui/material';
+import { Box, FormControl, MenuItem, Select } from '@mui/material';
 import type { ShapePaintMode } from '../../model';
 import { useEngine } from '../../components/EngineContext';
+import { LabeledControl } from '../../components/inspectorLayout';
 import { useStore } from '../../state/store';
 import { normalizeShapeToolSettings } from './settings';
 
@@ -10,20 +11,20 @@ export function PaintModeSelect() {
   const paintMode = normalizeShapeToolSettings(activeTool?.settings).paintMode;
 
   return (
-    <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mt: 1.25 }}>
-      <Typography variant="caption" color="text.secondary" sx={{ width: 72, flex: 'none' }}>
-        描画方式
-      </Typography>
-      <FormControl size="small" fullWidth>
-        <Select
-          value={paintMode}
-          onChange={(event) => engine.updateActiveToolSettings({ paintMode: event.target.value as ShapePaintMode })}
-        >
-          <MenuItem value="stroke">輪郭</MenuItem>
-          <MenuItem value="fill-inside">内側塗りつぶし</MenuItem>
-          <MenuItem value="fill-outside">外側塗りつぶし</MenuItem>
-        </Select>
-      </FormControl>
-    </Stack>
+    <Box sx={{ mt: 1.25 }}>
+      <LabeledControl label="描画方式">
+        <FormControl size="small" fullWidth>
+          <Select
+            value={paintMode}
+            inputProps={{ 'aria-label': '描画方式' }}
+            onChange={(event) => engine.updateActiveToolSettings({ paintMode: event.target.value as ShapePaintMode })}
+          >
+            <MenuItem value="stroke">輪郭</MenuItem>
+            <MenuItem value="fill-inside">内側塗りつぶし</MenuItem>
+            <MenuItem value="fill-outside">外側塗りつぶし</MenuItem>
+          </Select>
+        </FormControl>
+      </LabeledControl>
+    </Box>
   );
 }

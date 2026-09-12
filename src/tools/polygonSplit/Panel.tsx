@@ -16,7 +16,7 @@ export function PolygonSplitSettingsPanel() {
         分断幅
       </Typography>
       <MmControl
-        label="帯全体 (mm)"
+        label="帯全体"
         valueMm={settings.widthMm}
         min={0}
         max={SPLIT_WIDTH_MM_MAX}

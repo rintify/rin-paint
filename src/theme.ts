@@ -1,19 +1,28 @@
 import { createTheme } from '@mui/material/styles';
 
+/** Shared surfaces: CSS variables in styles.css must stay in sync. */
+const surface = {
+  canvas: '#12141a',
+  panel: '#1b1e25',
+  raised: '#252a33',
+  field: '#15171c',
+  border: '#343a44',
+} as const;
+
 export const theme = createTheme({
   palette: {
     mode: 'dark',
     primary: { main: '#4f8cff' },
     error: { main: '#e46a6a' },
     background: {
-      default: '#17191d',
-      paper: '#22252b',
+      default: surface.canvas,
+      paper: surface.panel,
     },
     text: {
       primary: '#e8eaee',
-      secondary: '#9aa1ad',
+      secondary: '#a0a7b4',
     },
-    divider: '#383d47',
+    divider: surface.border,
   },
   typography: {
     fontFamily: `'Hiragino Sans', 'Yu Gothic UI', system-ui, sans-serif`,
@@ -31,6 +40,9 @@ export const theme = createTheme({
           height: '100%',
           margin: 0,
         },
+        html: {
+          colorScheme: 'dark',
+        },
         body: {
           overscrollBehavior: 'none',
           WebkitUserSelect: 'none',
@@ -39,10 +51,24 @@ export const theme = createTheme({
       },
     },
     MuiButton: {
-      defaultProps: { size: 'small', disableElevation: true },
+      defaultProps: { size: 'small', disableElevation: true, variant: 'outlined' },
       styleOverrides: {
         root: {
           minWidth: 0,
+        },
+      },
+    },
+    MuiPaper: {
+      styleOverrides: {
+        root: {
+          backgroundImage: 'none',
+        },
+      },
+    },
+    MuiOutlinedInput: {
+      styleOverrides: {
+        root: {
+          backgroundColor: surface.field,
         },
       },
     },
@@ -52,6 +78,13 @@ export const theme = createTheme({
     MuiDialog: {
       defaultProps: {
         slotProps: { paper: { elevation: 8 } },
+      },
+      styleOverrides: {
+        paper: {
+          '& .MuiDialogTitle-root + .MuiDialogContent-root': {
+            paddingTop: 16,
+          },
+        },
       },
     },
     MuiMenu: {

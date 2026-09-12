@@ -1,5 +1,4 @@
 import {
-  Box,
   Button,
   FormControl,
   MenuItem,
@@ -10,8 +9,10 @@ import {
 } from '@mui/material';
 import { useEngine } from '../EngineContext';
 import { CanvasMmField } from '../CanvasMmField';
-import { MmInlineControl } from '../MmControl';
 import { NumericField } from '../NumericField';
+import { SliderField } from '../SliderField';
+import { LabeledControl } from '../inspectorLayout';
+import { ColorField } from '../ColorField';
 import { useStore } from '../../state/store';
 import {
   setShapePaintMode,
@@ -23,7 +24,6 @@ import {
 } from '../../engine/shapes';
 import { clampSizeMm, mmToPx, pxToMm, roundMm, SIZE_MM_MAX, SIZE_MM_MIN } from '../../engine/units';
 import {
-  TRANSPARENT,
   type LayerMeta,
   type ShapePaintMode,
   type ShapeParams,
@@ -63,31 +63,28 @@ function ShapeNumber({
   };
   if (canvasLength) {
     return (
-      <Stack direction="row" spacing={0.25} sx={{ alignItems: 'center', minWidth: 0 }}>
-        <CanvasMmField
+      <CanvasMmField
         size="small"
         label={label}
         valuePx={value}
         minPx={min}
         onCommitPx={commit}
-        sx={{ minWidth: 0 }}
-        />
-        <ParameterLinkIndicator meta={meta} semanticId={semanticId} />
-      </Stack>
+        trailing={<ParameterLinkIndicator meta={meta} semanticId={semanticId} />}
+        labelColor={linkedParameterColor(meta, semanticId)}
+      />
     );
   }
   return (
-    <Stack direction="row" spacing={0.25} sx={{ alignItems: 'center', minWidth: 0 }}>
-      <NumericField
+    <NumericField
       size="small"
+      fullWidth
       label={label}
       value={Math.round(value * 10) / 10}
       min={min}
       onCommit={commit}
-      sx={{ minWidth: 0 }}
-      />
-      <ParameterLinkIndicator meta={meta} semanticId={semanticId} />
-    </Stack>
+      trailing={<ParameterLinkIndicator meta={meta} semanticId={semanticId} />}
+      labelColor={linkedParameterColor(meta, semanticId)}
+    />
   );
 }
 
@@ -106,25 +103,26 @@ export function ShapeControls({ meta }: { meta: LayerMeta }) {
     if (current) engine.updateShapeParams(meta.id, current, make(current));
   };
   return (
-    <Stack spacing={1} sx={{ pt: 0.5 }}>
-      <Stack spacing={0.25}>
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          <Typography variant="caption" color={linkedParameterColor(meta, 'interaction.snap')} sx={{ width: 72, flex: 'none' }}>スナップ</Typography>
-          <Switch
-            checked={meta.snapEnabled !== false}
-            onChange={event => engine.commitLayerProps(
-              meta.id,
-              { snapEnabled: meta.snapEnabled !== false },
-              { snapEnabled: event.target.checked },
-              'スナップを変更',
-            )}
-            slotProps={{ input: { 'aria-label': 'スナップ' } }}
-          />
-          <ParameterLinkIndicator meta={meta} semanticId="interaction.snap" />
-        </Stack>
+    <Stack spacing={1.5} sx={{ pt: 0.5 }}>
+      <Stack spacing={0.75}>
+        <LabeledControl label="スナップ" color={linkedParameterColor(meta, 'interaction.snap')}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            <Switch
+              checked={meta.snapEnabled !== false}
+              onChange={event => engine.commitLayerProps(
+                meta.id,
+                { snapEnabled: meta.snapEnabled !== false },
+                { snapEnabled: event.target.checked },
+                'スナップを変更',
+              )}
+              slotProps={{ input: { 'aria-label': 'スナップ' } }}
+            />
+            <ParameterLinkIndicator meta={meta} semanticId="interaction.snap" />
+          </Stack>
+        </LabeledControl>
         <Typography variant="caption" color="text.secondary">移動の端・中央、90°回転、多角形の頂点・縦横ライン</Typography>
       </Stack>
-      <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.75 }}>
+      <Stack spacing={1.5}>
         {fields.map(field => (
           <ShapeNumber
             key={field.label}
@@ -139,98 +137,95 @@ export function ShapeControls({ meta }: { meta: LayerMeta }) {
             ) ?? descriptors[0])}
           />
         ))}
-      </Box>
+      </Stack>
       {note && <Typography variant="caption" color="text.secondary">{note}</Typography>}
       {fillable && (
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          <Typography variant="caption" color={linkedParameterColor(meta, 'shape.paintMode')} sx={{ width: 72, flex: 'none' }}>描画方式</Typography>
-          <FormControl size="small" fullWidth>
-            <Select
-              value={shapePaintMode(shape)}
-              onChange={event => update(current => setShapePaintMode(current, event.target.value as ShapePaintMode))}
-            >
-              {PAINT_MODES.map(mode => <MenuItem key={mode.value} value={mode.value}>{mode.label}</MenuItem>)}
-            </Select>
-          </FormControl>
-          <ParameterLinkIndicator meta={meta} semanticId="shape.paintMode" />
-        </Stack>
+        <LabeledControl label="描画方式" color={linkedParameterColor(meta, 'shape.paintMode')}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            <FormControl size="small" fullWidth>
+              <Select
+                value={shapePaintMode(shape)}
+                onChange={event => update(current => setShapePaintMode(current, event.target.value as ShapePaintMode))}
+                inputProps={{ 'aria-label': '描画方式' }}
+              >
+                {PAINT_MODES.map(mode => <MenuItem key={mode.value} value={mode.value}>{mode.label}</MenuItem>)}
+              </Select>
+            </FormControl>
+            <ParameterLinkIndicator meta={meta} semanticId="shape.paintMode" />
+          </Stack>
+        </LabeledControl>
       )}
       {(shape.kind === 'rect' || shape.kind === 'polygon') && (
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          <Typography variant="caption" color={linkedParameterColor(meta, 'appearance.cornerStyle')} sx={{ width: 72, flex: 'none' }}>線の角</Typography>
-          <FormControl size="small" fullWidth>
-            <Select
-              value={shapeStrokeJoin(shape)}
-              onChange={event => update(current => ({ ...current, strokeJoin: event.target.value as ShapeStrokeJoin }))}
-              inputProps={{ 'aria-label': '線の角' }}
-            >
-              <MenuItem value="round">丸</MenuItem>
-              <MenuItem value="miter">角</MenuItem>
-            </Select>
-          </FormControl>
-          <ParameterLinkIndicator meta={meta} semanticId="appearance.cornerStyle" />
-        </Stack>
+        <LabeledControl label="線の角" color={linkedParameterColor(meta, 'appearance.cornerStyle')}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            <FormControl size="small" fullWidth>
+              <Select
+                value={shapeStrokeJoin(shape)}
+                onChange={event => update(current => ({ ...current, strokeJoin: event.target.value as ShapeStrokeJoin }))}
+                inputProps={{ 'aria-label': '線の角' }}
+              >
+                <MenuItem value="round">丸</MenuItem>
+                <MenuItem value="miter">角</MenuItem>
+              </Select>
+            </FormControl>
+            <ParameterLinkIndicator meta={meta} semanticId="appearance.cornerStyle" />
+          </Stack>
+        </LabeledControl>
       )}
       {(shape.kind === 'rect' || shape.kind === 'polygon') && (
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          <Typography variant="caption" color={linkedParameterColor(meta, 'shape.cornerRadiusMm')} sx={{ width: 72, flex: 'none' }}>角丸半径</Typography>
-          <MmInlineControl
-            valueMm={pxToMm(shape.cornerRadius ?? 0, ppi)}
-            min={0}
-            max={SIZE_MM_MAX}
-            onPreview={mm => {
-              const current = engine.getShape(meta.id);
-              if (current?.kind === 'rect' || current?.kind === 'polygon') engine.updateShapeParams(meta.id, current, {
-                ...current, cornerRadius: mmToPx(Math.max(0, roundMm(mm)), ppi),
-              }, true);
-            }}
-            onCommit={(before, after) => {
-              const current = engine.getShape(meta.id);
-              if (current?.kind === 'rect' || current?.kind === 'polygon') engine.updateShapeParams(meta.id,
-                { ...current, cornerRadius: mmToPx(Math.max(0, roundMm(before)), ppi) },
-                { ...current, cornerRadius: mmToPx(Math.max(0, roundMm(after)), ppi) });
-            }}
-          />
-          <ParameterLinkIndicator meta={meta} semanticId="shape.cornerRadiusMm" />
-        </Stack>
-      )}
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-        <Typography variant="caption" color={linkedParameterColor(meta, 'appearance.widthMm')} sx={{ width: 72, flex: 'none' }}>
-          {shapePaintMode(shape) === 'stroke' ? '線の太さ' : '線幅'}
-        </Typography>
-        <MmInlineControl
-          valueMm={strokeMm}
-          min={SIZE_MM_MIN}
+        <SliderField
+          label="角丸半径"
+          value={pxToMm(shape.cornerRadius ?? 0, ppi)}
+          min={0}
           max={SIZE_MM_MAX}
+          unit="mm"
+          scale="mm"
+          color={linkedParameterColor(meta, 'shape.cornerRadiusMm')}
+          trailing={<ParameterLinkIndicator meta={meta} semanticId="shape.cornerRadiusMm" />}
           onPreview={mm => {
-            const next = clampSizeMm(roundMm(mm));
             const current = engine.getShape(meta.id);
-            if (current) engine.updateShapeParams(meta.id, current, { ...current, strokeWidth: mmToPx(next, ppi) }, true);
+            if (current?.kind === 'rect' || current?.kind === 'polygon') engine.updateShapeParams(meta.id, current, {
+              ...current, cornerRadius: mmToPx(Math.max(0, roundMm(mm)), ppi),
+            }, true);
           }}
           onCommit={(before, after) => {
             const current = engine.getShape(meta.id);
-            if (!current) return;
-            engine.updateShapeParams(meta.id,
-              { ...current, strokeWidth: mmToPx(clampSizeMm(roundMm(before)), ppi) },
-              { ...current, strokeWidth: mmToPx(clampSizeMm(roundMm(after)), ppi) });
+            if (current?.kind === 'rect' || current?.kind === 'polygon') engine.updateShapeParams(meta.id,
+              { ...current, cornerRadius: mmToPx(Math.max(0, roundMm(before ?? 0)), ppi) },
+              { ...current, cornerRadius: mmToPx(Math.max(0, roundMm(after)), ppi) });
           }}
         />
-        <ParameterLinkIndicator meta={meta} semanticId="appearance.widthMm" />
-      </Stack>
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-        <Typography variant="caption" color={linkedParameterColor(meta, 'appearance.color')} sx={{ width: 72, flex: 'none' }}>色</Typography>
-        <Box
-          component="input"
-          type="color"
-          value={shape.color === TRANSPARENT ? '#ffffff' : shape.color}
-          onChange={event => update(current => ({ ...current, color: event.target.value }))}
-          sx={{ minWidth: 0, flex: 1, height: 34, border: 1, borderColor: 'divider', borderRadius: 1, bgcolor: 'action.hover', p: 0.5 }}
-        />
-        <Button size="small" variant={shape.color === TRANSPARENT ? 'contained' : 'outlined'} onClick={() => update(current => ({ ...current, color: TRANSPARENT }))}>
-          透明
-        </Button>
-        <ParameterLinkIndicator meta={meta} semanticId="appearance.color" />
-      </Stack>
+      )}
+      <SliderField
+        label={shapePaintMode(shape) === 'stroke' ? '線の太さ' : '線幅'}
+        value={strokeMm}
+        min={SIZE_MM_MIN}
+        max={SIZE_MM_MAX}
+        unit="mm"
+        scale="mm"
+        color={linkedParameterColor(meta, 'appearance.widthMm')}
+        trailing={<ParameterLinkIndicator meta={meta} semanticId="appearance.widthMm" />}
+        onPreview={mm => {
+          const next = clampSizeMm(roundMm(mm));
+          const current = engine.getShape(meta.id);
+          if (current) engine.updateShapeParams(meta.id, current, { ...current, strokeWidth: mmToPx(next, ppi) }, true);
+        }}
+        onCommit={(before, after) => {
+          const current = engine.getShape(meta.id);
+          if (!current) return;
+          engine.updateShapeParams(meta.id,
+            { ...current, strokeWidth: mmToPx(clampSizeMm(roundMm(before ?? strokeMm)), ppi) },
+            { ...current, strokeWidth: mmToPx(clampSizeMm(roundMm(after)), ppi) });
+        }}
+      />
+      <ColorField
+        label="色"
+        labelColor={linkedParameterColor(meta, 'appearance.color')}
+        value={shape.color}
+        allowTransparent
+        trailing={<ParameterLinkIndicator meta={meta} semanticId="appearance.color" />}
+        onChange={color => update(current => ({ ...current, color }))}
+      />
       <Button fullWidth onClick={() => engine.transferShapeLayer()} disabled={!meta.canTransferShape}>親へ転写</Button>
     </Stack>
   );

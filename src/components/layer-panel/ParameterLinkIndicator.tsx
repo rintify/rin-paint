@@ -5,25 +5,23 @@ import { IconButton, Tooltip } from '@mui/material';
 import type { LayerMeta } from '../../model';
 import { useEngine } from '../EngineContext';
 
+const iconSx = {
+  width: 28,
+  height: 28,
+  p: 0.25,
+  '&:hover': { bgcolor: 'action.hover' },
+} as const;
+
 /** A parameter-local link status. Detached compatible values can be relinked here. */
 export function ParameterLinkIndicator({ meta, semanticId }: { meta: LayerMeta; semanticId: string }) {
   const engine = useEngine();
   const link = meta.parameterLink;
   if (!link) return null;
   const linked = link.linkedParameterIds.includes(semanticId);
-  const buttonSx = {
-    width: 24,
-    height: 24,
-    minWidth: 24,
-    p: 0,
-    flex: '0 0 24px',
-    boxSizing: 'border-box',
-    border: '1px solid transparent',
-  } as const;
   if (meta.linkSource?.missing && linked) return (
     <Tooltip title="リンク元が見つかりません">
       <span>
-        <IconButton disabled disableRipple aria-label="リンク元が見つかりません" sx={{ ...buttonSx, '&.Mui-disabled': { color: 'warning.main' } }}>
+        <IconButton disabled disableRipple aria-label="リンク元が見つかりません" sx={{ ...iconSx, '&.Mui-disabled': { color: 'warning.main' } }}>
           <WarningAmberIcon sx={{ fontSize: 18 }} />
         </IconButton>
       </span>
@@ -35,7 +33,7 @@ export function ParameterLinkIndicator({ meta, semanticId }: { meta: LayerMeta; 
         disableRipple
         aria-label="このパラメータのリンクを解除"
         onClick={() => engine.unlinkLayerParameter(meta.id, semanticId)}
-        sx={{ ...buttonSx, color: 'secondary.main', '&:hover': { bgcolor: 'action.hover' } }}
+        sx={{ ...iconSx, color: 'secondary.main' }}
       >
         <LinkIcon sx={{ fontSize: 18 }} />
       </IconButton>
@@ -48,9 +46,9 @@ export function ParameterLinkIndicator({ meta, semanticId }: { meta: LayerMeta; 
         disableRipple
         aria-label="このパラメータを再リンク"
         onClick={() => void engine.relinkLayerParameter(meta.id, semanticId)}
-        sx={{ ...buttonSx, color: 'text.disabled', borderStyle: 'dashed', borderColor: 'text.disabled', '&:hover': { bgcolor: 'action.hover' } }}
+        sx={{ ...iconSx, color: 'text.secondary', opacity: 0.55 }}
       >
-        <LinkOffIcon fontSize="small" />
+        <LinkOffIcon sx={{ fontSize: 18 }} />
       </IconButton>
     </Tooltip>
   );

@@ -1,7 +1,7 @@
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import {
   Box,
-  ButtonBase,
+  Button,
   Divider,
   List,
   ListItem,
@@ -39,25 +39,22 @@ export function StorageUsage() {
 
   return (
     <Box sx={{ flex: 'none', px: 1.75, py: 1, borderTop: 1, borderColor: 'divider' }}>
-      <ButtonBase
+      <Button
+        fullWidth
+        size="small"
         onClick={(e: MouseEvent<HTMLElement>) => setAnchor(e.currentTarget)}
+        startIcon={<InfoOutlinedIcon sx={{ fontSize: 14 }} />}
         sx={{
-          width: '100%',
           justifyContent: 'flex-start',
-          gap: 0.5,
-          color: 'text.secondary',
           fontSize: 10.5,
           fontVariantNumeric: 'tabular-nums',
-          borderRadius: 1,
-          py: 0.25,
-          '&:hover': { color: 'text.primary' },
+          color: 'text.secondary',
         }}
         title="データ使用量の内訳を表示"
         aria-expanded={!!anchor}
       >
-        <InfoOutlinedIcon sx={{ fontSize: 14 }} />
         使用量（概算） {formatBytes(usage.total)}
-      </ButtonBase>
+      </Button>
       <Menu
         anchorEl={anchor}
         open={!!anchor}

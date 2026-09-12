@@ -18,11 +18,12 @@ import { useStore } from '../../state/store';
 import { BLEND_OPTIONS, type BlendMode, type LayerMeta } from '../../model';
 import { layerTypeHandler } from '../../engine/layer-types/registry';
 import { shapePanelActions } from '../../engine/shapes';
-import { CommitSlider } from './CommitSlider';
+import { SliderField } from '../SliderField';
 import { layerControlsPanel } from './layerControls';
 import { MultiParameterControls } from './MultiParameterControls';
 import { LayerLinkControls } from './LayerLinkControls';
 import { ParameterLinkIndicator } from './ParameterLinkIndicator';
+import { LabeledControl } from '../inspectorLayout';
 
 function OpacityControl({
   value,
@@ -38,20 +39,16 @@ function OpacityControl({
   indicator?: ReactNode;
 }) {
   return (
-    <Stack direction="row" spacing={1} sx={{ alignItems: 'center', ...(linked ? { color: 'secondary.main' } : {}) }}>
-      <Typography variant="caption" color={linked ? 'secondary' : 'text.secondary'} sx={{ width: 72, flex: 'none' }}>
-        不透明度
-      </Typography>
-      <CommitSlider value={value} min={0} max={100} onPreview={onPreview} onCommit={onCommit} />
-      <Typography
-        variant="body2"
-        color="text.secondary"
-        sx={{ width: 30, textAlign: 'right', fontVariantNumeric: 'tabular-nums', flex: 'none' }}
-      >
-        {value ?? '—'}
-      </Typography>
-      {indicator}
-    </Stack>
+    <SliderField
+      label="不透明度"
+      value={value}
+      min={0}
+      max={100}
+      color={linked ? 'secondary' : 'text.secondary'}
+      trailing={indicator}
+      onPreview={onPreview}
+      onCommit={onCommit}
+    />
   );
 }
 
@@ -134,7 +131,7 @@ function LayerControls({
   const TypeControls = layerControlsPanel(meta.type);
   const pct = Math.round(meta.opacity * 100);
   return (
-    <Stack spacing={1}>
+    <Stack spacing={1.5}>
       <OpacityControl
         value={pct}
         linked={meta.parameterLink?.linkedParameterIds.includes('layer.opacity')}
@@ -149,28 +146,28 @@ function LayerControls({
           )}
       />
       {handler.supportsBlend && (
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          <Typography variant="caption" color={meta.parameterLink?.linkedParameterIds.includes('layer.blend') ? 'secondary' : 'text.secondary'} sx={{ width: 72, flex: 'none' }}>
-            合成
-          </Typography>
-          <FormControl size="small" fullWidth color={meta.parameterLink?.linkedParameterIds.includes('layer.blend') ? 'secondary' : undefined}>
-            <Select
-              value={meta.blend}
-              onChange={(e) =>
-                engine.commitLayerProps(
-                  meta.id,
-                  { blend: meta.blend },
-                  { blend: e.target.value as BlendMode },
-                  '合成モード',
-                )}
-            >
-              {BLEND_OPTIONS.map((o) => (
-                <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <ParameterLinkIndicator meta={meta} semanticId="layer.blend" />
-        </Stack>
+        <LabeledControl label="合成" color={meta.parameterLink?.linkedParameterIds.includes('layer.blend') ? 'secondary' : 'text.secondary'}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+            <FormControl size="small" fullWidth color={meta.parameterLink?.linkedParameterIds.includes('layer.blend') ? 'secondary' : undefined}>
+              <Select
+                value={meta.blend}
+                onChange={(e) =>
+                  engine.commitLayerProps(
+                    meta.id,
+                    { blend: meta.blend },
+                    { blend: e.target.value as BlendMode },
+                    '合成モード',
+                  )}
+                inputProps={{ 'aria-label': '合成' }}
+              >
+                {BLEND_OPTIONS.map((o) => (
+                  <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <ParameterLinkIndicator meta={meta} semanticId="layer.blend" />
+          </Stack>
+        </LabeledControl>
       )}
       {TypeControls && <TypeControls meta={meta} />}
       <LayerSettingsOverflow meta={meta} onRequestLinkDialog={onRequestLinkDialog} />
@@ -183,7 +180,7 @@ function MultiLayerControls() {
   const ids = useStore(s => s.selectedLayerIds);
   const selected = layers.filter(layer => ids.includes(layer.id));
   return (
-    <Stack spacing={1.25}>
+    <Stack spacing={1.5}>
       <Typography variant="caption" color="text.secondary">
         {selected.length}レイヤーの共通設定。異なる値は「—」で表示します。
       </Typography>

@@ -49,7 +49,7 @@ export function MaskControls({ meta, mode = 'adjust' }: { meta: LayerMeta; mode?
   return (
     <>
       <Stack
-        spacing={1}
+        spacing={1.5}
         className={`mask-controls${dropActive ? ' drop-active' : ''}`}
         onDragOver={event => {
           if (!canDrop(droppedLayerId(event))) return;
