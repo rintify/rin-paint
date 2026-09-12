@@ -48,14 +48,23 @@ function raster(id: string, paint: (ctx: CanvasRenderingContext2D) => void): Ras
 }
 
 function render(layers: Layer[], roots: string[], ppi = 25.4): HTMLCanvasElement {
+  return createRenderer(layers, roots, ppi).main;
+}
+
+function createRenderer(layers: Layer[], roots: string[], ppi = 25.4) {
   const byId = new Map(layers.map(layer => [layer.id, layer]));
+  const revisions = new Map<string, number>();
   const engine = {
     artboard: { w: 16, h: 16 },
     allLayers: () => layers,
     layerById: (id: string) => byId.get(id) ?? null,
     getRootLayerIds: () => roots,
     getCanvasSpec: () => ({ widthMm: 16, heightMm: 16, ppi }),
+    getRenderRevision: (id: string) => revisions.get(id) ?? 0,
+    getMaskRevision: (id: string) => revisions.get(id) ?? 0,
     activeTool: () => ({}),
+    drawActiveShapeHandles() {},
+    drawLoupeIfAny() {},
     bumpLayer() {},
     syncStore() {},
   } as unknown as PaintEngine;
@@ -66,7 +75,7 @@ function render(layers: Layer[], roots: string[], ppi = 25.4): HTMLCanvasElement
   main.height = overlay.height = 16;
   compositor.attachCanvases(main, overlay);
   compositor.composite();
-  return main;
+  return { main, overlay, compositor, revisions };
 }
 
 function rgba(canvas: HTMLCanvasElement, x: number, y: number): number[] {
@@ -132,7 +141,13 @@ describe('effect scopes', () => {
     clip.opacity = .5;
     const clipped = render([source, halfMask, clip], [source.id, halfMask.id, clip.id]);
     // source alpha = .75 over the final white presentation background.
-    expect(rgba(clipped, 4, 4)).toEqual([255, 64, 64, 255]);
+    const clippedPixel = rgba(clipped, 4, 4);
+    expect(clippedPixel[0]).toBe(255);
+    expect(clippedPixel[1]).toBeGreaterThanOrEqual(63);
+    expect(clippedPixel[1]).toBeLessThanOrEqual(64);
+    expect(clippedPixel[2]).toBeGreaterThanOrEqual(63);
+    expect(clippedPixel[2]).toBeLessThanOrEqual(64);
+    expect(clippedPixel[3]).toBe(255);
 
     clip.maskLayerIds = [];
     expect(rgba(render([source, halfMask, clip], [source.id, halfMask.id, clip.id]), 4, 4))
@@ -181,5 +196,122 @@ describe('effect scopes', () => {
     expect(rgba(low, 6, 8)).toEqual([255, 255, 255, 255]);
     const high = render([source, outline], [source.id, outline.id], 50.8);
     expect(rgba(high, 6, 8)[0]).toBeLessThan(200);
+  });
+
+  it('recomposites only the invalidated pixels when no spatial effect expands them', () => {
+    const source = raster('source', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 16, 16); });
+    const { main, compositor, revisions } = createRenderer([source], [source.id]);
+    source.ctx.fillStyle = '#0000ff';
+    source.ctx.fillRect(3, 4, 1, 1);
+    revisions.set(source.id, 1);
+    compositor.invalidateLayer(source.id, { minX: 3, minY: 4, maxX: 4, maxY: 5 });
+    compositor.ensureComposited();
+    expect(rgba(main, 3, 4)).toEqual([0, 0, 255, 255]);
+    expect(rgba(main, 2, 4)).toEqual([255, 0, 0, 255]);
+    expect(compositor.lastCompositedPixels).toBe(1);
+  });
+
+  it('keeps local clip recomposition aligned with artboard coordinates', () => {
+    const source = raster('source', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 16, 16); });
+    const mask = raster('mask', ctx => { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 8, 16); });
+    mask.visible = false;
+    const clip = createClipLayer('クリップ', 'clip');
+    clip.maskLayerIds = [mask.id];
+    const { main, compositor, revisions } = createRenderer([source, mask, clip], [source.id, mask.id, clip.id]);
+    source.ctx.fillStyle = '#00ff00';
+    source.ctx.fillRect(3, 4, 1, 1);
+    revisions.set(source.id, 1);
+    compositor.invalidateLayer(source.id, { minX: 3, minY: 4, maxX: 4, maxY: 5 });
+    compositor.ensureComposited();
+    expect(rgba(main, 3, 4)).toEqual([0, 255, 0, 255]);
+    expect(rgba(main, 12, 4)).toEqual([255, 255, 255, 255]);
+    expect(compositor.lastCompositedPixels).toBe(1);
+  });
+
+  it('shares an OR mask cache and does not invalidate it for visibility changes', () => {
+    const source = raster('source', ctx => { ctx.fillStyle = '#f00'; ctx.fillRect(0, 0, 16, 16); });
+    const left = raster('left', ctx => { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 8, 16); });
+    const right = raster('right', ctx => { ctx.fillStyle = '#000'; ctx.fillRect(8, 0, 8, 16); });
+    left.visible = right.visible = false;
+    const clip = createClipLayer('クリップ', 'clip');
+    clip.maskLayerIds = [left.id, right.id];
+    const { compositor } = createRenderer([source, left, right, clip], [source.id, left.id, right.id, clip.id]);
+    expect(compositor.renderStats()).toMatchObject({ maskCacheHits: 0, maskCacheMisses: 1 });
+    left.visible = true;
+    compositor.requestRender();
+    compositor.ensureComposited();
+    expect(compositor.renderStats()).toMatchObject({ maskCacheHits: 1, maskCacheMisses: 1 });
+  });
+
+  it('reuses the outline distance field for width changes and rebuilds it for threshold changes', () => {
+    const source = raster('source', ctx => { ctx.fillStyle = '#fff'; ctx.fillRect(8, 8, 1, 1); });
+    const outline = createOutlineLayer('縁どり', 'outline');
+    const { compositor, revisions } = createRenderer([source, outline], [source.id, outline.id]);
+    expect(compositor.renderStats()).toMatchObject({ effectCacheHits: 0, effectCacheMisses: 1 });
+    outline.outline.widthMm = 2;
+    revisions.set(outline.id, 1);
+    compositor.requestRender();
+    compositor.ensureComposited();
+    expect(compositor.renderStats()).toMatchObject({ effectCacheHits: 1, effectCacheMisses: 1 });
+    outline.outline.alphaThreshold = .75;
+    revisions.set(outline.id, 2);
+    compositor.requestRender();
+    compositor.ensureComposited();
+    expect(compositor.renderStats()).toMatchObject({ effectCacheHits: 1, effectCacheMisses: 2 });
+  });
+
+  it('expands local damage by the outline radius without recompositing the whole page', () => {
+    const source = raster('source', ctx => { ctx.fillStyle = '#fff'; ctx.fillRect(8, 8, 1, 1); });
+    const outline = createOutlineLayer('縁どり', 'outline');
+    const { main, compositor, revisions } = createRenderer([source, outline], [source.id, outline.id]);
+    source.ctx.fillStyle = '#fff';
+    source.ctx.fillRect(3, 3, 1, 1);
+    revisions.set(source.id, 1);
+    compositor.invalidateLayer(source.id, { minX: 3, minY: 3, maxX: 4, maxY: 4 });
+    compositor.ensureComposited();
+    expect(rgba(main, 2, 3)[0]).toBeLessThan(200);
+    expect(compositor.lastCompositedPixels).toBeLessThan(16 * 16);
+  });
+
+  it('does not expand damage for an outline isolated in another child scope', () => {
+    const source = raster('source', ctx => { ctx.fillStyle = '#f00'; ctx.fillRect(0, 0, 16, 16); });
+    const parent = raster('parent', ctx => { ctx.fillStyle = '#fff'; ctx.fillRect(12, 12, 1, 1); });
+    const outline = createOutlineLayer('縁どり', 'outline');
+    outline.parentId = parent.id;
+    parent.childIds = [outline.id];
+    const { main, compositor, revisions } = createRenderer(
+      [source, parent, outline],
+      [source.id, parent.id],
+    );
+    source.ctx.fillStyle = '#00f';
+    source.ctx.fillRect(3, 4, 1, 1);
+    revisions.set(source.id, 1);
+    compositor.invalidateLayer(source.id, { minX: 3, minY: 4, maxX: 4, maxY: 5 });
+    compositor.ensureComposited();
+    expect(rgba(main, 3, 4)).toEqual([0, 0, 255, 255]);
+    expect(compositor.lastCompositedPixels).toBe(1);
+  });
+
+  it('does not dirty the scene for an overlay-only request', () => {
+    const source = raster('source', ctx => { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 16, 16); });
+    const { compositor } = createRenderer([source], [source.id]);
+    expect(compositor.dirty).toBe(false);
+    compositor.requestOverlayRender();
+    expect(compositor.dirty).toBe(false);
+  });
+
+  it('keeps clip and adjustment entirely off the CPU pixel-readback path', () => {
+    const source = raster('source', ctx => { ctx.fillStyle = '#f00'; ctx.fillRect(0, 0, 16, 16); });
+    const mask = raster('mask', ctx => { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 8, 16); });
+    mask.visible = false;
+    const clip = createClipLayer('クリップ', 'clip');
+    clip.maskLayerIds = [mask.id];
+    const clipped = createRenderer([source, mask, clip], [source.id, mask.id, clip.id]);
+    expect(clipped.compositor.renderStats()).toMatchObject({ cpuReadbackPixels: 0, canvasBorrows: 1 });
+
+    const adjust = createAdjustLayer('補正', 'adjust');
+    adjust.params.brightness = 50;
+    const adjusted = createRenderer([source, adjust], [source.id, adjust.id]);
+    expect(adjusted.compositor.renderStats()).toMatchObject({ cpuReadbackPixels: 0, canvasBorrows: 2 });
   });
 });

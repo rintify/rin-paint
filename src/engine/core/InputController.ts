@@ -146,6 +146,7 @@ export class InputController {
           pointerId,
           color: eng.getPixel(point.x, point.y),
         };
+        eng.requestOverlayRender();
       }, EYEDROPPER_HOLD_MS),
     };
     e.preventDefault();
@@ -227,6 +228,7 @@ export class InputController {
       this.loupe.x = Math.max(0, Math.min(eng.artboard.w - 1, p.x));
       this.loupe.y = Math.max(0, Math.min(eng.artboard.h - 1, p.y));
       this.loupe.color = eng.getPixel(this.loupe.x, this.loupe.y);
+      eng.requestOverlayRender();
       return;
     }
     if (this.activePointer !== e.pointerId) return;
@@ -266,6 +268,7 @@ export class InputController {
     if (this.loupe && e.pointerId === this.loupe.pointerId) {
       const color = this.loupe.color;
       this.loupe = null;
+      eng.requestOverlayRender();
       const st = useStore.getState();
       st.setPenColor(color);
       st.pushColor(color);
@@ -305,6 +308,7 @@ export class InputController {
     }
     if (this.loupe && e.pointerId === this.loupe.pointerId) {
       this.loupe = null;
+      eng.requestOverlayRender();
       return;
     }
     if (this.activePointer !== e.pointerId) return;

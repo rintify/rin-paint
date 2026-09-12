@@ -78,11 +78,12 @@ export class PenTool implements Tool {
     this.lastX = p.x;
     this.lastY = p.y;
     this.lastR = r;
-    this.eng.requestRender();
+    this.eng.invalidateLayer(layer.id, this.rect);
   }
 
   onMove(p: StrokePoint): void {
     if (!this.layer) return;
+    const damage = emptyRect();
     const segmentDistance = Math.hypot(p.x - this.lastX, p.y - this.lastY);
     this.totalDistance += segmentDistance;
     this.points.push({ ...p, distance: this.totalDistance });
@@ -100,10 +101,12 @@ export class PenTool implements Tool {
     );
     expandRect(this.rect, this.lastX, this.lastY, this.lastR + 2);
     expandRect(this.rect, p.x, p.y, r + 2);
+    expandRect(damage, this.lastX, this.lastY, this.lastR + 2);
+    expandRect(damage, p.x, p.y, r + 2);
     this.lastX = p.x;
     this.lastY = p.y;
     this.lastR = r;
-    this.eng.requestRender();
+    this.eng.invalidateLayer(this.layer.id, damage);
   }
 
   onUp(p: StrokePoint, event: PointerEvent): void {
@@ -124,15 +127,14 @@ export class PenTool implements Tool {
 
   cancel(): void {
     if (!this.layer) return;
-    this.eng.restoreBefore(this.layer);
+    this.eng.restoreBefore(this.layer, this.rect);
     this.layer = null;
     this.points = [];
-    this.eng.requestRender();
   }
 
   private repaintWithTaperOut(): void {
     const layer = this.layer!;
-    this.eng.restoreBefore(layer);
+    this.eng.restoreBefore(layer, this.rect);
     this.rect = emptyRect();
     this.press = this.points[0]?.pressure ?? 0.5;
     let prev: RecordedPoint | null = null;
@@ -152,6 +154,5 @@ export class PenTool implements Tool {
       prev = point;
       prevR = r;
     }
-    this.eng.requestRender();
   }
 }

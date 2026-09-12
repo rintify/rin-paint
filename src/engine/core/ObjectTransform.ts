@@ -1,6 +1,6 @@
 import { useStore } from '../../state/store';
 import { layerHandler, objectTransformProps } from '../layer-types/registry';
-import type { DirtyRect } from '../brush';
+import { unionRect, type DirtyRect } from '../brush';
 import type { PaintEngine, SelectedObjectTransform } from '../PaintEngine';
 
 /** Multi-object selection transforms (lasso free-transform of shapes/text). */
@@ -47,10 +47,19 @@ export class ObjectTransform {
     const scale = Math.max(.01, Math.hypot(dstEdge.x, dstEdge.y) / Math.max(.01, Math.hypot(srcEdge.x, srcEdge.y)));
     const angle = Math.atan2(dstEdge.y, dstEdge.x) - Math.atan2(srcEdge.y, srcEdge.x);
     const transform = (x: number, y: number) => { const dx = (x - src.x) * scale, dy = (y - src.y) * scale; return { x: dst.x + dx * Math.cos(angle) - dy * Math.sin(angle), y: dst.y + dx * Math.sin(angle) + dy * Math.cos(angle) }; };
+    const env = eng.compositor.measureEnv();
+    const dirtyFor = (bounds: { x: number; y: number; w: number; h: number } | null): DirtyRect | null => bounds ? ({
+      minX: bounds.x - 2,
+      minY: bounds.y - 2,
+      maxX: bounds.x + bounds.w + 2,
+      maxY: bounds.y + bounds.h + 2,
+    }) : null;
     for (const entry of entries) {
       const layer = eng.layerService.byId(entry.id);
       if (layer) {
-        layerHandler(layer).objectTransform?.apply(layer, {
+        const objectTransform = layerHandler(layer).objectTransform;
+        const beforeBounds = dirtyFor(objectTransform?.bounds(layer, env) ?? null);
+        objectTransform?.apply(layer, {
           before: entry.before,
           transform,
           scale,
@@ -58,10 +67,12 @@ export class ObjectTransform {
           width: entry.width,
           height: entry.height,
         });
+        const afterBounds = dirtyFor(objectTransform?.bounds(layer, env) ?? null);
+        const dirty = beforeBounds && afterBounds ? unionRect(beforeBounds, afterBounds) : beforeBounds ?? afterBounds;
+        eng.layerService.bumpLayer(entry.id, dirty ?? undefined);
       }
-      eng.layerService.bumpLayer(entry.id);
     }
-    eng.syncTextRendersPublic(); eng.requestRender(); eng.syncStore();
+    eng.syncTextRendersPublic(); eng.syncStore();
   }
 
   commitObjectGroup(entries: SelectedObjectTransform[]): void {

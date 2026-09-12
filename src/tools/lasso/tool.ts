@@ -138,12 +138,15 @@ export class LassoTool implements Tool {
     cancel: () => this.cancelSelection(),
   };
 
+  overlayAnimated(): boolean { return this.phase === 'float'; }
+
   setFreeTransform(on: boolean): void {
     if (on && this.objectTransforms.length) return;
     if (this.free === on) return;
     this.free = on;
     this.drag = null;
     this.emitSelectionState();
+    this.eng.requestOverlayRender();
     this.eng.syncStore();
   }
 
@@ -195,9 +198,11 @@ export class LassoTool implements Tool {
       const last = this.pts[this.pts.length - 1];
       if (Math.hypot(p.x - last.x, p.y - last.y) > 2) {
         this.pts.push({ x: p.x, y: p.y });
+        this.eng.requestOverlayRender();
       }
     } else if (this.phase === 'float' && this.drag && this.float) {
       const f = this.float;
+      const beforeRect = this.transformedRect(4);
       const d = this.drag;
       const c = centroid(d.startCorners);
       if (d.mode === 'move') {
@@ -224,8 +229,10 @@ export class LassoTool implements Tool {
           y: c.y + (q.x - c.x) * sin + (q.y - c.y) * cos,
         })) as Float['corners'];
       }
+      const damage = unionRect(beforeRect, this.transformedRect(4));
       if (this.objectTransforms.length) this.eng.previewObjectGroup(this.objectTransforms, this.sourceCorners, f.corners);
-      this.eng.requestRender();
+      for (const item of this.rasterFloats) this.eng.bumpLayer(item.layer.id, damage);
+      this.eng.requestOverlayRender();
     }
   }
 
@@ -251,6 +258,7 @@ export class LassoTool implements Tool {
       this.layer = null;
     }
     this.drag = null;
+    this.eng.requestOverlayRender();
   }
 
   private lassoPath(): Path2D {
@@ -315,9 +323,9 @@ export class LassoTool implements Tool {
     this.sourceCorners = this.float.corners.map(point => ({ ...point }));
     this.phase = 'float';
     this.pts = [];
-    for (const item of this.rasterFloats) this.eng.bumpLayer(item.layer.id);
+    for (const item of this.rasterFloats) this.eng.bumpLayer(item.layer.id, this.origRect);
     this.emitSelectionState();
-    this.eng.requestRender();
+    this.eng.requestOverlayRender();
   }
 
   /** 現在の変形位置でレイヤーへスタンプ (浮動状態は継続) */
@@ -326,8 +334,7 @@ export class LassoTool implements Tool {
     this.stamp();
     // 複製した場所も確定時の履歴パッチ対象に含める
     this.origRect = unionRect(this.origRect!, this.transformedRect(4));
-    for (const item of this.rasterFloats) this.eng.bumpLayer(item.layer.id);
-    this.eng.requestRender();
+    for (const item of this.rasterFloats) this.eng.bumpLayer(item.layer.id, this.transformedRect(4));
   }
 
   commit(): void {

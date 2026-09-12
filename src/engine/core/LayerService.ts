@@ -39,6 +39,7 @@ import { isEmptyText } from '../text/model';
 import type { PaintEngine } from '../PaintEngine';
 import { cloneShape, polygonFromWorldPoints, shapeCorners } from '../shapes';
 import { layerParameterDescriptors, type LayerParameterValue } from '../layerParameters';
+import type { DirtyRect } from '../brush';
 
 /** Owns layer tree state and layer CRUD / tree mutation helpers. */
 export class LayerService {
@@ -46,6 +47,8 @@ export class LayerService {
   rootLayerIds: string[] = [];
   activeLayerId = '';
   versions = new Map<string, number>();
+  /** 表示状態を含めず、マスクとしての見た目が変わったときだけ増える。 */
+  maskVersions = new Map<string, number>();
   /** 種別ごとの自動命名カウンタ (`レイヤー 3` の連番) */
   nameCounters = new Map<LayerType, number>();
 
@@ -112,9 +115,16 @@ export class LayerService {
     return result;
   }
 
-  bumpLayer(id: string): void {
+  bumpLayer(id: string, rect?: DirtyRect): void {
     this.versions.set(id, (this.versions.get(id) ?? 0) + 1);
-    this.engine.requestRender();
+    this.bumpMaskVersion(id);
+    if (rect) this.engine.compositor.invalidateLayer(id, rect);
+    else this.engine.requestRender();
+  }
+
+  bumpMaskVersion(id: string): void {
+    this.maskVersions.set(id, (this.maskVersions.get(id) ?? 0) + 1);
+    this.engine.compositor.invalidateMaskLayer(id);
   }
 
   snapshotLayer(l: Layer, withContent: boolean, keepCanvas = false): LayerSnapshot {
@@ -162,11 +172,14 @@ export class LayerService {
   }
 
   assignProps(l: Layer, p: LayerProps): void {
+    const affectsMask = p.opacity !== undefined || p.shape !== undefined || p.text !== undefined;
     if (p.name !== undefined) l.name = p.name;
     if (p.opacity !== undefined) l.opacity = p.opacity;
     if (p.blend !== undefined) l.blend = p.blend;
     if (p.visible !== undefined) l.visible = p.visible;
     layerHandler(l).applyProps(l, p);
+    this.versions.set(l.id, (this.versions.get(l.id) ?? 0) + 1);
+    if (affectsMask) this.bumpMaskVersion(l.id);
   }
 
   /** 削除されるレイヤーを参照しているマスク設定を外す */
@@ -567,7 +580,7 @@ export class LayerService {
     if (id === this.activeLayerId) return;
     this.finishFloating();
     this.activeLayerId = id;
-    this.engine.requestRender();
+    this.engine.requestOverlayRender();
     this.engine.syncStore();
     this.engine.shapeEdit.refreshVertexState();
     this.engine.scheduleSave();
@@ -609,7 +622,7 @@ export class LayerService {
     polygon.cx = center.x; polygon.cy = center.y;
     polygon.rotation = 0;
     polygon.points = world.map(point => ({ x: point.x - center.x, y: point.y - center.y }));
-    layer.shape = polygon;
+    this.assignProps(layer, { shape: polygon });
     if (layer.name === '四角形') layer.name = '多角形';
     this.engine.history.push({
       kind: 'layerProps', layerId: layer.id,
@@ -717,7 +730,7 @@ export class LayerService {
     const ops = Object.entries(beforeById).flatMap(([layerId, before]) => {
       const layer = this.byId(layerId);
       if (!layer || before === opacity) return [];
-      layer.opacity = opacity;
+      this.assignProps(layer, { opacity });
       return [{ kind: 'layerProps' as const, layerId, before: { opacity: before }, after: { opacity } }];
     });
     if (!ops.length) return;
@@ -740,5 +753,7 @@ export class LayerService {
 
   clearVersions(): void {
     this.versions.clear();
+    this.maskVersions.clear();
+    this.engine.compositor.clearCaches();
   }
 }

@@ -18,7 +18,7 @@ export class PolygonSplitTool implements Tool {
   onMove(point: StrokePoint): void {
     if (this.start) {
       this.current = point;
-      this.eng.requestRender();
+      this.eng.requestOverlayRender();
     }
   }
 
@@ -29,13 +29,13 @@ export class PolygonSplitTool implements Tool {
     if (start && Math.hypot(point.x - start.x, point.y - start.y) > 0.01) {
       void this.eng.polygonSplit.split(start, point);
     }
-    this.eng.requestRender();
+    this.eng.requestOverlayRender();
   }
 
   cancel(): void {
     this.start = null;
     this.current = null;
-    this.eng.requestRender();
+    this.eng.requestOverlayRender();
   }
 
   drawOverlay(ctx: CanvasRenderingContext2D): void {

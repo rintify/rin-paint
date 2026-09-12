@@ -16,6 +16,8 @@ export interface Tool {
   onUp(p: StrokePoint, e: PointerEvent): void;
   cancel?(): void;
   drawOverlay?(ctx: CanvasRenderingContext2D): void;
+  /** trueの間だけ操作ガイドのアニメーションフレームを継続する。 */
+  overlayAnimated?(): boolean;
   /** 全 raster レイヤー合成時に呼ばれる。関係ある layerId のみ描く */
   drawAboveLayer?(ctx: CanvasRenderingContext2D, layerId: string): void;
   readonly session?: ToolSession;

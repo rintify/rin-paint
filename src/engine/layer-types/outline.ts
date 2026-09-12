@@ -39,8 +39,11 @@ export const outlineLayerType: LayerTypeHandler<OutlineLayer> = {
   scale() {}, async scaleStored() {},
   draw() {},
   effect: {
+    paddingPx(layer, env) {
+      return Math.ceil(layer.outline.widthMm * env.ppi / 25.4 + 1);
+    },
     apply(scope, layer, env) {
-      applyOutline(scope, layer.outline.color, layer.outline.widthMm, layer.outline.alphaThreshold, layer.opacity, env);
+      applyOutline(scope, layer.id, layer.outline.color, layer.outline.widthMm, layer.outline.alphaThreshold, layer.opacity, env);
     },
   },
   bakeOnto() {}, contentCanvas: () => null,

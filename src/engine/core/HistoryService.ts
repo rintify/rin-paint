@@ -180,7 +180,7 @@ export class HistoryService {
       const rasterOp: Extract<Op, { kind: 'raster' }> = { kind: 'raster', layerId: entry.layer.id, tiles: [] };
       operations.push(rasterOp);
       ready.push(extraction.ready.then((tiles) => { rasterOp.tiles = tiles; }));
-      eng.layerService.bumpLayer(entry.layer.id);
+      eng.layerService.bumpLayer(entry.layer.id, entry.rect);
     }
     for (const entry of objects) {
       const layer = eng.layerService.byId(entry.id);
@@ -191,7 +191,7 @@ export class HistoryService {
     const node = this.history.push(operations.length === 1 ? operations[0] : { kind: 'batch', ops: operations }, label);
     node.ready = Promise.all(ready).then(() => undefined);
     void node.ready.then(() => eng.scheduleStorageRefresh());
-    eng.committed();
+    eng.committed(false);
   }
 
   commitRasterEdit(layer: RasterLayer, rect: DirtyRect, label: string): void {
@@ -203,8 +203,8 @@ export class HistoryService {
     const node = this.history.push(op, label);
     node.ready = extraction.ready.then((tiles) => { op.tiles = tiles; });
     void node.ready.then(() => eng.scheduleStorageRefresh());
-    eng.layerService.bumpLayer(layer.id);
-    eng.committed();
+    eng.layerService.bumpLayer(layer.id, rect);
+    eng.committed(false);
   }
 
   pruneHistory(limit = HISTORY_PRUNE_DEFAULT): number {

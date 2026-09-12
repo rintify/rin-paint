@@ -75,6 +75,7 @@ export const rasterLayerType: LayerTypeHandler<RasterLayer> = {
     if (erasers.length) {
       borrowed = env.borrowCanvas();
       borrowed.ctx.save();
+      borrowed.ctx.setTransform(1, 0, 0, 1, -env.originX, -env.originY);
       borrowed.ctx.drawImage(layer.canvas, 0, 0);
       for (const eraser of erasers) env.handlerFor(eraser).eraser!.draw(borrowed.ctx, eraser, env);
       borrowed.ctx.restore();
@@ -82,7 +83,7 @@ export const rasterLayerType: LayerTypeHandler<RasterLayer> = {
     }
     ctx.globalAlpha = layer.opacity;
     ctx.globalCompositeOperation = layer.blend;
-    ctx.drawImage(source, 0, 0);
+    ctx.drawImage(source, borrowed ? env.originX : 0, borrowed ? env.originY : 0);
     env.drawAboveLayer?.(ctx, layer.id);
     borrowed?.release();
   },

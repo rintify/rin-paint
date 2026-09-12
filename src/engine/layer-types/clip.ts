@@ -17,11 +17,12 @@ export const clipLayerType: LayerTypeHandler<ClipLayer> = {
   scale() {}, async scaleStored() {},
   draw() {},
   effect: {
+    dependencyLayerIds: layer => layer.maskLayerIds,
     apply(scope, layer, env) {
       if (!layer.maskLayerIds.length || layer.opacity <= 0) return;
       const mask = env.maskCanvas(layer.maskLayerIds);
       if (mask) {
-        applyClip(scope, mask.canvas, layer.opacity);
+        applyClip(scope, mask, layer.opacity, env);
         mask.release();
       }
     },

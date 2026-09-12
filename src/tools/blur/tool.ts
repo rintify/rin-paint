@@ -1,5 +1,5 @@
 import type { StrokePoint } from '../../model';
-import { emptyRect, expandRect, rectValid, type DirtyRect } from '../../engine/brush';
+import { emptyRect, expandRect, rectValid, unionRect, type DirtyRect } from '../../engine/brush';
 import type { RasterLayer } from '../../engine/layers';
 import type { PaintEngine } from '../../engine/PaintEngine';
 import { DEFAULT_SIZE_MM, mmToPx } from '../../engine/units';
@@ -37,10 +37,10 @@ export class BlurTool implements Tool {
     this.blurPx = Math.max(1, size * 0.14);
     this.rect = emptyRect();
     this.acc = 0;
-    this.dab(p.x, p.y);
+    const damage = this.dab(p.x, p.y);
     this.lastX = p.x;
     this.lastY = p.y;
-    this.eng.requestRender();
+    this.eng.invalidateLayer(layer.id, damage);
   }
 
   onMove(p: StrokePoint): void {
@@ -53,15 +53,17 @@ export class BlurTool implements Tool {
     const ux = dx / dist;
     const uy = dy / dist;
     let travelled = 0;
+    let damage: DirtyRect | null = null;
     while (this.acc + (dist - travelled) >= spacing) {
       travelled += spacing - this.acc;
       this.acc = 0;
-      this.dab(this.lastX + ux * travelled, this.lastY + uy * travelled);
+      const dab = this.dab(this.lastX + ux * travelled, this.lastY + uy * travelled);
+      damage = damage ? unionRect(damage, dab) : dab;
     }
     this.acc += dist - travelled;
     this.lastX = p.x;
     this.lastY = p.y;
-    this.eng.requestRender();
+    if (damage) this.eng.invalidateLayer(this.layer.id, damage);
   }
 
   onUp(): void {
@@ -74,9 +76,8 @@ export class BlurTool implements Tool {
 
   cancel(): void {
     if (!this.layer) return;
-    this.eng.restoreBefore(this.layer);
+    this.eng.restoreBefore(this.layer, this.rect);
     this.layer = null;
-    this.eng.requestRender();
   }
 
   private ensureSize(s: number): void {
@@ -88,7 +89,7 @@ export class BlurTool implements Tool {
     }
   }
 
-  private dab(cx: number, cy: number): void {
+  private dab(cx: number, cy: number): DirtyRect {
     const layer = this.layer!;
     const r = this.radius;
     const pad = Math.ceil(this.blurPx * 2) + 2;
@@ -141,5 +142,6 @@ export class BlurTool implements Tool {
     layer.ctx.restore();
 
     expandRect(this.rect, cx, cy, r + pad);
+    return { minX: ox, minY: oy, maxX: ox + s, maxY: oy + s };
   }
 }

@@ -19,6 +19,7 @@ import {
   type SnapLines,
 } from '../shapes/snap';
 import type { PaintEngine } from '../PaintEngine';
+import { unionRect, type DirtyRect } from '../brush';
 
 interface VertexWorld {
   prev: ShapePoint;
@@ -44,6 +45,17 @@ interface ShapeEdit {
 const ROTATE_HANDLE_GAP = 28;
 const HANDLE_RADIUS = 11;
 const SNAP_SCREEN_PX = 8;
+
+function shapeDirty(shape: ShapeParams): DirtyRect {
+  const bounds = shapeBounds(shape);
+  const pad = Math.max(3, shape.strokeWidth / 2 + 2);
+  return {
+    minX: bounds.x - pad,
+    minY: bounds.y - pad,
+    maxX: bounds.x + bounds.w + pad,
+    maxY: bounds.y + bounds.h + pad,
+  };
+}
 
 export class ShapeEditController {
   private shapeEdit: ShapeEdit | null = null;
@@ -146,7 +158,11 @@ export class ShapeEditController {
       vertexWorld,
     };
     this.syncVertexState();
-    if (hit?.shape) { this.engine.requestRender(); this.engine.syncStore(); }
+    if (hit?.shape) {
+      this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(before), shapeDirty(layer.shape)));
+      this.engine.requestOverlayRender();
+      this.engine.syncStore();
+    }
     return true;
   }
 
@@ -211,9 +227,12 @@ export class ShapeEditController {
         }
       }
     }
+    const previous = layer.shape;
     layer.shape = next;
     this.syncVertexState();
-    this.engine.requestRender(); this.engine.syncStore();
+    this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(previous), shapeDirty(next)));
+    this.engine.requestOverlayRender();
+    this.engine.syncStore();
     return true;
   }
 
@@ -225,13 +244,15 @@ export class ShapeEditController {
     if (layer && edit.invalid) {
       layer.shape = cloneShape(edit.lastValid ?? edit.before);
       this.engine.notify(shapeKindHandler(layer.shape).edit.invalidMessage ?? '直前の有効な状態へ戻しました');
-      this.engine.requestRender(); this.engine.syncStore();
+      this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(edit.before), shapeDirty(layer.shape)));
+      this.engine.requestOverlayRender();
+      this.engine.syncStore();
     }
     if (layer && JSON.stringify(layer.shape) !== JSON.stringify(edit.before)) {
       this.engine.history.push({ kind: 'layerProps', layerId: layer.id, before: { shape: cloneShape(edit.before) }, after: { shape: cloneShape(layer.shape) } }, edit.vertexIndex !== undefined ? '多角形の頂点を編集' : '図形を編集');
-      this.engine.committed();
+      this.engine.committed(false);
     } else {
-      this.engine.requestRender();
+      this.engine.requestOverlayRender();
     }
     this.syncVertexState();
     return true;
@@ -245,7 +266,7 @@ export class ShapeEditController {
     const result = shapeKindHandler(before).edit.deleteVertex(before, selected.index);
     if (!result) return;
     if (!result.shape) { if (result.error) this.engine.notify(result.error); return; }
-    layer.shape = result.shape;
+    this.engine.layerService.assignProps(layer, { shape: result.shape });
     this.selectedVertex = null;
     this.syncVertexState();
     this.engine.history.push({ kind: 'layerProps', layerId: layer.id, before: { shape: before }, after: { shape: cloneShape(layer.shape) } }, '多角形の頂点を削除');
@@ -256,10 +277,13 @@ export class ShapeEditController {
     const edit = this.shapeEdit;
     if (!edit) return;
     const layer = this.engine.layerService.shapeById(edit.layerId);
+    const previous = layer ? cloneShape(layer.shape) : null;
     if (layer) layer.shape = edit.before;
     this.shapeEdit = null;
     this.syncVertexState();
-    this.engine.requestRender(); this.engine.syncStore();
+    if (layer && previous) this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(previous), shapeDirty(layer.shape)));
+    this.engine.requestOverlayRender();
+    this.engine.syncStore();
   }
 
   drawActiveShapeHandles(ctx: CanvasRenderingContext2D): void {

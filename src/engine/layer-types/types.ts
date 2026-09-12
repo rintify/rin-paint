@@ -81,18 +81,30 @@ export interface LayerMeasureEnv {
 }
 
 export interface LayerDrawEnv extends LayerMeasureEnv {
+  /** 局所再合成Canvas左上のアートボード座標。 */
+  originX: number;
+  originY: number;
   /** マスク元・消しゴム子レイヤーの解決 */
   layerById(id: string): Layer | null;
   /** 他レイヤーを描くためのハンドラ解決 */
   handlerFor(layer: Layer): LayerTypeHandler;
   /** 再帰合成でも衝突しない貸出式作業キャンバス。使用後は必ず release する。 */
-  borrowCanvas(): CanvasLease;
+  borrowCanvas(width?: number, height?: number): CanvasLease;
+  /** CPUへ画素を読む処理専用。通常合成Canvasへ willReadFrequently を波及させない。 */
+  borrowReadbackCanvas(width?: number, height?: number): CanvasLease;
   /** 現在ページの解像度。mm指定の効果をpxへ変換する。 */
   ppi: number;
   /** 指定レイヤー自身のアルファをOR合成する。表示状態は無視する。 */
-  maskCanvas(ids: string[]): CanvasLease | null;
+  maskCanvas(ids: string[]): MaskCanvas | null;
+  effectCache: EffectCacheStore;
+  stats: RenderStatsAccumulator;
   /** ラスターレイヤー直上に描くツールのプレビュー */
   drawAboveLayer?(ctx: CanvasRenderingContext2D, layerId: string): void;
+}
+
+export interface RenderStatsAccumulator {
+  cpuReadbackPixels: number;
+  canvasBorrows: number;
 }
 
 export interface CanvasLease {
@@ -101,13 +113,36 @@ export interface CanvasLease {
   release(): void;
 }
 
+/** 単一ラスターを複製せずマスクとして渡せるよう、不透明度を別に保持する。 */
+export interface MaskCanvas {
+  canvas: HTMLCanvasElement;
+  opacity: number;
+  release(): void;
+}
+
 export interface EffectScope {
   canvas: HTMLCanvasElement;
   coverage: HTMLCanvasElement;
+  /** この作業Canvas左上のアートボード座標。 */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** この効果より前の対象スコープ内容を表すリビジョン。 */
+  inputRevision: number;
+}
+
+export interface EffectCacheStore {
+  get<T>(key: string): T | undefined;
+  set<T>(key: string, value: T, bytes: number, dispose?: () => void): void;
 }
 
 export interface LayerEffectHandler<L extends Layer> {
   apply(scope: EffectScope, layer: L, env: LayerDrawEnv): void;
+  /** 入力変化が周囲へ広がる最大距離。ピクセルローカルな効果は0。 */
+  paddingPx?(layer: L, env: LayerDrawEnv): number;
+  /** 効果結果が直接参照する、対象スコープ外のレイヤー。 */
+  dependencyLayerIds?(layer: L): readonly string[];
 }
 
 export interface ObjectBounds {

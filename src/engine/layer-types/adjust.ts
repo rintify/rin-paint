@@ -1,6 +1,6 @@
 import { DEFAULT_ADJUST, type AdjustParams } from '../../model';
 import { buildFilter, createAdjustLayer, type AdjustLayer } from '../layers';
-import { copyCanvas, mixCanvases } from './effectUtils';
+import { mixCanvases } from './effectUtils';
 import type { LayerParameterDescriptor, LayerParameterLayer, LayerTypeHandler } from './types';
 
 function adjustOf(layer: LayerParameterLayer): AdjustParams {
@@ -52,19 +52,22 @@ export const adjustLayerType: LayerTypeHandler<AdjustLayer> = {
   draw() {},
 
   effect: {
-   apply(scope, layer, env) {
-    const original = copyCanvas(env, scope.canvas);
-    const filtered = env.borrowCanvas();
-    filtered.ctx.save();
-    filtered.ctx.filter = buildFilter(layer.params);
-    filtered.ctx.drawImage(original.canvas, 0, 0);
-    filtered.ctx.restore();
-    const mask = layer.maskLayerIds.length ? env.maskCanvas(layer.maskLayerIds) : null;
-    mixCanvases(scope.canvas, original.canvas, filtered.canvas, layer.opacity, mask?.canvas ?? null);
-    mask?.release();
-    filtered.release();
-    original.release();
-   },
+    dependencyLayerIds: layer => layer.maskLayerIds,
+    apply(scope, layer, env) {
+      if (layer.opacity <= 0 || (
+        layer.params.brightness === 100 && layer.params.contrast === 100 &&
+        layer.params.hue === 0 && layer.params.saturation === 100
+      )) return;
+      const filtered = env.borrowCanvas();
+      filtered.ctx.save();
+      filtered.ctx.filter = buildFilter(layer.params);
+      filtered.ctx.drawImage(scope.canvas, 0, 0);
+      filtered.ctx.restore();
+      const mask = layer.maskLayerIds.length ? env.maskCanvas(layer.maskLayerIds) : null;
+      mixCanvases(scope, filtered.canvas, layer.opacity, mask);
+      mask?.release();
+      filtered.release();
+    },
   },
 
   bakeOnto(target, layer, env) {

@@ -134,6 +134,8 @@ export class PaintEngine {
   /** @internal */ hasShapeEdit(): boolean { return this.shapeEdit.hasEdit(); }
   /** @internal */ allLayers() { return this.layerService.layers; }
   /** @internal */ layerById(id: string) { return this.layerService.byId(id); }
+  /** @internal */ getMaskRevision(id: string): number { return this.layerService.maskVersions.get(id) ?? 0; }
+  /** @internal */ getRenderRevision(id: string): number { return this.layerService.versions.get(id) ?? 0; }
   /** @internal */ shapeLayerById(id: string) { return this.layerService.shapeById(id); }
   /** @internal */ getRootLayerIds(): string[] { return this.layerService.rootLayerIds; }
   /** @internal */ getActiveLayerId(): string { return this.layerService.activeLayerId; }
@@ -143,9 +145,9 @@ export class PaintEngine {
   }
   /** @internal */ drawLoupeIfAny(ctx: CanvasRenderingContext2D): void { this.input.drawLoupeIfAny(ctx); }
 
-  committed(): void {
+  committed(requestFullRender = true): void {
     this.compositor.syncTextRenders();
-    this.requestRender();
+    if (requestFullRender) this.requestRender();
     this.syncStore();
     this.recorder.schedule();
     this.scheduleSave();
@@ -186,6 +188,7 @@ export class PaintEngine {
   // ---------------------------------------------------------------- render
 
   requestRender(): void { this.compositor.requestRender(); }
+  requestOverlayRender(): void { this.compositor.requestOverlayRender(); }
   ensureComposited(): void { this.compositor.ensureComposited(); }
   async readyToRender(): Promise<void> { await this.compositor.readyToRender(); }
   compositeCanvas(): HTMLCanvasElement | null { return this.compositor.compositeCanvas(); }
@@ -214,7 +217,7 @@ export class PaintEngine {
     this.historyService.commitRasterBatch(entries, label, objects);
   }
   captureBefore(layer: RasterLayer): void { this.compositor.captureBefore(layer); }
-  restoreBefore(layer: RasterLayer): void { this.compositor.restoreBefore(layer); }
+  restoreBefore(layer: RasterLayer, rect?: DirtyRect): void { this.compositor.restoreBefore(layer, rect); }
   commitRasterEdit(layer: RasterLayer, rect: DirtyRect, label: string): void {
     this.historyService.commitRasterEdit(layer, rect, label);
   }
@@ -233,7 +236,8 @@ export class PaintEngine {
 
   getLayerCanvas(id: string): HTMLCanvasElement | null { return this.layerService.getLayerCanvas(id); }
   getShape(id: string): ShapeParams | null { return this.layerService.getShape(id); }
-  bumpLayer(id: string): void { this.layerService.bumpLayer(id); }
+  bumpLayer(id: string, rect?: DirtyRect): void { this.layerService.bumpLayer(id, rect); }
+  invalidateLayer(id: string, rect: DirtyRect): void { this.layerService.bumpLayer(id, rect); }
 
   finishTextEditing(): boolean { return this.layerService.finishTextEditing(); }
   getText(id: string): TextParams | null { return this.layerService.getText(id); }

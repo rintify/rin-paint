@@ -37,7 +37,7 @@ export class PolygonTool implements Tool {
 
   onMove(p: StrokePoint): void {
     this.cursor = { x: p.x, y: p.y };
-    this.eng.requestRender();
+    this.eng.requestOverlayRender();
   }
 
   onUp(p: StrokePoint): void {
@@ -55,20 +55,20 @@ export class PolygonTool implements Tool {
       openEdgeIntersects(this.points, next)
     ) {
       this.eng.notify('自己交差する頂点は追加できません');
-      this.eng.requestRender();
+      this.eng.requestOverlayRender();
       return;
     }
     this.points.push(next);
     this.cursor = null;
     this.syncUi();
-    this.eng.requestRender();
+    this.eng.requestOverlayRender();
   }
 
   undoPoint(): void {
     this.points.pop();
     if (!this.points.length) this.cursor = null;
     this.syncUi();
-    this.eng.requestRender();
+    this.eng.requestOverlayRender();
   }
 
   commit(): void {
@@ -94,7 +94,7 @@ export class PolygonTool implements Tool {
     this.points = [];
     this.cursor = null;
     this.syncUi();
-    this.eng.requestRender();
+    this.eng.requestOverlayRender();
   }
 
   private syncUi(): void {
