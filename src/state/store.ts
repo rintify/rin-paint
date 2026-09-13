@@ -1,7 +1,6 @@
 import { create } from 'zustand';
-import { DEFAULT_PAGE, type PageSpec } from '../model/page';
+import { DEFAULT_CANVAS, type CanvasSpec } from '../model/canvas';
 import { type LayerMeta } from '../model/layer';
-import type { HierarchyItem } from '../model';
 import { type ProjectFont } from '../model/text';
 import {
   newToolInstanceId,
@@ -113,7 +112,6 @@ export interface PaintState {
 
   layers: LayerMeta[];
   rootLayerIds: string[];
-  hierarchy: HierarchyItem[];
   activeLayerId: string;
   selectedLayerIds: string[];
   multiSelectMode: boolean;
@@ -122,12 +120,10 @@ export interface PaintState {
   pages: { id: string; thumbnailVersion: number }[];
   activePageId: string;
   pageBusy: boolean;
-  binItems: { id: string; name: string; visible: boolean }[];
-  editingDocument: { kind: 'page' | 'bin'; id: string };
 
-  pageW: number;
-  pageH: number;
-  pageSpec: PageSpec;
+  canvasW: number;
+  canvasH: number;
+  canvasSpec: CanvasSpec;
   fonts: ProjectFont[];
   textEditingId: string | null;
   projectGeneration: number;
@@ -197,7 +193,6 @@ export const useStore = create<PaintState>((set) => ({
 
   layers: [],
   rootLayerIds: [],
-  hierarchy: [],
   activeLayerId: '',
   selectedLayerIds: [],
   multiSelectMode: false,
@@ -206,12 +201,10 @@ export const useStore = create<PaintState>((set) => ({
   pages: [],
   activePageId: '',
   pageBusy: false,
-  binItems: [],
-  editingDocument: { kind: 'page', id: '' },
 
-  pageW: 1600,
-  pageH: 1200,
-  pageSpec: { ...DEFAULT_PAGE },
+  canvasW: 1600,
+  canvasH: 1200,
+  canvasSpec: { ...DEFAULT_CANVAS },
   fonts: [],
   textEditingId: null,
   projectGeneration: 0,

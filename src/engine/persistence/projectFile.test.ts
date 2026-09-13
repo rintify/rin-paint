@@ -11,8 +11,8 @@ const rasterLayer = {
     opacity: 1,
     blend: 'source-over' as const,
     visible: true,
-    scopeId: null as string | null,
-    scopeLayerIds: [] as string[],
+    parentId: null as string | null,
+    childIds: [] as string[],
   },
   state: {},
   content: new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }),
@@ -24,16 +24,15 @@ describe('v10 project container', () => {
       version: HISTORY_VERSION,
       rootId: 0,
       currentId: 0,
-      nodes: [{ id: 0, scopeId: null, label: '開始', op: null, scopeLayerIds: [], lastChild: 0 }],
+      nodes: [{ id: 0, parentId: null, label: '開始', op: null, childIds: [], lastChild: 0 }],
     };
     const page = {
       id: 'p1',
-      pageSpec: { widthMm: 10, heightMm: 10, ppi: 300 },
+      canvasSpec: { widthMm: 10, heightMm: 10, ppi: 300 },
       rootLayerIds: ['l1'],
       activeLayerId: 'l1',
       layers: [rasterLayer],
       history,
-      hierarchy: [{ kind: 'layer' as const, id: 'node-l1', layerId: 'l1' }],
       view: { x: 0, y: 0, scale: 1, rot: 0 },
       thumbnailVersion: 0,
     };
@@ -42,8 +41,6 @@ describe('v10 project container', () => {
       pageOrder: ['p1'],
       activePageId: 'p1',
       fonts: [],
-      binOrder: [],
-      lastPagePpi: 300,
     };
     const packed = await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages: [page] });
     expect(new TextDecoder().decode(await packed.slice(0, PROJECT_MAGIC.length).arrayBuffer())).toBe(PROJECT_MAGIC);
@@ -53,21 +50,20 @@ describe('v10 project container', () => {
   });
 
   it('explicitly rejects a legacy v7 magic container', async () => {
-    const history = { version: HISTORY_VERSION, rootId: 0, currentId: 0, nodes: [{ id: 0, scopeId: null, label: '開始', op: null, scopeLayerIds: [], lastChild: 0 }] };
+    const history = { version: HISTORY_VERSION, rootId: 0, currentId: 0, nodes: [{ id: 0, parentId: null, label: '開始', op: null, childIds: [], lastChild: 0 }] };
     const page = {
-      id: 'p1', pageSpec: { widthMm: 10, heightMm: 10, ppi: 300 }, rootLayerIds: ['l1'], activeLayerId: 'l1',
+      id: 'p1', canvasSpec: { widthMm: 10, heightMm: 10, ppi: 300 }, rootLayerIds: ['l1'], activeLayerId: 'l1',
       layers: [{
         id: 'l1', type: 'shape' as const,
-        common: { name: '直線', opacity: 1, blend: 'source-over' as const, visible: true, scopeId: null, scopeLayerIds: [] },
+        common: { name: '直線', opacity: 1, blend: 'source-over' as const, visible: true, parentId: null, childIds: [] },
         state: { shape: { kind: 'line' as const, x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 5, color: '#000' }, snapEnabled: true },
       }],
-      hierarchy: [{ kind: 'layer' as const, id: 'node-l1', layerId: 'l1' }],
       history, view: { x: 0, y: 0, scale: 1, rot: 0 }, thumbnailVersion: 0,
     };
-    const meta = { version: PROJECT_VERSION, pageOrder: ['p1'], activePageId: 'p1', fonts: [], binOrder: [], lastPagePpi: 300 };
+    const meta = { version: PROJECT_VERSION, pageOrder: ['p1'], activePageId: 'p1', fonts: [] };
     const current = new Uint8Array(await (await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages: [page] })).arrayBuffer());
     current.set(new TextEncoder().encode('RINPAINT7'), 0);
-    await expect(unpackProjectFile(new Blob([current]))).rejects.toThrow(/対応していません/);
+    await expect(unpackProjectFile(new Blob([current]))).rejects.toThrow(/プロジェクトファイルではありません/);
   });
 });
 
@@ -78,15 +74,13 @@ describe('schema guards', () => {
       pageOrder: ['p1'],
       activePageId: 'p1',
       fonts: [],
-      binOrder: [],
-      lastPagePpi: 300,
     })).toBe(true);
     expect(isPersistedHistory({ version: 4, rootId: 0, currentId: 0, nodes: [] })).toBe(false);
     expect(isPersistedHistory({
       version: HISTORY_VERSION,
       rootId: 0,
       currentId: 0,
-      nodes: [{ id: 0, label: '開始', op: null, scopeId: null, scopeLayerIds: [], lastChild: 0 }],
+      nodes: [{ id: 0, label: '開始', op: null, parentId: null, childIds: [], lastChild: 0 }],
     })).toBe(true);
   });
 });

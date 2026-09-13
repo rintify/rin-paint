@@ -126,19 +126,19 @@ export const imageLayerType: LayerDefinition<'image'> = {
       },
       {
         id: 'image.x', semanticId: 'frame.leftMm', groupId: 'frame', label: 'X',
-        editor: { kind: 'number', unit: { kind: 'page-mm' } }, surfaces: SURFACES,
+        editor: { kind: 'number', unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
         read: state => state.placement.x,
         write: (state, value) => ({ ...cloneState(state), placement: { ...state.placement, x: Number(value) } }),
       },
       {
         id: 'image.y', semanticId: 'frame.topMm', groupId: 'frame', label: 'Y',
-        editor: { kind: 'number', unit: { kind: 'page-mm' } }, surfaces: SURFACES,
+        editor: { kind: 'number', unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
         read: state => state.placement.y,
         write: (state, value) => ({ ...cloneState(state), placement: { ...state.placement, y: Number(value) } }),
       },
       {
         id: 'image.width', semanticId: 'frame.widthMm', groupId: 'frame', label: '幅',
-        editor: { kind: 'number', min: 0.1, unit: { kind: 'page-mm' } }, surfaces: SURFACES,
+        editor: { kind: 'number', min: 0.1, unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
         read: state => state.placement.width,
         write: (state, value) => {
           const width = Math.max(0.1, Number(value));
@@ -149,7 +149,7 @@ export const imageLayerType: LayerDefinition<'image'> = {
       },
       {
         id: 'image.height', semanticId: 'frame.heightMm', groupId: 'frame', label: '高さ',
-        editor: { kind: 'number', min: 0.1, unit: { kind: 'page-mm' } }, surfaces: SURFACES,
+        editor: { kind: 'number', min: 0.1, unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
         read: state => state.placement.height,
         write: (state, value) => {
           const height = Math.max(0.1, Number(value));
@@ -195,7 +195,7 @@ export const imageLayerType: LayerDefinition<'image'> = {
       drawOpacity: layer => layer.opacity,
     },
     transferToRaster: {
-      canTransfer: layer => layer.scopeLayerIds.length === 0,
+      canTransfer: layer => layer.childIds.length === 0 && !!layer.parentId,
     },
   },
 };

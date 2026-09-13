@@ -1,5 +1,6 @@
 import type { LayerMeta } from '../../model';
 import { canMaskLayerType } from '../../engine/layer-types/registry';
+import { flattenRenderOrder } from '../../engine/layerTree';
 
 export function canUseLayerAsMask(
   roots: string[],
@@ -8,13 +9,10 @@ export function canUseLayerAsMask(
   sourceId: string,
 ): boolean {
   const source = layers.find(layer => layer.id === sourceId);
-  const target = layers.find(layer => layer.id === targetId);
   if (!source || source.id === targetId || !canMaskLayerType(source.type)) return false;
-  if (!target || source.scopeId !== target.scopeId) return false;
-  const siblings = target.scopeId
-    ? layers.find(layer => layer.id === target.scopeId)?.scopeLayerIds ?? []
-    : roots;
-  return siblings.indexOf(source.id) >= 0 && siblings.indexOf(source.id) < siblings.indexOf(target.id);
+  if (source.type !== 'outline') return true;
+  const order = flattenRenderOrder(roots, layers);
+  return order.indexOf(source.id) < order.indexOf(targetId);
 }
 
 export function maskCandidateRows(
@@ -32,18 +30,28 @@ export function maskCandidateRows(
         && (!normalized || layer.name.toLocaleLowerCase().includes(normalized)))
       .map(layer => layer.id),
   );
-  const target = byId.get(excludedId);
-  const scopeIds = target?.scopeId ? byId.get(target.scopeId)?.scopeLayerIds ?? [] : roots;
+  const shown = new Set(matching);
+  if (normalized) {
+    for (const id of matching) {
+      let parent = byId.get(id)?.parentId ?? null;
+      while (parent) {
+        const layer = byId.get(parent);
+        if (layer && canMaskLayerType(layer.type)) shown.add(parent);
+        parent = layer?.parentId ?? null;
+      }
+    }
+  }
   const result: { layer: LayerMeta; depth: number }[] = [];
   const visit = (ids: string[], depth: number) => {
     for (const id of ids) {
       const layer = byId.get(id);
       if (!layer) continue;
-      if (layer.id !== excludedId && canMaskLayerType(layer.type) && matching.has(layer.id)) {
+      if (layer.id !== excludedId && canMaskLayerType(layer.type) && shown.has(layer.id)) {
         result.push({ layer, depth });
       }
+      visit(layer.childIds, depth + 1);
     }
   };
-  visit(scopeIds, 0);
+  visit(roots, 0);
   return result;
 }

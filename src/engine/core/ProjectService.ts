@@ -1,12 +1,11 @@
 import { useStore } from '../../state/store';
 import {
-  DEFAULT_PAGE,
-  layerItem,
+  DEFAULT_CANVAS,
   type LayerType,
-  type PageSpec,
+  type CanvasSpec,
   type ProjectFont,
 } from '../../model';
-import { HistoryTree, type PageSnapshot } from '../history/historyTree';
+import { HistoryTree, type CanvasSnapshot } from '../history/historyTree';
 import { isPersistedHistory } from '../persistence/schema';
 import { PROJECT_VERSION } from '../persistence/version';
 import { restoreLayerFrom, savedLayerFrom, scaleLayer } from '../layer-types/registry';
@@ -20,8 +19,6 @@ import {
   hasClipboard,
   loadPage,
   loadProjectMeta,
-  loadBinItems,
-  loadSharedLayerEntities,
   replaceProject,
   savePage,
   saveProjectMeta,
@@ -36,14 +33,12 @@ import {
 } from '../persistence/projectFile';
 import { downloadBlob } from '../timelapse/exporter';
 import { loadFonts } from '../text/render';
-import { pagePixels, validatePageSpec, pngWithPpi } from '../pageSpec';
+import { canvasPixels, validateCanvasSpec, pngWithPpi } from '../canvasSpec';
 import type { PaintEngine } from '../PaintEngine';
-import { SparseRasterSurface } from '../raster/SparseRasterSurface';
-import { hydrateDocumentRecords } from '../entities/linkedRecords';
 
 /** Project lifecycle: init, import/export, resize, fonts. */
 export class ProjectService {
-  pageSpec: PageSpec = { ...DEFAULT_PAGE };
+  canvasSpec: CanvasSpec = { ...DEFAULT_CANVAS };
   projectGeneration = 0;
 
   constructor(private engine: PaintEngine) {}
@@ -53,18 +48,14 @@ export class ProjectService {
     const ls = eng.layerService;
     ls.layers = [];
     ls.rootLayerIds = [...page.rootLayerIds];
-    ls.rootHierarchy = structuredClone(page.hierarchy);
-    this.pageSpec = { ...page.pageSpec };
-    const pixels = pagePixels(this.pageSpec);
-    eng.pageFrame.resize(pixels.width, pixels.height);
-    eng.pageFrame.setOrigin(0, 0);
+    this.canvasSpec = { ...page.canvasSpec };
+    const pixels = canvasPixels(this.canvasSpec);
+    eng.artboard.resize(pixels.width, pixels.height);
     eng.compositor.syncWorkCanvases();
-    const hydrated = hydrateDocumentRecords(page.layers, await loadBinItems());
-    for (const sl of hydrated) {
-      const layer = await restoreLayerFrom(sl, { pageFrame: eng.pageFrame, ppi: this.pageSpec.ppi });
+    for (const sl of page.layers) {
+      const layer = await restoreLayerFrom(sl, { artboard: eng.artboard });
       if (layer) ls.layers.push(layer);
     }
-    ls.rebuildScopePlacements();
     if (!validateLayerTree(ls.rootLayerIds, ls.layers)) throw new Error('invalid layer tree');
     ls.activeLayerId = page.activeLayerId;
     eng.history = new HistoryTree();
@@ -92,7 +83,7 @@ export class ProjectService {
         const restoredPages = await Promise.all(meta.pageOrder.map(loadPage));
         if (restoredPages.some(page => !page)) throw new Error('一部のページを読み込めませんでした');
         const page = restoredPages.find(value => value?.id === meta.activePageId);
-        if (page && page.layers.length > 0 && !validatePageSpec(page.pageSpec)) {
+        if (page && page.layers.length > 0 && !validateCanvasSpec(page.canvasSpec)) {
           pages.pageOrder = [...meta.pageOrder];
           pages.activePageId = meta.activePageId;
           setPersistencePageId(pages.activePageId);
@@ -105,7 +96,7 @@ export class ProjectService {
             saveProjectMeta(meta),
             ...(restoredPages as SavedPage[]).map(saved => savePage(saved)),
           ]);
-          useStore.getState().set({ pageW: eng.pageFrame.w, pageH: eng.pageFrame.h, pageSpec: { ...this.pageSpec } });
+          useStore.getState().set({ canvasW: eng.artboard.w, canvasH: eng.artboard.h, canvasSpec: { ...this.canvasSpec } });
         }
       }
     } catch {
@@ -114,10 +105,9 @@ export class ProjectService {
     }
     if (persistedDataFound && ls.layers.length === 0) restoreFailed = true;
     if (ls.layers.length === 0) {
-      const l = createRasterLayer('レイヤー 1', eng.pageFrame.w, eng.pageFrame.h, undefined, false, this.pageSpec.ppi);
+      const l = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
       ls.layers.push(l);
       ls.rootLayerIds = [l.id];
-      ls.rootHierarchy = [layerItem(l.id)];
       ls.activeLayerId = l.id;
       ls.resetCountersFromLayers();
       pages.activePageId = pages.newPageId();
@@ -130,7 +120,6 @@ export class ProjectService {
     useStore.getState().set({
       pages: pages.pageOrder.map(id => ({ id, thumbnailVersion: id === pages.activePageId ? pages.thumbnailVersion : 0 })),
       activePageId: pages.activePageId,
-      editingDocument: { kind: 'page', id: pages.activePageId },
       clipboardAvailable: await hasClipboard().catch(() => false),
     });
     eng.compositor.syncTextRenders();
@@ -142,84 +131,66 @@ export class ProjectService {
     }
   }
 
-  pageSnapshot(): PageSnapshot {
+  canvasSnapshot(): CanvasSnapshot {
     const eng = this.engine;
     const ls = eng.layerService;
     return {
-      spec: { ...this.pageSpec },
+      spec: { ...this.canvasSpec },
       layers: ls.layers.map(l => ls.snapshotLayer(l, true, true)),
       roots: [...ls.rootLayerIds],
-      hierarchy: structuredClone(ls.rootHierarchy),
       activeId: ls.activeLayerId,
     };
   }
 
-  async restorePageSnapshot(snapshot: PageSnapshot): Promise<void> {
+  async restoreCanvasSnapshot(snapshot: CanvasSnapshot): Promise<void> {
     const eng = this.engine;
     const ls = eng.layerService;
-    this.pageSpec = { ...snapshot.spec };
-    const pixels = pagePixels(snapshot.spec);
-    eng.pageFrame.resize(pixels.width, pixels.height);
-    eng.pageFrame.setOrigin(0, 0);
+    this.canvasSpec = { ...snapshot.spec };
+    const pixels = canvasPixels(snapshot.spec);
+    eng.artboard.resize(pixels.width, pixels.height);
     ls.layers = [];
     for (const layer of snapshot.layers) await ls.restoreLayer(layer);
     ls.rootLayerIds = [...snapshot.roots];
-    ls.rootHierarchy = structuredClone(snapshot.hierarchy);
-    ls.rebuildScopePlacements();
     ls.activeLayerId = snapshot.activeId;
     eng.compositor.syncWorkCanvases();
     eng.compositor.textRenderer.clear();
     eng.compositor.syncTextRenders();
-    useStore.getState().set({ pageW: eng.pageFrame.w, pageH: eng.pageFrame.h, pageSpec: { ...this.pageSpec } });
+    useStore.getState().set({ canvasW: eng.artboard.w, canvasH: eng.artboard.h, canvasSpec: { ...this.canvasSpec } });
   }
 
-  async resizePage(spec: PageSpec): Promise<void> {
+  async resizeCanvas(spec: CanvasSpec): Promise<void> {
     const eng = this.engine;
     const ls = eng.layerService;
     if (eng.isBusy()) throw new Error('処理の完了後にサイズを変更してください');
-    if (eng.bins.activeBinId) throw new Error('ビン編集中はページサイズを変更できません');
-    const error = validatePageSpec(spec);
+    const error = validateCanvasSpec(spec);
     if (error) throw new Error(error);
-    if (JSON.stringify(spec) === JSON.stringify(this.pageSpec)) return;
+    if (JSON.stringify(spec) === JSON.stringify(this.canvasSpec)) return;
     ls.finishFloating();
     eng.cancelSessions();
     eng.setBusy(true);
-    const before = this.pageSnapshot();
+    const before = this.canvasSnapshot();
     try {
-      const { width, height } = pagePixels(spec);
-      const factor = spec.ppi / this.pageSpec.ppi;
+      const { width, height } = canvasPixels(spec);
+      const factor = spec.ppi / this.canvasSpec.ppi;
       for (const layer of ls.layers) {
-        if (layer.dataLink) continue;
         scaleLayer(layer, factor, { width, height });
         ls.bumpLayer(layer.id);
       }
-      this.pageSpec = { ...spec };
-      eng.pageFrame.resize(width, height);
-      eng.pageFrame.setOrigin(0, 0);
+      this.canvasSpec = { ...spec };
+      eng.artboard.resize(width, height);
       eng.compositor.syncWorkCanvases();
-      const after = this.pageSnapshot();
-      const node = eng.history.push({ kind: 'pageChange', before, after }, 'ページサイズ・解像度');
-      const encodeSnapshots = async (snapshots: typeof before.layers, ppi: number) => Promise.all(snapshots.map(async snapshot => {
+      const after = this.canvasSnapshot();
+      const node = eng.history.push({ kind: 'canvasChange', before, after }, 'キャンバスサイズ・解像度');
+      node.ready = Promise.all([...before.layers, ...after.layers].map(async snapshot => {
         if (snapshot.canvas) {
-          try {
-            if (snapshot.type === 'raster') {
-              const sparse = new SparseRasterSurface(ppi);
-              sparse.drawInRect({ x: 0, y: 0, w: snapshot.canvas.width, h: snapshot.canvas.height }, ctx => ctx.drawImage(snapshot.canvas!, 0, 0));
-              snapshot.content = await sparse.toBlob();
-            } else snapshot.content = await canvasToBlob(snapshot.canvas);
-            snapshot.canvas = undefined;
-          }
+          try { snapshot.content = await canvasToBlob(snapshot.canvas); snapshot.canvas = undefined; }
           catch { /* Keep the original canvas so undo remains lossless; persistence can retry. */ }
         }
-      }));
-      node.ready = Promise.all([
-        encodeSnapshots(before.layers, before.spec.ppi),
-        encodeSnapshots(after.layers, after.spec.ppi),
-      ]).then(() => undefined);
-      useStore.getState().set({ pageW: width, pageH: height, pageSpec: { ...spec } });
+      })).then(() => undefined);
+      useStore.getState().set({ canvasW: width, canvasH: height, canvasSpec: { ...spec } });
       eng.compositor.textRenderer.clear();
     } catch (error) {
-      await this.restorePageSnapshot(before);
+      await this.restoreCanvasSnapshot(before);
       throw error;
     } finally { eng.setBusy(false); }
     eng.committed();
@@ -242,7 +213,7 @@ export class ProjectService {
       await eng.recorderPublic().reset();
       if (eng.autosave.saveTimer !== null) { clearTimeout(eng.autosave.saveTimer); eng.autosave.saveTimer = null; }
       await eng.autosave.saving;
-      const layer = createRasterLayer('レイヤー 1', eng.pageFrame.w, eng.pageFrame.h, undefined, false, this.pageSpec.ppi);
+      const layer = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
       const history = new HistoryTree();
       const pageId = pages.newPageId();
       const meta: SavedProjectMeta = {
@@ -250,32 +221,27 @@ export class ProjectService {
         pageOrder: [pageId],
         activePageId: pageId,
         fonts: [],
-        binOrder: [],
-        lastPagePpi: this.pageSpec.ppi,
       };
       const page: SavedPage = {
         id: pageId,
-        pageSpec: { ...this.pageSpec },
+        canvasSpec: { ...this.canvasSpec },
         rootLayerIds: [layer.id],
-        hierarchy: [layerItem(layer.id)],
         activeLayerId: layer.id,
-        layers: [await savedLayerFrom(layer, { pageFrame: eng.pageFrame, ppi: this.pageSpec.ppi })],
+        layers: [await savedLayerFrom(layer, { artboard: eng.artboard })],
         history: await history.serialize(canvasToBlob),
         view: { x: 0, y: 0, scale: 1, rot: 0 },
         thumbnailVersion: 0,
       };
       await replaceProject(meta, [page]);
-      eng.bins.reset();
-      eng.entities.reset();
       pages.activePageId = pageId; pages.pageOrder = [pageId]; pages.thumbnailVersion = 0;
       await eng.links.refreshCatalog();
       setPersistencePageId(pageId);
-      ls.layers = [layer]; ls.rootLayerIds = [layer.id]; ls.rootHierarchy = [layerItem(layer.id)]; ls.activeLayerId = layer.id;
+      ls.layers = [layer]; ls.rootLayerIds = [layer.id]; ls.activeLayerId = layer.id;
       ls.resetCountersFromLayers(); eng.history = history; ls.clearVersions();
       eng.compositor.textRenderer.clear();
       await loadFonts([]);
       eng.autosave.persistedRevision = eng.autosave.saveRevision;
-      useStore.getState().set({ fonts: [], textEditingId: null, projectGeneration: this.projectGeneration, selectionActive: false, freeTransform: false, selectedLayerIds: [layer.id], multiSelectMode: false, clipboardAvailable: false, pages: [{ id: pageId, thumbnailVersion: 0 }], activePageId: pageId, editingDocument: { kind: 'page', id: pageId }, binItems: [] });
+      useStore.getState().set({ fonts: [], textEditingId: null, projectGeneration: this.projectGeneration, selectionActive: false, freeTransform: false, selectedLayerIds: [layer.id], multiSelectMode: false, clipboardAvailable: false, pages: [{ id: pageId, thumbnailVersion: 0 }], activePageId: pageId });
       eng.events.emit('projectReset');
       eng.view.reset();
       eng.shapeEdit.refreshVertexState();
@@ -309,7 +275,7 @@ export class ProjectService {
     if (!eng.compositor.main) return;
     eng.finishTextEditing();
     await eng.readyToRender();
-    downloadBlob(await pngWithPpi(await canvasToBlob(eng.compositor.main), this.pageSpec.ppi), 'rin-paint.png');
+    downloadBlob(await pngWithPpi(await canvasToBlob(eng.compositor.main), this.canvasSpec.ppi), 'rin-paint.png');
   }
 
   async exportProject(): Promise<void> {
@@ -322,13 +288,7 @@ export class ProjectService {
     if (!meta) throw new Error('プロジェクトを保存できませんでした');
     const pages = (await Promise.all(meta.pageOrder.map(loadPage))).filter((page): page is SavedPage => !!page);
     if (pages.length !== meta.pageOrder.length) throw new Error('一部のページを読み込めませんでした');
-    const [bins, storedEntities] = await Promise.all([loadBinItems(), loadSharedLayerEntities()]);
-    const packedPages = pages.map(page => ({
-      ...page,
-      layers: hydrateDocumentRecords(page.layers, bins),
-    }));
-    const entities = storedEntities.length ? storedEntities : this.engine.entities.exportedEntities();
-    downloadBlob(await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages: packedPages, bins, entities }), `rin-paint-${new Date().toISOString().slice(0, 10)}.rinpaint`);
+    downloadBlob(await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages }), `rin-paint-${new Date().toISOString().slice(0, 10)}.rinpaint`);
   }
 
   async importProject(file: File): Promise<void> {
@@ -341,7 +301,7 @@ export class ProjectService {
     if (eng.isBusy()) throw new Error('busy');
     ls.finishFloating();
     eng.cancelSessions();
-    const before = this.pageSnapshot();
+    const before = this.canvasSnapshot();
     const previousFonts = useStore.getState().fonts;
     const previousHistory = eng.history;
     eng.setBusy(true);
@@ -355,46 +315,41 @@ export class ProjectService {
         activePageId: proj.id,
         pageOrder: archive.pages.map(page => page.id),
       };
-      await replaceProject(meta, archive.pages, archive.bins, archive.entities);
-      await eng.bins.init();
-      await eng.entities.persist();
+      await replaceProject(meta, archive.pages);
       pages.pageOrder = [...meta.pageOrder]; pages.activePageId = meta.activePageId; setPersistencePageId(pages.activePageId);
       await eng.links.refreshCatalog();
-      this.pageSpec = { ...proj.pageSpec };
-      const pixels = pagePixels(this.pageSpec);
-      eng.pageFrame.resize(pixels.width, pixels.height);
+      this.canvasSpec = { ...proj.canvasSpec };
+      const pixels = canvasPixels(this.canvasSpec);
+      eng.artboard.resize(pixels.width, pixels.height);
       await loadFonts(archive.meta.fonts);
       useStore.getState().set({ fonts: archive.meta.fonts });
       eng.compositor.textRenderer.clear();
       eng.compositor.syncWorkCanvases();
       const layers: Layer[] = [];
       const counters = new Map<LayerType, number>();
-      const hydratedProjectLayers = hydrateDocumentRecords(proj.layers, archive.bins);
-      for (const pl of hydratedProjectLayers) {
+      for (const pl of proj.layers) {
         const index = (counters.get(pl.type) ?? 0) + 1;
         counters.set(pl.type, index);
-        const layer = await restoreLayerFrom(pl, { pageFrame: eng.pageFrame, ppi: this.pageSpec.ppi }, index);
+        const layer = await restoreLayerFrom(pl, { artboard: eng.artboard }, index);
         if (layer) layers.push(layer);
       }
       if (!layers.some((l) => l.type === 'raster')) {
-        const fallback = createRasterLayer('レイヤー 1', eng.pageFrame.w, eng.pageFrame.h, undefined, false, this.pageSpec.ppi);
+        const fallback = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
         layers.push(fallback);
         proj.rootLayerIds.push(fallback.id);
       }
       if (!validateLayerTree(proj.rootLayerIds, layers)) throw new Error('invalid layer tree');
       ls.layers = layers;
       ls.rootLayerIds = [...proj.rootLayerIds];
-      ls.rootHierarchy = structuredClone(proj.hierarchy);
-      ls.rebuildScopePlacements();
       ls.activeLayerId = proj.activeLayerId ?? '';
       ls.resetCountersFromLayers();
       eng.history = new HistoryTree();
       if (isPersistedHistory(proj.history)) eng.history.restore(proj.history);
       for (const l of layers) ls.bumpLayer(l.id);
       useStore.getState().set({
-        pageW: eng.pageFrame.w,
-        pageH: eng.pageFrame.h,
-        pageSpec: { ...this.pageSpec },
+        canvasW: eng.artboard.w,
+        canvasH: eng.artboard.h,
+        canvasSpec: { ...this.canvasSpec },
         clipboardAvailable: false,
         activePageId: pages.activePageId,
         pages: pages.pageOrder.map(id => ({ id, thumbnailVersion: archive.pages.find(page => page.id === id)?.thumbnailVersion ?? 0 })),
@@ -405,7 +360,7 @@ export class ProjectService {
     } catch (error) {
       await loadFonts(previousFonts);
       useStore.getState().set({ fonts: previousFonts });
-      await this.restorePageSnapshot(before);
+      await this.restoreCanvasSnapshot(before);
       eng.history = previousHistory;
       eng.syncStore();
       throw error;

@@ -1,4 +1,4 @@
-import type { PageFrame } from './pageFrame';
+import type { Artboard } from './artboard';
 
 export interface ViewState {
   x: number;
@@ -11,7 +11,7 @@ const MIN_SCALE = 0.1;
 const MAX_SCALE = 32;
 
 /**
- * ページ表示のパン・回転・拡大縮小。
+ * キャンバス表示のパン・回転・拡大縮小。
  * アートボード要素へ CSS transform (translate → rotate → scale) を適用し、
  * クライアント座標 ⇔ アート座標の相互変換を提供する。
  */
@@ -28,8 +28,8 @@ export class ViewController {
 
   onChange: (() => void) | null = null;
 
-  constructor(private readonly pageFrame: PageFrame) {
-    this.fitW = pageFrame.w;
+  constructor(private readonly artboard: Artboard) {
+    this.fitW = artboard.w;
   }
 
   attach(area: HTMLElement, board: HTMLElement): void {
@@ -49,7 +49,7 @@ export class ViewController {
   }
 
   fitScale(): number {
-    return this.fitW / this.pageFrame.w;
+    return this.fitW / this.artboard.w;
   }
 
   /** アート座標の1pxが画面上で何pxになるか */
@@ -98,10 +98,7 @@ export class ViewController {
     const ux = (dx * cos + dy * sin) / this.scale;
     const uy = (-dx * sin + dy * cos) / this.scale;
     const fs = this.fitScale();
-    return {
-      x: ux / fs + this.pageFrame.originX + this.pageFrame.w / 2,
-      y: uy / fs + this.pageFrame.originY + this.pageFrame.h / 2,
-    };
+    return { x: ux / fs + this.artboard.w / 2, y: uy / fs + this.artboard.h / 2 };
   }
 
   panBy(dx: number, dy: number): void {

@@ -1,4 +1,4 @@
-import type { HierarchyItem, LayerAddress, LayerParameterLink, PageSpec, ScopedLayerAddress } from '../../model';
+import type { LayerAddress, LayerParameterLink, CanvasSpec } from '../../model';
 import type { LayerProps, LayerSnapshot } from '../layer-types/definition';
 import { HISTORY_VERSION } from '../persistence/version';
 import { opBytes } from './bytes';
@@ -22,20 +22,8 @@ export interface LayerLinkOp {
   after: LayerParameterLink | null;
 }
 
-/** Whole-layer occurrence link. Null means this occurrence owns its data. */
-export interface LayerDataLinkOp {
-  kind: 'layerDataLink';
-  layerId: string;
-  before: ScopedLayerAddress | null;
-  after: ScopedLayerAddress | null;
-  beforeInstanceId?: string;
-  afterInstanceId?: string;
-  beforeStructureSource?: ScopedLayerAddress;
-  afterStructureSource?: ScopedLayerAddress;
-}
-
 export interface LayerLocation {
-  scopeId: string | null;
+  parentId: string | null;
   index: number;
 }
 
@@ -86,16 +74,14 @@ export interface LayerContentOp {
 }
 
 export type AtomicOp =
-  | { kind: 'pageChange'; before: PageSnapshot; after: PageSnapshot }
+  | { kind: 'canvasChange'; before: CanvasSnapshot; after: CanvasSnapshot }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
   | { kind: 'layerAdd'; location: LayerLocation; snapshot: LayerSnapshot }
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: LayerSnapshot[] }
   | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
-  | { kind: 'hierarchyChange'; scopeId: string | null; before: HierarchyItem[]; after: HierarchyItem[] }
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
   | LayerParameterOp
   | LayerLinkOp
-  | LayerDataLinkOp
   | LayerReplaceOp
   | LayerMergeOp
   | LayerContentOp;
@@ -118,14 +104,13 @@ export interface PersistedLayerSnapshot extends Omit<LayerSnapshot, 'canvas'> {
   content?: Blob;
 }
 
-export interface PageSnapshot {
-  spec: PageSpec;
+export interface CanvasSnapshot {
+  spec: CanvasSpec;
   layers: LayerSnapshot[];
   roots: string[];
-  hierarchy: HierarchyItem[];
   activeId: string;
 }
-export interface PersistedPageSnapshot extends Omit<PageSnapshot, 'layers'> {
+export interface PersistedCanvasSnapshot extends Omit<CanvasSnapshot, 'layers'> {
   layers: PersistedLayerSnapshot[];
 }
 
@@ -151,16 +136,14 @@ export interface PersistedLayerReplaceOp extends Omit<LayerReplaceOp, 'before' |
 }
 
 export type PersistedAtomicOp =
-  | { kind: 'pageChange'; before: PersistedPageSnapshot; after: PersistedPageSnapshot }
+  | { kind: 'canvasChange'; before: PersistedCanvasSnapshot; after: PersistedCanvasSnapshot }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
   | { kind: 'layerAdd'; location: LayerLocation; snapshot: PersistedLayerSnapshot }
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: PersistedLayerSnapshot[] }
   | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
-  | { kind: 'hierarchyChange'; scopeId: string | null; before: HierarchyItem[]; after: HierarchyItem[] }
   | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
   | LayerParameterOp
   | LayerLinkOp
-  | LayerDataLinkOp
   | PersistedLayerReplaceOp
   | PersistedTileLayerMergeOp
   | { kind: 'layerContent'; layerId: string; before: PersistedLayerSnapshot; after: PersistedLayerSnapshot };
@@ -175,8 +158,8 @@ export interface PersistedHistory {
     id: number;
     label: string;
     op: PersistedOp | null;
-    scopeId: number | null;
-    scopeLayerIds: number[];
+    parentId: number | null;
+    childIds: number[];
     lastChild: number;
   }[];
 }
@@ -218,8 +201,8 @@ export class HistoryTree {
       node,
       id: node.id,
       label: node.label,
-      scopeId: node.parent?.id ?? null,
-      scopeLayerIds: node.children.map((child) => child.id),
+      parentId: node.parent?.id ?? null,
+      childIds: node.children.map((child) => child.id),
       lastChild: node.lastChild,
     }));
 
@@ -232,7 +215,7 @@ export class HistoryTree {
     };
     const persistAtomic = async (op: AtomicOp): Promise<PersistedAtomicOp> => {
       switch (op.kind) {
-        case 'pageChange':
+        case 'canvasChange':
           return {
             ...op,
             before: { ...op.before, layers: await Promise.all(op.before.layers.map(snapshot)) },
@@ -246,15 +229,11 @@ export class HistoryTree {
           return { ...op, snapshots: await Promise.all(op.snapshots.map(snapshot)) };
         case 'layerMove':
           return { ...op };
-        case 'hierarchyChange':
-          return structuredClone(op);
         case 'layerProps':
           return { ...op, before: { ...op.before }, after: { ...op.after } };
         case 'layerParameter':
           return { ...op };
         case 'layerLink':
-          return structuredClone(op);
-        case 'layerDataLink':
           return structuredClone(op);
         case 'layerReplace': {
           const side = async (value: LayerReplaceSide): Promise<PersistedLayerReplaceSide> => ({
@@ -316,8 +295,8 @@ export class HistoryTree {
           id: entry.id,
           label: entry.label,
           op: await persistOp(entry.node),
-          scopeId: entry.scopeId,
-          scopeLayerIds: entry.scopeLayerIds,
+          parentId: entry.parentId,
+          childIds: entry.childIds,
           lastChild: entry.lastChild,
         })),
       ),
@@ -339,7 +318,7 @@ export class HistoryTree {
           !raw ||
           !Number.isInteger(raw.id) ||
           typeof raw.label !== 'string' ||
-          !Array.isArray(raw.scopeLayerIds)
+          !Array.isArray(raw.childIds)
         ) {
           return false;
         }
@@ -356,12 +335,12 @@ export class HistoryTree {
       }
       for (const raw of saved.nodes) {
         const node = nodes.get(raw.id)!;
-        if (raw.scopeId !== null) {
-          const parent = nodes.get(raw.scopeId);
+        if (raw.parentId !== null) {
+          const parent = nodes.get(raw.parentId);
           if (!parent) return false;
           node.parent = parent;
         }
-        node.children = raw.scopeLayerIds.map((id) => {
+        node.children = raw.childIds.map((id) => {
           const child = nodes.get(id);
           if (!child) throw new Error('missing history child');
           return child;

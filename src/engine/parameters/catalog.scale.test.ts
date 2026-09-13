@@ -29,8 +29,8 @@ describe('parameter catalog scale', () => {
     expect(catalogA.byId.get('p9999')?.id).toBe('p9999');
     expect(catalogA.bySemanticId.get('p1234')?.id).toBe('p1234');
     const hosts: ParameterHost[] = [
-      { id: 'a', name: 'A', opacity: 1, blend: 'source-over', visible: true, type: 'raster', state: { values: Array(size).fill(1) } },
-      { id: 'b', name: 'B', opacity: 1, blend: 'source-over', visible: true, type: 'raster', state: { values: Array(size).fill(2) } },
+      { id: 'a', name: 'A', opacity: 1, blend: 'source-over', visible: true, parentId: null, childIds: [], type: 'raster', state: { values: Array(size).fill(1) } },
+      { id: 'b', name: 'B', opacity: 1, blend: 'source-over', visible: true, parentId: null, childIds: [], type: 'raster', state: { values: Array(size).fill(2) } },
     ];
     // Raster catalogs are empty; this asserts the intersection helper stays linear in selection × provided maps.
     const maps = hosts.map(() => {

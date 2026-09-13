@@ -78,8 +78,8 @@ export class SpeechBubbleTool implements Tool {
       return null;
     }
     const settings = this.settings();
-    const width = mmToPx(settings.tailWidthMm, this.engine.getPageSpec().ppi);
-    const outlineWidth = mmToPx(this.engine.activeToolSettings()?.sizeMm ?? 1, this.engine.getPageSpec().ppi);
+    const width = mmToPx(settings.tailWidthMm, this.engine.getCanvasSpec().ppi);
+    const outlineWidth = mmToPx(this.engine.activeToolSettings()?.sizeMm ?? 1, this.engine.getCanvasSpec().ppi);
     const bodyCenter = center(body);
     const inwardX = bodyCenter.x - boundary.x;
     const inwardY = bodyCenter.y - boundary.y;
@@ -120,7 +120,7 @@ export class SpeechBubbleTool implements Tool {
       textColor: settings.textColor,
       fontId: settings.fontId,
       fontSizePt: settings.fontSizePt,
-      textFrame: textFrame(body, mmToPx(settings.textPaddingMm, this.engine.getPageSpec().ppi)),
+      textFrame: textFrame(body, mmToPx(settings.textPaddingMm, this.engine.getCanvasSpec().ppi)),
     });
   }
 
@@ -177,10 +177,10 @@ export class SpeechBubbleTool implements Tool {
     const tail = this.body && this.current ? this.tail(body, this.current) : null;
     context.save();
     context.globalAlpha = .82;
-    drawShape(context, body, false, this.engine.pageFrame);
-    if (tail) drawShape(context, tail, false, this.engine.pageFrame);
-    const width = mmToPx(this.engine.activeToolSettings()?.sizeMm ?? 1, this.engine.getPageSpec().ppi);
-    drawShape(context, { ...body, color: settings.outlineColor, paintMode: 'stroke', strokeWidth: width * 2 }, false, this.engine.pageFrame);
+    drawShape(context, body, false, this.engine.artboard);
+    if (tail) drawShape(context, tail, false, this.engine.artboard);
+    const width = mmToPx(this.engine.activeToolSettings()?.sizeMm ?? 1, this.engine.getCanvasSpec().ppi);
+    drawShape(context, { ...body, color: settings.outlineColor, paintMode: 'stroke', strokeWidth: width * 2 }, false, this.engine.artboard);
     context.restore();
   }
 }

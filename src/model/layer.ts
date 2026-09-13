@@ -1,9 +1,13 @@
 import type { BlendMode } from './blend';
-import type { LayerCommon, LayerKindMap, LayerPlacement, LayerType } from './layerKind';
-import type { LayerAddress } from './document';
+import type { LayerCommon, LayerKindMap, LayerType } from './layerKind';
 
 export type { LayerType } from './layerKind';
 export * from './layerKind';
+
+export interface LayerAddress {
+  pageId: string;
+  layerId: string;
+}
 
 export type SemanticParameterValue = number | string | boolean | null;
 
@@ -36,7 +40,7 @@ interface LayerMetaFlags {
 }
 
 export type LayerMeta = {
-  [K in LayerType]: LayerCommon & LayerPlacement & LayerMetaFlags & {
+  [K in LayerType]: LayerCommon & LayerMetaFlags & {
     type: K;
     state: LayerKindMap[K]['state'];
   }
@@ -54,19 +58,21 @@ export function cloneLayerCommon(layer: LayerCommon): LayerCommon {
     opacity: layer.opacity,
     blend: layer.blend,
     visible: layer.visible,
+    parentId: layer.parentId,
+    childIds: [...layer.childIds],
     ...(layer.parameterLink ? { parameterLink: structuredClone(layer.parameterLink) } : {}),
   };
 }
 
-export function defaultLayerCommon(id: string, name: string): LayerCommon & LayerPlacement {
+export function defaultLayerCommon(id: string, name: string): LayerCommon {
   return {
     id,
     name,
     opacity: 1,
     blend: 'source-over',
     visible: true,
-    scopeId: null,
-    scopeLayerIds: [],
+    parentId: null,
+    childIds: [],
   };
 }
 

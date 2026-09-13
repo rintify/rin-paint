@@ -107,7 +107,7 @@ export function TextFormatSection({ meta }: { meta: LayerMeta }) {
       <Typography variant="caption" color="text.secondary">
         ルビは同じ行の文字を選択して設定します。
       </Typography>
-      <Button onClick={() => engine.editTextLayer(meta.id)}>ページ上で文字を編集</Button>
+      <Button onClick={() => engine.editTextLayer(meta.id)}>キャンバス上で文字を編集</Button>
     </Stack>
   );
 }

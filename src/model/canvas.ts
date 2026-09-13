@@ -1,10 +1,10 @@
-export interface PageSpec {
+export interface CanvasSpec {
   widthMm: number;
   heightMm: number;
   ppi: number;
 }
 
-export const DEFAULT_PAGE: PageSpec = {
+export const DEFAULT_CANVAS: CanvasSpec = {
   widthMm: (1600 * 25.4) / 300,
   heightMm: (1200 * 25.4) / 300,
   ppi: 300,
@@ -57,5 +57,5 @@ export interface StrokePoint {
   pressure: number;
 }
 
-export const MIN_PAGE_PIXEL_SIZE = 64;
-export const MAX_PAGE_PIXEL_SIZE = 4096;
+export const MIN_ART_SIZE = 64;
+export const MAX_ART_SIZE = 4096;

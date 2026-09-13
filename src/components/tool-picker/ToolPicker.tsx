@@ -23,9 +23,6 @@ export function ToolPicker() {
   const stacks = useStore(state => state.toolStacks);
   const activeId = useStore(state => state.activeToolId);
   const multi = useStore(state => state.multiSelectMode);
-  const selectedCount = useStore(state => state.selectedLayerIds.length);
-  const selectionEmpty = multi && selectedCount === 0;
-  const availableWithoutLayer = (kind: string) => kind === 'cursor' || kind === 'move' || kind === 'eyedropper';
   const [manageOpen, setManageOpen] = useState(false);
   const [stackOpen, setStackOpen] = useState<{
     id: string;
@@ -121,7 +118,7 @@ export function ToolPicker() {
           return (
             <Button
               key={tool.id}
-              disabled={(multi && !descriptor?.capabilities.multiSelect) || (selectionEmpty && !availableWithoutLayer(tool.kind))}
+              disabled={multi && !descriptor?.capabilities.multiSelect}
               onClick={() => engine.selectToolInstance(tool.id)}
               title={tool.name}
               variant={active ? 'contained' : 'outlined'}
@@ -167,7 +164,7 @@ export function ToolPicker() {
               return (
                 <Button
                   key={id}
-                  disabled={(multi && !descriptor?.capabilities.multiSelect) || (selectionEmpty && !availableWithoutLayer(tool.kind))}
+                  disabled={multi && !descriptor?.capabilities.multiSelect}
                   variant={active ? 'contained' : 'outlined'}
                   color={active ? 'primary' : 'inherit'}
                   className="tool-rail-button tool-stack-popover-tool"

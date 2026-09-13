@@ -4,10 +4,10 @@ import { useStore } from '../state/store';
 import { formatMm, mmToPx, pxToMm, roundMm } from '../engine/units';
 
 /**
- * Number field that displays / commits page-space lengths in mm while the model
+ * Number field that displays / commits canvas lengths in mm while the model
  * stores pixels. Conversion uses the current page ppi.
  */
-export function PageMmField({
+export function CanvasMmField({
   valuePx,
   onCommitPx,
   minPx,
@@ -26,7 +26,7 @@ export function PageMmField({
   disabled?: boolean;
   sx?: object;
 }) {
-  const ppi = useStore(s => s.pageSpec.ppi);
+  const ppi = useStore(s => s.canvasSpec.ppi);
   const valueMm = valuePx === null ? null : roundMm(pxToMm(valuePx, ppi));
   const minMm = minPx === undefined ? undefined : Math.max(0, roundMm(pxToMm(minPx, ppi)));
   return (

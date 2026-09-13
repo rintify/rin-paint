@@ -136,20 +136,18 @@ export class ShapeEditController {
   }
 
   private collectMoveSnapLines(editingId: string): SnapLines {
-  const editing = this.engine.layerService.byId(editingId);
     const others = this.engine.layerService.layers.flatMap(layer => {
-      if (layer.id === editingId || !layer.visible || layer.scopeId !== editing?.scopeId) return [];
+      if (layer.id === editingId || !layer.visible) return [];
       if (layer.type === 'shape') return [shapeBounds(layer.state.shape)];
       if (layer.type === 'image') return [shapeBounds(imageFrameShape(layer.state.placement))];
       return [];
     });
-    return collectSnapLines(this.engine.pageFrame, others);
+    return collectSnapLines(this.engine.artboard, others);
   }
 
   private collectVertexSnapPoints(editingId: string, selectedIndex: number): ShapePoint[] {
     return this.engine.layerService.layers.flatMap(layer => {
       if (layer.type !== 'shape' || !layer.visible || layer.state.shape.kind !== 'polygon') return [];
-      if (layer.scopeId !== this.engine.layerService.byId(editingId)?.scopeId) return [];
       return shapePoints(layer.state.shape).filter((_, index) => layer.id !== editingId || index !== selectedIndex);
     });
   }
@@ -257,7 +255,7 @@ export class ShapeEditController {
           shapeBounds(edit.before),
           dx,
           dy,
-          edit.snapLines ?? collectSnapLines(this.engine.pageFrame, []),
+          edit.snapLines ?? collectSnapLines(this.engine.artboard, []),
           SNAP_SCREEN_PX * this.engine.uiScale(),
         );
         next = translateShape(edit.before, snapped.dx, snapped.dy);
@@ -345,7 +343,7 @@ export class ShapeEditController {
     this.syncVertexState();
     this.engine.invalidateLayer(layer.id, unionRect(previous, editableDirty(layer)));
     this.engine.requestOverlayRender();
-    this.engine.links.propagateFrom(this.engine.layerAddress(layer.id), true);
+    this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id }, true);
     this.engine.syncStore();
     return true;
   }
@@ -388,7 +386,7 @@ export class ShapeEditController {
       };
       const linkOp = this.engine.layerService.linkOpForUserChange(layer, propsOp.before, propsOp.after);
       this.engine.history.push(linkOp ? { kind: 'batch', ops: [propsOp, linkOp] } : propsOp, edit.vertexIndex !== undefined ? (layer.type === 'shape' && layer.state.shape.kind === 'bubble-tail' ? 'しっぽを編集' : '多角形の頂点を編集') : layer.type === 'image' ? '画像を編集' : '図形を編集');
-      this.engine.links.propagateFrom(this.engine.layerAddress(layer.id));
+      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });
       this.engine.committed(false);
     } else {
       this.engine.requestOverlayRender();
@@ -411,7 +409,7 @@ export class ShapeEditController {
     const propsOp = { kind: 'layerProps' as const, layerId: layer.id, before: { state: { shape: before } }, after: { state: { shape: cloneShape(layer.state.shape) } } };
     const linkOp = this.engine.layerService.linkOpForUserChange(layer, propsOp.before, propsOp.after);
     this.engine.history.push(linkOp ? { kind: 'batch', ops: [propsOp, linkOp] } : propsOp, '多角形の頂点を削除');
-    this.engine.links.propagateFrom(this.engine.layerAddress(layer.id));
+    this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });
     this.engine.committed();
   }
 
@@ -450,13 +448,13 @@ export class ShapeEditController {
       if (xGuide !== null && xGuide !== undefined) {
         ctx.beginPath();
         ctx.moveTo(xGuide, 0);
-        ctx.lineTo(xGuide, this.engine.pageFrame.h);
+        ctx.lineTo(xGuide, this.engine.artboard.h);
         ctx.stroke();
       }
       if (yGuide !== null && yGuide !== undefined) {
         ctx.beginPath();
         ctx.moveTo(0, yGuide);
-        ctx.lineTo(this.engine.pageFrame.w, yGuide);
+        ctx.lineTo(this.engine.artboard.w, yGuide);
         ctx.stroke();
       }
       ctx.setLineDash([]);

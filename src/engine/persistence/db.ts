@@ -1,11 +1,10 @@
 import { openDB, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import type {
   ToolInstance,
-  PageSpec, ProjectFont, ToolLayoutItem, ToolStack,
+  CanvasSpec, ProjectFont, ToolLayoutItem, ToolStack,
 } from '../../model';
 import type { PersistedHistory } from '../history/historyTree';
 import type { LayerRecord } from '../layer-types/definition';
-import type { HierarchyItem, DocumentAddress } from '../../model';
 import { opBytes } from '../history/bytes';
 import type { ViewState } from '../view';
 import { CLIPBOARD_VERSION, DB_VERSION, PROJECT_VERSION } from './version';
@@ -15,29 +14,12 @@ import type { ShortcutBindings } from '../../shortcuts';
 
 export type SavedLayer = LayerRecord;
 export interface SavedPage {
-  id: string; pageSpec: PageSpec; rootLayerIds: string[]; hierarchy: HierarchyItem[]; layers: SavedLayer[];
+  id: string; canvasSpec: CanvasSpec; rootLayerIds: string[]; layers: SavedLayer[];
   activeLayerId: string; history: PersistedHistory; view: ViewState;
   thumbnail?: Blob; thumbnailVersion: number;
 }
 export interface SavedProjectMeta {
   version: typeof PROJECT_VERSION; pageOrder: string[]; activePageId: string; fonts: ProjectFont[];
-  binOrder: string[]; lastPagePpi: number;
-}
-export interface SavedBinItem {
-  id: string;
-  name: string;
-  hierarchy: HierarchyItem[];
-  layers: SavedLayer[];
-  activeLayerId: string;
-  history: PersistedHistory;
-  ppi: number;
-  visible: boolean;
-}
-export interface SavedSharedLayerEntity {
-  id: string;
-  owner: DocumentAddress;
-  layer: SavedLayer;
-  tombstone: boolean;
 }
 export interface SavedAppSettings {
   tools: ToolInstance[]; toolLayout: ToolLayoutItem[]; toolStacks: ToolStack[];
@@ -74,8 +56,6 @@ function ensureStores(d: IDBPDatabase, tx: IDBPTransaction<unknown, string[], 'v
   if (!frames.indexNames.contains('pageId')) frames.createIndex('pageId', 'pageId');
   if (!d.objectStoreNames.contains('clipboard')) d.createObjectStore('clipboard');
   if (!d.objectStoreNames.contains('thumbnails')) d.createObjectStore('thumbnails');
-  if (!d.objectStoreNames.contains('bins')) d.createObjectStore('bins', { keyPath: 'id' });
-  if (!d.objectStoreNames.contains('entities')) d.createObjectStore('entities', { keyPath: 'id' });
 }
 
 function db(): Promise<IDBPDatabase> {
@@ -98,13 +78,7 @@ async function refreshProjectBytes(): Promise<void> {
     d.get('kv', 'project-meta') as Promise<SavedProjectMeta | undefined>,
     d.getAll('pages') as Promise<SavedPage[]>,
   ]);
-  const [bins, entities] = await Promise.all([
-    d.getAll('bins') as Promise<SavedBinItem[]>,
-    d.getAll('entities') as Promise<SavedSharedLayerEntity[]>,
-  ]);
   projectBytes = pages.reduce((n, page) => n + pageBytes(page), 0)
-    + bins.reduce((n, item) => n + item.layers.reduce((sum, layer) => sum + (layer.content?.size ?? 0), 0), 0)
-    + entities.reduce((n, item) => n + (item.layer.content?.size ?? 0), 0)
     + (meta?.fonts ?? []).reduce((n, font) => n + font.dataUrl.length, 0);
 }
 
@@ -140,62 +114,23 @@ export async function loadPageThumbnail(id: string): Promise<Blob | undefined> {
   return await (await db()).get('thumbnails', id) as Blob | undefined;
 }
 
-export async function saveBinItem(item: SavedBinItem): Promise<void> {
-  await (await db()).put('bins', item);
-  void refreshProjectBytes();
-}
-export async function loadBinItem(id: string): Promise<SavedBinItem | undefined> {
-  return await (await db()).get('bins', id) as SavedBinItem | undefined;
-}
-export async function loadBinItems(): Promise<SavedBinItem[]> {
-  return await (await db()).getAll('bins') as SavedBinItem[];
-}
-export async function deleteBinItem(id: string): Promise<void> {
-  await (await db()).delete('bins', id);
-  void refreshProjectBytes();
-}
-export async function saveSharedLayerEntity(entity: SavedSharedLayerEntity): Promise<void> {
-  await (await db()).put('entities', entity);
-  void refreshProjectBytes();
-}
-export async function loadSharedLayerEntities(): Promise<SavedSharedLayerEntity[]> {
-  return await (await db()).getAll('entities') as SavedSharedLayerEntity[];
-}
-export async function replaceSharedLayerEntities(entities: readonly SavedSharedLayerEntity[]): Promise<void> {
-  const d = await db();
-  const tx = d.transaction('entities', 'readwrite');
-  await tx.store.clear();
-  for (const entity of entities) void tx.store.put(entity);
-  await tx.done;
-  void refreshProjectBytes();
-}
-
 /** Replace all project data with the given meta and pages. */
-export async function replaceProject(
-  meta: SavedProjectMeta,
-  pages: SavedPage[],
-  bins: SavedBinItem[] = [],
-  entities: SavedSharedLayerEntity[] = [],
-): Promise<void> {
+export async function replaceProject(meta: SavedProjectMeta, pages: SavedPage[]): Promise<void> {
   const d = await db();
   referenceGeneration++;
-  const tx = d.transaction(['kv', 'pages', 'references', 'frames', 'clipboard', 'thumbnails', 'bins', 'entities'], 'readwrite');
+  const tx = d.transaction(['kv', 'pages', 'references', 'frames', 'clipboard', 'thumbnails'], 'readwrite');
   await Promise.all([
     tx.objectStore('pages').clear(),
     tx.objectStore('references').clear(),
     tx.objectStore('frames').clear(),
     tx.objectStore('clipboard').clear(),
     tx.objectStore('thumbnails').clear(),
-    tx.objectStore('bins').clear(),
-    tx.objectStore('entities').clear(),
   ]);
   void tx.objectStore('kv').put(meta, 'project-meta');
   for (const page of pages) {
     void tx.objectStore('pages').put(page);
     if (page.thumbnail) void tx.objectStore('thumbnails').put(page.thumbnail, page.id);
   }
-  for (const item of bins) void tx.objectStore('bins').put(item);
-  for (const entity of entities) void tx.objectStore('entities').put(entity);
   await tx.done;
   activePageId = meta.activePageId;
   frameBytes = 0;

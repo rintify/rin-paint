@@ -14,15 +14,15 @@ function sampleCanvas(width = 8, height = 4): HTMLCanvasElement {
 }
 
 describe('image layer persistence', () => {
-  const env = { pageFrame: { w: 100, h: 80 }, withContent: false, keepCanvas: false, onEncoded() {} };
+  const env = { artboard: { w: 100, h: 80 }, withContent: false, keepCanvas: false, onEncoded() {} };
   const frame = { x: 2, y: 3, width: 16, height: 8, rotation: 0.2 };
   const common = {
     name: '画像',
     opacity: 1,
     blend: 'source-over' as const,
     visible: true,
-    scopeId: null as string | null,
-    scopeLayerIds: [] as string[],
+    parentId: null as string | null,
+    childIds: [] as string[],
   };
 
   it('round-trips geometry and snap through snapshot and saved data', async () => {
@@ -52,7 +52,7 @@ describe('image layer persistence', () => {
       common,
       state: { placement: frame },
       canvas: sampleCanvas(),
-    }, { pageFrame: { w: 100, h: 80 } });
+    }, { artboard: { w: 100, h: 80 } });
     expect(restored && restored.type === 'image' && restored.state.snapEnabled).toBe(true);
     expect(restored && restored.type === 'image' && restored.state.constrainAspect).toBe(true);
   });

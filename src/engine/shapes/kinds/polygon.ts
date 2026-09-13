@@ -36,8 +36,8 @@ export const polygonShapeKind: ShapeKindHandler<PolygonShapeParams> = {
 
   normalize: shape => ({ ...shape, rotation: shape.rotation ?? 0, cornerRadius: Math.max(0, shape.cornerRadius ?? 0) }),
 
-  draw(ctx, shape, pageFrame) {
-    paintClosed(ctx, normalizeShapePaintMode(shape.paintMode), pageFrame, () => appendRoundedClosedPolyline(ctx, worldPoints(shape), shape.cornerRadius ?? 0));
+  draw(ctx, shape, artboard) {
+    paintClosed(ctx, normalizeShapePaintMode(shape.paintMode), artboard, () => appendRoundedClosedPolyline(ctx, worldPoints(shape), shape.cornerRadius ?? 0));
   },
 
   paintMode: shape => normalizeShapePaintMode(shape.paintMode),

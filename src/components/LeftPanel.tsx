@@ -6,7 +6,7 @@ import {
 } from '@mui/material';
 import { useStore } from '../state/store';
 import { HistoryControls } from './HistoryControls';
-import { HierarchyPanel } from './HierarchyPanel';
+import { LayerPanel } from './LayerPanel';
 import { MainMenu } from './MainMenu';
 import { PageManagerButton, PageStepper } from './PageControls';
 import { StorageUsage } from './StorageUsage';
@@ -75,7 +75,7 @@ export function LeftPanel() {
             </Box>
           </Box>
           <Box className="layers-pane">
-            <HierarchyPanel />
+            <LayerPanel />
           </Box>
         </Box>
       </Box>

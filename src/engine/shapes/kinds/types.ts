@@ -2,7 +2,7 @@ import type { ShapePaintMode, ShapeParams, ShapePoint, StrokePoint } from '../..
 import type { ShapeBounds } from '../geometry';
 
 /** fill-outside の外枠に使うアートボードサイズ */
-export interface ShapePageFrame {
+export interface ShapeArtboard {
   w: number;
   h: number;
 }
@@ -27,7 +27,7 @@ export interface ShapeControlField {
   value: number;
   min?: number;
   /** true なら内部は px、UI は現在ページ ppi で mm 表示・入力する */
-  pageLength?: boolean;
+  canvasLength?: boolean;
   make(value: number, shape: ShapeParams): ShapeParams;
 }
 
@@ -37,7 +37,7 @@ export interface ShapeParameterField {
   label: string;
   min?: number;
   /** true なら内部は px、UI は現在ページ ppi で mm 表示・入力する */
-  pageLength?: boolean;
+  canvasLength?: boolean;
   read(shape: ShapeParams): number;
   write(shape: ShapeParams, value: number): ShapeParams;
 }
@@ -120,7 +120,7 @@ export interface ShapeKindHandler<S extends ShapeParams = ShapeParams> {
   normalize(shape: S): ShapeParams;
 
   /** 色・線幅を設定済みの ctx へ輪郭を描く */
-  draw(ctx: CanvasRenderingContext2D, shape: S, pageFrame: ShapePageFrame): void;
+  draw(ctx: CanvasRenderingContext2D, shape: S, artboard: ShapeArtboard): void;
   /** 塗り方。輪郭しか持たない種類は常に stroke */
   paintMode(shape: S): ShapePaintMode;
   /** 塗り方の変更。選べない種類は素通しする */

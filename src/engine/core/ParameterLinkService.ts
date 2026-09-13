@@ -1,10 +1,8 @@
-import {
-  canLinkDocuments,
-  scopedAddressKey,
-  type LayerAddress,
-  type LayerLinkEndpointSummary,
-  type LayerParameterLink,
-  type SemanticParameterValue,
+import type {
+  LayerAddress,
+  LayerLinkEndpointSummary,
+  LayerParameterLink,
+  SemanticParameterValue,
 } from '../../model';
 import { useStore } from '../../state/store';
 import {
@@ -17,15 +15,13 @@ import type { Layer } from '../layers';
 import { applyRecordProps, layerTypeProps } from '../layer-types/registry';
 import type { LayerProps } from '../layer-types/definition';
 import { hostFromRecord, type ParameterHost } from '../parameters/host';
-import { loadPage, saveBinItem, savePage, type SavedBinItem, type SavedLayer, type SavedPage } from '../persistence/db';
+import { loadPage, savePage, type SavedLayer, type SavedPage } from '../persistence/db';
 import type { PaintEngine } from '../PaintEngine';
-import { savedCanvasScopePath } from '../entities/linkedRecords';
 
 export interface LayerLinkCandidate {
   address: LayerAddress;
   name: string;
   pageIndex: number;
-  documentLabel: string;
   type: string;
   compatibleCount: number;
   equalCount: number;
@@ -42,18 +38,11 @@ interface RecordEntry {
 }
 
 function addrKey(address: LayerAddress): string {
-  return scopedAddressKey(address);
+  return `${address.pageId}:${address.layerId}`;
 }
 
 function sameAddress(a: LayerAddress, b: LayerAddress): boolean {
-  return addrKey(a) === addrKey(b);
-}
-
-function sameScope(a: LayerAddress, b: LayerAddress): boolean {
-  if (a.scopePath.length === 0 && b.scopePath.length === 0) return true;
-  return a.document.kind === b.document.kind
-    && a.document.id === b.document.id
-    && a.scopePath.join('\0') === b.scopePath.join('\0');
+  return a.pageId === b.pageId && a.layerId === b.layerId;
 }
 
 function cloneLink(link: LayerParameterLink | undefined | null): LayerParameterLink | null {
@@ -88,19 +77,7 @@ export class ParameterLinkService {
   flush(): Promise<void> { return this.pending; }
 
   private currentAddress(layerId: string): LayerAddress {
-    const state = useStore.getState();
-    const editing = state.editingDocument?.id
-      ? state.editingDocument
-      : { kind: 'page' as const, id: this.engine.pages.activePageId };
-    const scopePath: string[] = [];
-    const byId = (id: string) => (this.engine.layerService as unknown as { byId?: (value: string) => Layer | null }).byId?.(id)
-      ?? this.engine.layerService.layers.find(layer => layer.id === id) ?? null;
-    let current = byId(layerId);
-    while (current?.scopeId) {
-      scopePath.unshift(current.scopeId);
-      current = byId(current.scopeId);
-    }
-    return { document: editing, scopePath, nodeId: layerId };
+    return { pageId: this.engine.pages.activePageId, layerId };
   }
 
   private rebuildIndex(): void {
@@ -119,17 +96,13 @@ export class ParameterLinkService {
 
   private collectRecords(): RecordEntry[] {
     const result: RecordEntry[] = [];
-    const state = useStore.getState();
-    const editing = state.editingDocument?.id
-      ? state.editingDocument
-      : { kind: 'page' as const, id: this.engine.pages.activePageId };
     for (const pageId of this.engine.pages.pageOrder) {
-      if (editing.kind === 'page' && pageId === editing.id) {
+      if (pageId === this.engine.pages.activePageId) {
         for (const layer of this.engine.layerService.layers) {
           result.push({
-            address: this.currentAddress(layer.id),
+            address: { pageId, layerId: layer.id },
             host: layer,
-            ppi: this.engine.getPageSpec().ppi,
+            ppi: this.engine.getCanvasSpec().ppi,
             live: true,
             liveLayer: layer,
           });
@@ -139,32 +112,35 @@ export class ParameterLinkService {
         if (!page) continue;
         for (const layer of page.layers) {
           result.push({
-            address: { document: { kind: 'page', id: pageId }, scopePath: savedCanvasScopePath(layer.id, page.layers), nodeId: layer.id },
-            host: hostFromRecord(layer, page.pageSpec.ppi),
-            ppi: page.pageSpec.ppi,
+            address: { pageId, layerId: layer.id },
+            host: hostFromRecord(layer),
+            ppi: page.canvasSpec.ppi,
             live: false,
             stored: layer,
           });
         }
       }
     }
-    const bins = ((this.engine as unknown as { bins?: { items?: SavedBinItem[] } }).bins?.items ?? []);
-    for (const bin of bins) {
-      if (editing.kind === 'bin' && editing.id === bin.id) {
-        for (const layer of this.engine.layerService.layers) result.push({
-          address: this.currentAddress(layer.id), host: layer, ppi: this.engine.getPageSpec().ppi,
-          live: true, liveLayer: layer,
-        });
-      } else for (const layer of bin.layers) result.push({
-        address: { document: { kind: 'bin', id: bin.id }, scopePath: savedCanvasScopePath(layer.id, bin.layers), nodeId: layer.id },
-        host: hostFromRecord(layer, bin.ppi), ppi: bin.ppi, live: false, stored: layer,
-      });
-    }
     return result;
   }
 
   private records(): RecordEntry[] {
-    this.rebuildIndex();
+    if (!this.entriesByKey.size) this.rebuildIndex();
+    const livePage = this.engine.pages.activePageId;
+    const stale = [...this.entriesByKey.values()].some(entry =>
+      entry.address.pageId === livePage ? !entry.live : entry.live,
+    );
+    if (stale) this.rebuildIndex();
+    else {
+      for (const layer of this.engine.layerService.layers) {
+        const key = addrKey({ pageId: livePage, layerId: layer.id });
+        const existing = this.entriesByKey.get(key);
+        if (existing?.live) {
+          existing.host = layer;
+          existing.liveLayer = layer;
+        }
+      }
+    }
     return [...this.entriesByKey.values()];
   }
 
@@ -176,20 +152,17 @@ export class ParameterLinkService {
   private apply(entry: RecordEntry, props: LayerProps): void {
     if (entry.live && entry.liveLayer) this.engine.layerService.assignProps(entry.liveLayer, props);
     else if (entry.stored) {
-      applyRecordProps(entry.stored, props, entry.ppi);
-      entry.host = hostFromRecord(entry.stored, entry.ppi);
+      applyRecordProps(entry.stored, props);
+      entry.host = hostFromRecord(entry.stored);
     }
     this.rebuildIndex();
   }
 
-  private enqueueSaves(addresses: Set<string>): void {
-    if (!addresses.size) return;
-    const pages = [...addresses].filter(key => key.startsWith('page:')).map(key => this.pages.get(key.slice(5))).filter((page): page is SavedPage => !!page);
-    const bins = ((this.engine as unknown as { bins?: { items?: SavedBinItem[] } }).bins?.items ?? [])
-      .filter(bin => addresses.has(`bin:${bin.id}`));
+  private enqueueSaves(pageIds: Set<string>): void {
+    if (!pageIds.size) return;
+    const pages = [...pageIds].map(id => this.pages.get(id)).filter((page): page is SavedPage => !!page);
     this.pending = this.pending.then(async () => {
       for (const page of pages) await savePage(page);
-      for (const bin of bins) await saveBinItem(bin);
     }).catch(() => {
       useStore.getState().set({ toolNotice: '別ページのリンク更新を保存できませんでした。ページ表示時に再同期します。' });
     });
@@ -224,8 +197,7 @@ export class ParameterLinkService {
     hint?: { name: string; pageIndex: number },
   ): LayerParameterLink {
     const source = this.find(sourceAddress);
-    const sourcePageIndex = sourceAddress.document.kind === 'page'
-      ? Math.max(0, this.engine.pages.pageOrder.indexOf(sourceAddress.document.id)) : -1;
+    const sourcePageIndex = Math.max(0, this.engine.pages.pageOrder.indexOf(sourceAddress.pageId));
     const link: LayerParameterLink = {
       source: { ...sourceAddress },
       sourceNameHint: source?.host.name ?? hint?.name ?? '削除済みレイヤー',
@@ -252,7 +224,7 @@ export class ParameterLinkService {
   createPasteLink(targetLayerId: string, source: LayerAddress, hint?: { name: string; pageIndex: number }): void {
     this.rebuildIndex();
     const target = this.find(this.currentAddress(targetLayerId));
-    if (!target || !canLinkDocuments(target.address.document, source.document) || !sameScope(target.address, source)) return;
+    if (!target) return;
     const link = this.makeLink(target, source, false, hint);
     this.apply(target, { parameterLink: link });
     this.propagateFrom(source);
@@ -263,8 +235,7 @@ export class ParameterLinkService {
     this.rebuildIndex();
     const targetAddress = this.currentAddress(targetLayerId);
     const target = this.find(targetAddress);
-    if (!target || !canLinkDocuments(targetAddress.document, source.document)
-      || !sameScope(targetAddress, source) || this.wouldCycle(targetAddress, source)) return;
+    if (!target || this.wouldCycle(targetAddress, source)) return;
     const before = cloneLink(target.host.parameterLink);
     const after = this.makeLink(target, source, true);
     this.apply(target, { parameterLink: after });
@@ -349,7 +320,7 @@ export class ParameterLinkService {
 
   detachChanged(layer: Layer, before: ParameterHost, after: ParameterHost, preserveIfSourceMatches = false): { before: LayerParameterLink; after: LayerParameterLink } | null {
     if (!layer.parameterLink) return null;
-    const ppi = this.engine.getPageSpec().ppi;
+    const ppi = this.engine.getCanvasSpec().ppi;
     const beforeMap = linkableParameterMap(before), afterMap = linkableParameterMap(after);
     const old = cloneLink(layer.parameterLink)!;
     const next = cloneLink(layer.parameterLink)!;
@@ -374,7 +345,7 @@ export class ParameterLinkService {
 
   propagateFrom(sourceAddress: LayerAddress, preview = false): import('../history/historyTree').LayerLinkOp[] {
     this.rebuildIndex();
-    const dirtyDocuments = new Set<string>();
+    const dirtyPages = new Set<string>();
     const linkChanges: import('../history/historyTree').LayerLinkOp[] = [];
     const queue = [sourceAddress];
     const visitedEdges = new Set<string>();
@@ -398,8 +369,7 @@ export class ParameterLinkService {
         const beforeLink = cloneLink(link)!;
         const next = cloneLink(link)!;
         next.sourceNameHint = source.host.name;
-        next.sourcePageIndexHint = source.address.document.kind === 'page'
-          ? this.engine.pages.pageOrder.indexOf(source.address.document.id) : -1;
+        next.sourcePageIndexHint = this.engine.pages.pageOrder.indexOf(source.address.pageId);
         let changed = false;
         next.linkedParameterIds = next.linkedParameterIds.filter(id => {
           const sourceDescriptor = sourceMap.get(id), targetDescriptor = targetMap.get(id);
@@ -423,12 +393,12 @@ export class ParameterLinkService {
           }
         }
         if (changed || !preview) {
-          if (!target.live) dirtyDocuments.add(`${target.address.document.kind}:${target.address.document.id}`);
+          if (!target.live) dirtyPages.add(target.address.pageId);
           queue.push(target.address);
         }
       }
     }
-    if (!preview) this.enqueueSaves(dirtyDocuments);
+    if (!preview) this.enqueueSaves(dirtyPages);
     return linkChanges;
   }
 
@@ -443,7 +413,7 @@ export class ParameterLinkService {
     const target = this.find(targetAddress);
     if (!target) return;
     this.apply(target, { parameterLink: link });
-    if (!target.live) this.enqueueSaves(new Set([`${targetAddress.document.kind}:${targetAddress.document.id}`]));
+    if (!target.live) this.enqueueSaves(new Set([targetAddress.pageId]));
   }
 
   candidates(targetLayerId: string): LayerLinkCandidate[] {
@@ -461,18 +431,11 @@ export class ParameterLinkService {
       return {
         address: source.address,
         name: source.host.name,
-        pageIndex: source.address.document.kind === 'page'
-          ? this.engine.pages.pageOrder.indexOf(source.address.document.id) : -1,
-        documentLabel: source.address.document.kind === 'page'
-          ? `ページ ${this.engine.pages.pageOrder.indexOf(source.address.document.id) + 1}` : 'ビン',
+        pageIndex: this.engine.pages.pageOrder.indexOf(source.address.pageId),
         type: source.host.type,
         compatibleCount: compatible.length,
         equalCount,
         disabledReason: sameAddress(source.address, targetAddress) ? '自分自身です'
-          : !canLinkDocuments(targetAddress.document, source.address.document)
-            ? 'ビン内からページのレイヤーは参照できません'
-          : !sameScope(source.address, targetAddress)
-            ? 'キャンバスレイヤーの描画スコープを越えて参照できません'
           : this.wouldCycle(targetAddress, source.address) ? '循環参照になります' : undefined,
       };
     });
@@ -491,8 +454,7 @@ export class ParameterLinkService {
     const source = link ? {
       address: { ...link.source },
       name: sourceEntry?.host.name ?? link.sourceNameHint,
-      pageIndex: sourceEntry?.address.document.kind === 'page'
-        ? this.engine.pages.pageOrder.indexOf(sourceEntry.address.document.id) : link.sourcePageIndexHint,
+      pageIndex: sourceEntry ? this.engine.pages.pageOrder.indexOf(sourceEntry.address.pageId) : link.sourcePageIndexHint,
       linkedCount: link.linkedParameterIds.length,
       missing: !sourceEntry,
     } : undefined;
@@ -502,8 +464,7 @@ export class ParameterLinkService {
       return entry?.host.parameterLink ? [{
         address: { ...entry.address },
         name: entry.host.name,
-        pageIndex: entry.address.document.kind === 'page'
-          ? this.engine.pages.pageOrder.indexOf(entry.address.document.id) : -1,
+        pageIndex: this.engine.pages.pageOrder.indexOf(entry.address.pageId),
         linkedCount: entry.host.parameterLink.linkedParameterIds.length,
       }] : [];
     });

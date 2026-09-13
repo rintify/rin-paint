@@ -2,7 +2,6 @@ import type { LayerCommon, LayerType } from '../../model';
 import type { LayerRecord } from '../layer-types/definition';
 import { kindCatalog, layerDefinition, resolvedParameters } from '../layer-types/registry';
 import { resolveCommonParameter, resolveKindParameter } from './catalog';
-import { decodeGeometryState } from '../persistence/geometryState';
 import { commonForLayer } from './common';
 import type { ParameterSurface, ResolvedParameter } from './types';
 
@@ -12,14 +11,12 @@ export function hostFromLayer(layer: ParameterHost): ParameterHost {
   return layer;
 }
 
-export function hostFromRecord(record: LayerRecord, ppi?: number): ParameterHost {
+export function hostFromRecord(record: LayerRecord): ParameterHost {
   return {
     id: record.id,
     type: record.type,
     ...record.common,
-    state: record.geometryUnit === 'mm' && ppi
-      ? decodeGeometryState(record.type, record.state, ppi)
-      : record.state,
+    state: record.state,
   };
 }
 

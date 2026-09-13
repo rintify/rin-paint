@@ -34,49 +34,44 @@ export class AutosaveService {
   flushSave(): Promise<void> {
     const eng = this.engine;
     if (!this.initialized) return Promise.resolve();
+    if (eng.isBusy()) return this.saving ?? Promise.resolve();
     if (this.saveTimer !== null) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
-    const run = async (): Promise<void> => {
-      if (this.saving) await this.saving;
-      if (eng.isBusy() || eng.hasOpenSession()) return;
-      if (this.persistedRevision >= this.saveRevision) return;
-      let failed = false;
-      this.saving = (async () => {
-        while (this.persistedRevision < this.saveRevision) {
-          const targetRevision = this.saveRevision;
-          try {
-            await this.saveSnapshot();
-            this.persistedRevision = targetRevision;
-          } catch {
-            failed = true;
-            break;
-          }
+    if (eng.hasOpenSession()) return Promise.resolve();
+    if (this.saving) return this.saving;
+    let failed = false;
+    this.saving = (async () => {
+      while (this.persistedRevision < this.saveRevision) {
+        const targetRevision = this.saveRevision;
+        try {
+          await this.saveSnapshot();
+          this.persistedRevision = targetRevision;
+        } catch {
+          failed = true;
+          break;
         }
-      })().finally(() => {
-        this.saving = null;
-      });
-      await this.saving;
-      if (!failed && this.persistedRevision < this.saveRevision) await run();
-    };
-    return run();
+      }
+    })().finally(() => {
+      this.saving = null;
+      if (!failed && this.persistedRevision < this.saveRevision) {
+        queueMicrotask(() => void this.flushSave());
+      }
+    });
+    return this.saving;
   }
 
   async saveSnapshot(): Promise<void> {
     const eng = this.engine;
-    if (eng.bins.activeBinId) {
-      await eng.bins.saveActive();
-      return;
-    }
     const ls = eng.layerService;
     const pages = eng.pages;
     const st = useStore.getState();
     // レイヤー内容は同期でコピーされ、PNG 化だけが非同期に進む。
-    const layerSources = ls.layers.map((l) => savedLayerFrom(l, { pageFrame: eng.pageFrame, ppi: eng.getPageSpec().ppi }));
+    const layerSources = ls.layers.map((l) => savedLayerFrom(l, { artboard: eng.artboard }));
     const activeLayerId = ls.activeLayerId;
     const view = eng.view.snapshot();
-    const pageSpec = { ...eng.getPageSpec() };
+    const canvasSpec = { ...eng.getCanvasSpec() };
     const fonts = structuredClone(st.fonts);
     const rootLayerIds = [...ls.rootLayerIds];
     const historyPromise = eng.history.serialize(canvasToBlob);
@@ -86,7 +81,7 @@ export class AutosaveService {
       eng.ensureComposited();
       const thumb = document.createElement('canvas');
       thumb.width = 240;
-      thumb.height = Math.max(1, Math.round(240 * eng.pageFrame.h / eng.pageFrame.w));
+      thumb.height = Math.max(1, Math.round(240 * eng.artboard.h / eng.artboard.w));
       thumb.getContext('2d')!.drawImage(eng.compositor.main, 0, 0, thumb.width, thumb.height);
       thumbnail = await new Promise(resolve => thumb.toBlob(blob => resolve(blob ?? undefined), 'image/webp', .72));
       pages.thumbnailVersion++;
@@ -96,14 +91,11 @@ export class AutosaveService {
       pageOrder: [...pages.pageOrder],
       activePageId: pages.activePageId,
       fonts,
-      binOrder: st.binItems.map(item => item.id),
-      lastPagePpi: pageSpec.ppi,
     });
     const page = {
       id: pages.activePageId,
-      pageSpec,
+      canvasSpec,
       rootLayerIds,
-      hierarchy: structuredClone(ls.rootHierarchy),
       layers,
       activeLayerId,
       history: await historyPromise,
@@ -113,7 +105,6 @@ export class AutosaveService {
     };
     await savePage(page);
     eng.links.noteSavedPage(page);
-    await eng.entities.persist();
     this.scheduleStorageRefresh();
   }
 

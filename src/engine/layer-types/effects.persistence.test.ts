@@ -5,28 +5,27 @@ import { createClipLayer, createOutlineLayer, createAdjustLayer } from '../layer
 import { buildLayerSnapshot, restoreLayerFrom, savedLayerFrom, scaleStoredLayer } from './registry';
 import { DEFAULT_ADJUST, DEFAULT_OUTLINE } from '../../model';
 
-const pageFrame = { w: 100, h: 80 };
-const env = { pageFrame, withContent: false, keepCanvas: false, onEncoded() {} };
+const artboard = { w: 100, h: 80 };
+const env = { artboard, withContent: false, keepCanvas: false, onEncoded() {} };
 
 describe('effect layer persistence', () => {
   it('round-trips outline parameters through project and history representations', async () => {
     const layer = createOutlineLayer('縁どり 1', 'outline-1');
     layer.state.outline = { color: '#123456', widthMm: 3.25, alphaThreshold: .72, cornerStyle: 'sharp' };
     layer.opacity = .4;
-    layer.scopeId = 'parent';
-    const saved = await savedLayerFrom(layer, { pageFrame });
+    layer.parentId = 'parent';
+    const saved = await savedLayerFrom(layer, { artboard });
     expect(saved).toMatchObject({
       type: 'outline',
-      common: { opacity: .4, blend: 'source-over' },
+      common: { opacity: .4, parentId: 'parent', blend: 'source-over' },
       state: { outline: layer.state.outline },
     });
     const snapshot = buildLayerSnapshot(layer, env);
-    expect(snapshot.placement?.scopeId).toBe('parent');
     expect(snapshot.state).toEqual({ outline: layer.state.outline });
-    const restored = await restoreLayerFrom(saved, { pageFrame });
+    const restored = await restoreLayerFrom(saved, { artboard });
     expect(restored?.state).toEqual(saved.state);
     expect(restored?.opacity).toBe(.4);
-    await scaleStoredLayer(saved, { pageFrame, factor: 4 });
+    await scaleStoredLayer(saved, { artboard, factor: 4 });
     expect((saved.state as { outline: { widthMm: number } }).outline.widthMm).toBe(3.25);
   });
 
@@ -34,13 +33,13 @@ describe('effect layer persistence', () => {
     const layer = createClipLayer('クリップ 1', 'clip-1');
     layer.state.maskLayerIds = ['mask-a', 'mask-b'];
     layer.opacity = .5;
-    const saved = await savedLayerFrom(layer, { pageFrame });
+    const saved = await savedLayerFrom(layer, { artboard });
     expect(saved).toMatchObject({
       type: 'clip',
       common: { opacity: .5 },
       state: { maskLayerIds: ['mask-a', 'mask-b'] },
     });
-    const restored = await restoreLayerFrom(saved, { pageFrame });
+    const restored = await restoreLayerFrom(saved, { artboard });
     expect(restored?.type).toBe('clip');
     expect(restored && restored.type === 'clip' && restored.state.maskLayerIds).toEqual(['mask-a', 'mask-b']);
   });
@@ -51,8 +50,8 @@ describe('effect layer persistence', () => {
     const outline = createOutlineLayer('縁', 'o1');
     expect(outline.state.outline).toMatchObject(DEFAULT_OUTLINE);
     for (const layer of [adjust, outline]) {
-      const saved = await savedLayerFrom(layer, { pageFrame });
-      const restored = await restoreLayerFrom(saved, { pageFrame });
+      const saved = await savedLayerFrom(layer, { artboard });
+      const restored = await restoreLayerFrom(saved, { artboard });
       expect(restored?.type).toBe(layer.type);
       expect(restored?.state).toEqual(layer.state);
     }

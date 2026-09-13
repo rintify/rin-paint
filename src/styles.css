@@ -196,12 +196,6 @@
   box-shadow: inset 3px 0 0 #4f8cff;
 }
 .layer-flat-row.is-dragging { filter: opacity(.45); }
-.layer-flat-row.stack-member-expanded::before {
-  content: ''; position: absolute; left: -7px; top: -3px; bottom: -3px; width: 3px;
-  border-radius: 3px; background: #4f8cff; opacity: .7;
-}
-.layer-flat-row.stack-collapsed { box-shadow: -3px 3px 0 #182330, -6px 6px 0 #111922; }
-.bin-editor-frame { background: transparent !important; box-shadow: none !important; outline: none; }
 .primary-badge {
   flex: none;
   min-width: 22px;
@@ -500,7 +494,7 @@
   background: radial-gradient(circle at 50% 40%, #22252c 0%, var(--bg) 75%);
 }
 
-.pageFrame {
+.artboard {
   position: relative;
   touch-action: none;
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.55);
@@ -509,7 +503,7 @@
   will-change: transform;
 }
 
-.pageFrame canvas {
+.artboard canvas {
   position: absolute;
   inset: 0;
   width: 100%;

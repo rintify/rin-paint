@@ -89,7 +89,7 @@ export function MaskControls({ meta, mode = 'adjust' }: { meta: LayerMeta; mode?
                 label={byId.get(id)?.name ?? '削除済み'}
                 clickable
                 onClick={() => focusLayerRow(id)}
-                aria-label={`${byId.get(id)?.name ?? '削除済み'}をヒエラルキーで表示`}
+                aria-label={`${byId.get(id)?.name ?? '削除済み'}をレイヤー一覧で表示`}
                 onDelete={event => {
                   event.stopPropagation();
                   engine.commitLayerProps(
@@ -104,7 +104,7 @@ export function MaskControls({ meta, mode = 'adjust' }: { meta: LayerMeta; mode?
           </Stack>
         )}
         <Typography variant="caption" color="text.secondary">
-          ヒエラルキーからここへドロップして追加できます。
+          レイヤー一覧からここへドロップして追加できます。
         </Typography>
       </Stack>
       <Dialog
@@ -144,7 +144,7 @@ export function MaskControls({ meta, mode = 'adjust' }: { meta: LayerMeta; mode?
                     label={byId.get(id)?.name ?? '削除済み'}
                     clickable
                     onClick={() => focusLayerRow(id)}
-                    aria-label={`${byId.get(id)?.name ?? '削除済み'}をヒエラルキーで表示`}
+                    aria-label={`${byId.get(id)?.name ?? '削除済み'}をレイヤー一覧で表示`}
                     onDelete={event => {
                       event.stopPropagation();
                       setDraft(current => current.filter(value => value !== id));

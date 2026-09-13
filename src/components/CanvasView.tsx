@@ -32,7 +32,7 @@ function ViewChip() {
   );
 }
 
-export function PageView() {
+export function CanvasView() {
   const engine = useEngine();
   const areaRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -42,18 +42,9 @@ export function PageView() {
   const [dropActive, setDropActive] = useState(false);
   const selectionActive = useStore((s) => s.selectionActive);
   const freeTransform = useStore((s) => s.freeTransform);
-  const hasTransformableObjects = useStore((s) => s.selectedLayerIds.some(id => {
-    const layer = s.layers.find(item => item.id === id);
-    return !!layer && canTransformObjectType(layer.type);
-  }));
-  const projectiveOnly = useStore((s) => {
-    const selected = s.selectedLayerIds
-      .map(id => s.layers.find(item => item.id === id))
-      .filter((layer): layer is NonNullable<typeof layer> => !!layer && canTransformObjectType(layer.type));
-    return selected.length > 0 && selected.every(layer => layer.type === 'transform');
-  });
-  const pageW = useStore((s) => s.pageW);
-  const pageH = useStore((s) => s.pageH);
+  const objectSelected = useStore((s) => s.selectedLayerIds.some(id => { const layer = s.layers.find(item => item.id === id); return !!layer && canTransformObjectType(layer.type); }));
+  const canvasW = useStore((s) => s.canvasW);
+  const canvasH = useStore((s) => s.canvasH);
   const polygonDraftActive = useStore((s) => s.polygonDraftActive);
   const polygonDraftPointCount = useStore((s) => s.polygonDraftPointCount);
   const bubbleDraftActive = useStore((s) => s.bubbleDraftActive);
@@ -63,7 +54,6 @@ export function PageView() {
   const shapeHandleEdgeConstrained = useStore((s) => s.shapeHandleEdgeConstrained);
   const fillProgress = useStore((s) => s.fillProgress);
   const toolNotice = useStore((s) => s.toolNotice);
-  const editingDocument = useStore((s) => s.editingDocument);
 
   useEffect(() => {
     const el = areaRef.current!;
@@ -71,16 +61,16 @@ export function PageView() {
       const pad = 24;
       const bw = el.clientWidth - pad * 2;
       const bh = el.clientHeight - pad * 2;
-      const scale = Math.max(0.01, Math.min(bw / pageW, bh / pageH));
-      const w = Math.round(pageW * scale);
-      setSize({ w, h: Math.round(pageH * scale) });
+      const scale = Math.max(0.01, Math.min(bw / canvasW, bh / canvasH));
+      const w = Math.round(canvasW * scale);
+      setSize({ w, h: Math.round(canvasH * scale) });
       engine.setFitWidth(w);
     };
     const ro = new ResizeObserver(refit);
     ro.observe(el);
     refit();
     return () => ro.disconnect();
-  }, [pageW, pageH]);
+  }, [canvasW, canvasH]);
 
   useEffect(() => {
     engine.attach(mainRef.current!, overlayRef.current!, wrapRef.current!, areaRef.current!);
@@ -89,7 +79,7 @@ export function PageView() {
 
   useEffect(() => {
     engine.requestRender();
-  }, [pageW, pageH]);
+  }, [canvasW, canvasH]);
 
   useEffect(() => {
     engine.requestOverlayRender();
@@ -127,20 +117,14 @@ export function PageView() {
       }}
     >
       <Box
-        className={`pageFrame${editingDocument.kind === 'bin' ? ' bin-editor-frame' : ''}`}
+        className="artboard"
         ref={wrapRef}
         style={{ width: size.w, height: size.h }}
       >
-        <canvas ref={mainRef} width={pageW} height={pageH} />
-        <TextEditor fitScale={size.w / pageW} />
+        <canvas ref={mainRef} width={canvasW} height={canvasH} />
+        <TextEditor fitScale={size.w / canvasW} />
       </Box>
       <canvas ref={overlayRef} className="canvas-overlay" aria-hidden="true" />
-      {editingDocument.kind === 'bin' && (
-        <Paper data-canvas-ui elevation={4} sx={{ position: 'absolute', top: 14, left: 14, zIndex: 7, display: 'flex', alignItems: 'center', gap: 1, p: .75 }}>
-          <Typography variant="caption">ビン内レイヤーを編集中</Typography>
-          <Button size="small" variant="contained" onClick={() => void engine.returnToPage().catch(error => appAlert(String(error)))}>ページへ戻る</Button>
-        </Paper>
-      )}
       {selectionActive && (
         <Paper
           elevation={6}
@@ -161,10 +145,8 @@ export function PageView() {
         >
           <Button
             variant={freeTransform ? 'contained' : 'outlined'}
-            disabled={hasTransformableObjects && !projectiveOnly}
-            title={hasTransformableObjects && !projectiveOnly
-              ? '図形・文字を含む選択では自由変形を使用できません'
-              : '角を個別に動かして射影変換'}
+            disabled={objectSelected}
+            title={objectSelected ? '図形・文字を含む選択では自由変形を使用できません' : '角を個別に動かして変形'}
             onClick={() => engine.setSelectionFreeTransform(!freeTransform)}
           >
             自由変形

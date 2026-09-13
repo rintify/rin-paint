@@ -11,7 +11,6 @@ import {
 } from '../persistence/db';
 import { PROJECT_VERSION } from '../persistence/version';
 import type { PaintEngine } from '../PaintEngine';
-import { layerItem } from '../../model';
 
 function toBlobP(c: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) =>
@@ -38,8 +37,6 @@ export class PageService {
       pageOrder: [...this.pageOrder],
       activePageId: this.activePageId,
       fonts: structuredClone(st.fonts),
-      binOrder: [...(st.binItems?.map(item => item.id) ?? [])],
-      lastPagePpi: this.engine.getPageSpec().ppi,
     });
   }
 
@@ -47,13 +44,12 @@ export class PageService {
     const eng = this.engine;
     await eng.flushSavePublic();
     const id = this.newPageId();
-    const layer = createRasterLayer('レイヤー 1', eng.pageFrame.w, eng.pageFrame.h, undefined, false, eng.getPageSpec().ppi);
+    const layer = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
     const history = new HistoryTree();
     const page: SavedPage = {
       id,
-      pageSpec: { ...eng.getPageSpec() },
+      canvasSpec: { ...eng.getCanvasSpec() },
       rootLayerIds: [layer.id],
-      hierarchy: [layerItem(layer.id)],
       activeLayerId: layer.id,
       layers: [{ ...eng.layerService.snapshotLayer(layer, false), content: await toBlobP(layer.runtime.canvas) }],
       history: await history.serialize(toBlobP),
@@ -85,7 +81,6 @@ export class PageService {
       const page = await loadPage(id);
       if (!page) throw new Error('ページを読み込めませんでした');
       this.activePageId = id;
-      useStore.getState().set({ editingDocument: { kind: 'page', id } });
       setPersistencePageId(id);
       await eng.restoreSavedPagePublic(page);
       eng.links.reconcileAll();

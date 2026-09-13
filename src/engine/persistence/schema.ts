@@ -23,21 +23,9 @@ function isLocation(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const loc = value as Record<string, unknown>;
   return (
-    (loc.scopeId === null || typeof loc.scopeId === 'string') &&
+    (loc.parentId === null || typeof loc.parentId === 'string') &&
     typeof loc.index === 'number'
   );
-}
-
-function isScopedLayerAddress(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false;
-  const address = value as Record<string, unknown>;
-  const document = address.document as Record<string, unknown> | undefined;
-  return !!document
-    && (document.kind === 'page' || document.kind === 'bin')
-    && typeof document.id === 'string'
-    && Array.isArray(address.scopePath)
-    && address.scopePath.every(id => typeof id === 'string')
-    && typeof address.nodeId === 'string';
 }
 
 function isLayerLink(value: unknown): boolean {
@@ -47,7 +35,8 @@ function isLayerLink(value: unknown): boolean {
   const source = link.source as Record<string, unknown> | undefined;
   const fallback = link.fallbackValues as Record<string, unknown> | undefined;
   return !!source
-    && isScopedLayerAddress(source)
+    && typeof source.pageId === 'string'
+    && typeof source.layerId === 'string'
     && typeof link.sourceNameHint === 'string'
     && typeof link.sourcePageIndexHint === 'number'
     && Array.isArray(link.linkedParameterIds)
@@ -67,6 +56,8 @@ function isCommon(value: unknown): boolean {
     typeof c.opacity === 'number' &&
     typeof c.blend === 'string' &&
     typeof c.visible === 'boolean' &&
+    (c.parentId === null || typeof c.parentId === 'string') &&
+    Array.isArray(c.childIds) &&
     (c.parameterLink === undefined || isLayerLink(c.parameterLink))
   );
 }
@@ -79,10 +70,6 @@ function isLayerSnapshot(value: unknown): boolean {
     typeof s.type === 'string' &&
     isCommon(s.common) &&
     'state' in s &&
-    (s.geometryUnit === undefined || s.geometryUnit === 'mm') &&
-    (s.dataLink === undefined || isScopedLayerAddress(s.dataLink)) &&
-    (s.dataLinkInstanceId === undefined || typeof s.dataLinkInstanceId === 'string') &&
-    (s.canvasStructureSource === undefined || isScopedLayerAddress(s.canvasStructureSource)) &&
     (s.content === undefined || isBlob(s.content))
   );
 }
@@ -99,9 +86,6 @@ function isAtomicOp(value: unknown): value is PersistedAtomicOp {
       return isLocation(op.location) && Array.isArray(op.snapshots) && op.snapshots.every(isLayerSnapshot);
     case 'layerMove':
       return typeof op.layerId === 'string' && isLocation(op.from) && isLocation(op.to);
-    case 'hierarchyChange':
-      return (op.scopeId === null || typeof op.scopeId === 'string')
-        && Array.isArray(op.before) && Array.isArray(op.after);
     case 'layerProps':
       return typeof op.layerId === 'string' && !!op.before && !!op.after;
     case 'layerParameter':
@@ -111,18 +95,10 @@ function isAtomicOp(value: unknown): value is PersistedAtomicOp {
         && (op.after === null || typeof op.after === 'string' || typeof op.after === 'boolean'
           || (typeof op.after === 'number' && Number.isFinite(op.after)));
     case 'layerLink': {
-      const target = op.target;
-      return isScopedLayerAddress(target)
+      const target = op.target as Record<string, unknown> | undefined;
+      return !!target && typeof target.pageId === 'string' && typeof target.layerId === 'string'
         && isLayerLink(op.before) && isLayerLink(op.after);
     }
-    case 'layerDataLink':
-      return typeof op.layerId === 'string'
-        && (op.before === null || isScopedLayerAddress(op.before))
-        && (op.after === null || isScopedLayerAddress(op.after))
-        && (op.beforeInstanceId === undefined || typeof op.beforeInstanceId === 'string')
-        && (op.afterInstanceId === undefined || typeof op.afterInstanceId === 'string')
-        && (op.beforeStructureSource === undefined || isScopedLayerAddress(op.beforeStructureSource))
-        && (op.afterStructureSource === undefined || isScopedLayerAddress(op.afterStructureSource));
     case 'layerReplace': {
       const side = (value: unknown) => {
         if (!value || typeof value !== 'object') return false;
@@ -140,7 +116,7 @@ function isAtomicOp(value: unknown): value is PersistedAtomicOp {
       };
       return side(op.before) && side(op.after);
     }
-    case 'pageChange':
+    case 'canvasChange':
       return !!op.before && !!op.after;
     case 'layerMerge':
       return (
@@ -182,7 +158,7 @@ export function isPersistedHistory(value: unknown): value is PersistedHistory {
       !node ||
       !Number.isInteger(node.id) ||
       typeof node.label !== 'string' ||
-      !Array.isArray(node.scopeLayerIds) ||
+      !Array.isArray(node.childIds) ||
       (node.op !== null && !isPersistedOp(node.op))
     ) {
       return false;
@@ -202,9 +178,7 @@ export function isSavedProjectMeta(value: unknown): value is SavedProjectMeta {
     Array.isArray(m.pageOrder) &&
     m.pageOrder.length > 0 &&
     typeof m.activePageId === 'string' &&
-    Array.isArray(m.fonts) &&
-    Array.isArray(m.binOrder) &&
-    typeof m.lastPagePpi === 'number'
+    Array.isArray(m.fonts)
   );
 }
 
@@ -213,9 +187,8 @@ export function isSavedPage(value: unknown): value is SavedPage {
   const p = value as Partial<SavedPage>;
   return (
     typeof p.id === 'string' &&
-    !!p.pageSpec &&
+    !!p.canvasSpec &&
     Array.isArray(p.rootLayerIds) &&
-    Array.isArray(p.hierarchy) &&
     Array.isArray(p.layers) && p.layers.every(isLayerSnapshot) &&
     typeof p.activeLayerId === 'string' &&
     isPersistedHistory(p.history) &&

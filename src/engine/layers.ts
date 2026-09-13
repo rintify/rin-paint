@@ -4,20 +4,15 @@ import {
   normalizeImageParams,
   type ImageParams,
   type LayerCommon,
-  type LayerPlacement,
   type LayerKindMap,
   type LayerType,
   type ShapeParams,
   type TextParams,
-  type HierarchyItem,
-  type TransformState,
-  identityTransformState,
 } from '../model';
 import { DEFAULT_ADJUST } from '../model/adjust';
 import { DEFAULT_OUTLINE } from '../model/outline';
-import { SparseRasterSurface } from './raster/SparseRasterSurface';
 
-export type LayerOf<K extends LayerType = LayerType> = LayerCommon & LayerPlacement & {
+export type LayerOf<K extends LayerType = LayerType> = LayerCommon & {
   type: K;
   state: LayerKindMap[K]['state'];
   runtime: LayerKindMap[K]['runtime'];
@@ -30,8 +25,6 @@ export type ClipLayer = LayerOf<'clip'>;
 export type ShapeLayer = LayerOf<'shape'>;
 export type TextLayer = LayerOf<'text'>;
 export type ImageLayer = LayerOf<'image'>;
-export type CanvasLayer = LayerOf<'canvas'>;
-export type TransformLayer = LayerOf<'transform'>;
 export type Layer = { [K in LayerType]: LayerOf<K> }[LayerType];
 
 let idCounter = 0;
@@ -85,9 +78,8 @@ export function createTextLayer(name: string, text: TextParams, id = newLayerId(
   };
 }
 
-export function createRasterLayer(name: string, w: number, h: number, id = newLayerId(), deferred = false, ppi = 300): RasterLayer {
+export function createRasterLayer(name: string, w: number, h: number, id = newLayerId(), deferred = false): RasterLayer {
   const runtime = canvasRuntime(makeCanvas(deferred ? 1 : w, deferred ? 1 : h));
-  Object.assign(runtime, { sparse: new SparseRasterSurface(ppi) });
   if (deferred) Object.assign(runtime, { deferred: true, logicalWidth: w, logicalHeight: h, contentBounds: null });
   return {
     ...defaultLayerCommon(id, name),
@@ -102,7 +94,6 @@ export function ensureRasterSurface(layer: RasterLayer): RasterLayer {
   const canvas = makeCanvas(layer.runtime.logicalWidth ?? layer.runtime.canvas.width, layer.runtime.logicalHeight ?? layer.runtime.canvas.height);
   layer.runtime = {
     ...canvasRuntime(canvas),
-    sparse: layer.runtime.sparse,
     deferred: false,
     logicalWidth: canvas.width,
     logicalHeight: canvas.height,
@@ -111,11 +102,7 @@ export function ensureRasterSurface(layer: RasterLayer): RasterLayer {
   return layer;
 }
 
-export function markRasterContent(
-  layer: RasterLayer,
-  rect: { x: number; y: number; w: number; h: number },
-  documentPpi = layer.runtime.sparse?.ppi ?? 300,
-): void {
+export function markRasterContent(layer: RasterLayer, rect: { x: number; y: number; w: number; h: number }): void {
   const limitWidth = layer.runtime.logicalWidth ?? layer.runtime.canvas.width;
   const limitHeight = layer.runtime.logicalHeight ?? layer.runtime.canvas.height;
   const x = Math.max(0, Math.floor(rect.x));
@@ -127,13 +114,6 @@ export function markRasterContent(
     h: Math.max(0, Math.min(limitHeight, Math.ceil(rect.y + rect.h)) - y),
   };
   const before = layer.runtime.contentBounds;
-  const sparse = layer.runtime.sparse;
-  if (sparse && !layer.runtime.deferred && clipped.w > 0 && clipped.h > 0) {
-    sparse.drawDocumentInRect(clipped, documentPpi, ctx => {
-      ctx.clearRect(clipped.x, clipped.y, clipped.w, clipped.h);
-      ctx.drawImage(layer.runtime.canvas, 0, 0);
-    });
-  }
   if (before === undefined || clipped.w <= 0 || clipped.h <= 0) return;
   if (!before) layer.runtime.contentBounds = clipped;
   else {
@@ -176,33 +156,6 @@ export function createShapeLayer(name: string, shape: ShapeParams, id = newLayer
     ...defaultLayerCommon(id, name),
     type: 'shape',
     state: { shape, snapEnabled },
-    runtime: undefined,
-  };
-}
-
-export function createCanvasLayer(
-  name: string,
-  hierarchy: HierarchyItem[] = [],
-  id = newLayerId(),
-  propagateTransform = true,
-): CanvasLayer {
-  return {
-    ...defaultLayerCommon(id, name),
-    type: 'canvas',
-    state: { hierarchy: structuredClone(hierarchy), propagateTransform },
-    runtime: undefined,
-  };
-}
-
-export function createTransformLayer(
-  name: string,
-  state: TransformState = identityTransformState(),
-  id = newLayerId(),
-): TransformLayer {
-  return {
-    ...defaultLayerCommon(id, name),
-    type: 'transform',
-    state: structuredClone(state),
     runtime: undefined,
   };
 }

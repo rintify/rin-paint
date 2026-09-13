@@ -89,7 +89,7 @@ export function drawShape(
   ctx: CanvasRenderingContext2D,
   shape: ShapeParams,
   erase = shape.color === TRANSPARENT,
-  pageFrame = { w: ctx.canvas.width, h: ctx.canvas.height },
+  artboard = { w: ctx.canvas.width, h: ctx.canvas.height },
 ): void {
   ctx.save();
   if (erase) {
@@ -104,7 +104,7 @@ export function drawShape(
   ctx.lineCap = 'round';
   ctx.lineJoin = normalizeShapeStrokeJoin(shape.strokeJoin);
   ctx.miterLimit = SHAPE_MITER_LIMIT;
-  shapeKindHandler(shape).draw(ctx, shape, pageFrame);
+  shapeKindHandler(shape).draw(ctx, shape, artboard);
   ctx.restore();
 }
 

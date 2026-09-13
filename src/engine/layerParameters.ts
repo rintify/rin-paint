@@ -21,7 +21,7 @@ export interface LayerParameterDescriptor {
   nullable?: boolean;
   trueLabel?: string;
   falseLabel?: string;
-  pageLength?: boolean;
+  canvasLength?: boolean;
   linkable?: boolean;
   multiSelectable?: boolean;
   read(layer: LayerParameterLayer): ParameterValue;
@@ -46,7 +46,7 @@ function asDescriptor(layer: LayerParameterLayer, id: string): LayerParameterDes
     nullable: item.editor.kind === 'number' || item.editor.kind === 'slider' ? item.editor.nullable : undefined,
     trueLabel: item.editor.kind === 'switch' ? item.editor.trueLabel : undefined,
     falseLabel: item.editor.kind === 'switch' ? item.editor.falseLabel : undefined,
-    pageLength: (item.editor.kind === 'slider' || item.editor.kind === 'number') && item.editor.unit?.kind === 'page-mm',
+    canvasLength: (item.editor.kind === 'slider' || item.editor.kind === 'number') && item.editor.unit?.kind === 'canvas-mm',
     linkable: item.surfaces.includes('link'),
     multiSelectable: item.surfaces.includes('multi'),
     read: value => item.read(value, (value as LayerParameterLayer).state),

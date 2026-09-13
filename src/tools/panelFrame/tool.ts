@@ -74,6 +74,6 @@ export class PanelFrameTool implements Tool {
   drawOverlay(context: CanvasRenderingContext2D): void {
     if (!this.current) return;
     const shape = this.shape(this.current, this.event);
-    if (shape) drawShape(context, shape, false, this.engine.pageFrame);
+    if (shape) drawShape(context, shape, false, this.engine.artboard);
   }
 }

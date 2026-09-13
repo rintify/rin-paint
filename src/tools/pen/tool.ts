@@ -26,20 +26,6 @@ export class PenTool implements Tool {
 
   constructor(private eng: PaintEngine) {}
 
-  private stamp(ax: number, ay: number, ar: number, bx: number, by: number, br: number): void {
-    const layer = this.layer!;
-    stampSegment(layer.runtime.ctx, ax, ay, ar, bx, by, br, this.color, this.erase);
-    if (this.eng.isEditingBin() && layer.runtime.sparse) {
-      const pad = Math.max(ar, br) + 2;
-      layer.runtime.sparse.drawDocumentInRect({
-        x: Math.min(ax, bx) - pad,
-        y: Math.min(ay, by) - pad,
-        w: Math.abs(bx - ax) + pad * 2,
-        h: Math.abs(by - ay) + pad * 2,
-      }, this.eng.getPageSpec().ppi, ctx => stampSegment(ctx, ax, ay, ar, bx, by, br, this.color, this.erase));
-    }
-  }
-
   private stabilizePressure(pressure: number, first: boolean): number {
     if (first) {
       this.press = pressure;
@@ -78,7 +64,7 @@ export class PenTool implements Tool {
     this.layer = layer;
     this.eng.captureBefore(layer);
     const settings = this.eng.activeToolSettings();
-    this.size = settings?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getPageSpec().ppi);
+    this.size = settings?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getCanvasSpec().ppi);
     this.color = settings?.color ?? '#000';
     this.settings = normalizePenDetailSettings(settings?.settings);
     this.erase = this.color === TRANSPARENT;
@@ -87,7 +73,7 @@ export class PenTool implements Tool {
     this.totalDistance = 0;
 
     const r = this.radius(p.pressure, this.taperFactor(0), true);
-    this.stamp(p.x, p.y, r, p.x, p.y, r);
+    stampSegment(layer.runtime.ctx, p.x, p.y, r, p.x, p.y, r, this.color, this.erase);
     expandRect(this.rect, p.x, p.y, r + 2);
     this.lastX = p.x;
     this.lastY = p.y;
@@ -102,13 +88,16 @@ export class PenTool implements Tool {
     this.totalDistance += segmentDistance;
     this.points.push({ ...p, distance: this.totalDistance });
     const r = this.radius(p.pressure, this.taperFactor(this.totalDistance), false);
-    this.stamp(
+    stampSegment(
+      this.layer.runtime.ctx,
       this.lastX,
       this.lastY,
       this.lastR,
       p.x,
       p.y,
       r,
+      this.color,
+      this.erase,
     );
     expandRect(this.rect, this.lastX, this.lastY, this.lastR + 2);
     expandRect(this.rect, p.x, p.y, r + 2);
@@ -145,7 +134,7 @@ export class PenTool implements Tool {
 
   private repaintWithTaperOut(): void {
     const layer = this.layer!;
-    this.eng.restoreRasterPreviewBefore(layer, this.rect);
+    this.eng.restoreBefore(layer, this.rect);
     this.rect = emptyRect();
     this.press = this.points[0]?.pressure ?? 0.5;
     let prev: RecordedPoint | null = null;
@@ -156,10 +145,10 @@ export class PenTool implements Tool {
       const taper = this.taperFactor(point.distance, this.totalDistance - point.distance);
       const r = this.radius(point.pressure, taper, i === 0);
       if (prev) {
-        this.stamp(prev.x, prev.y, prevR, point.x, point.y, r);
+        stampSegment(layer.runtime.ctx, prev.x, prev.y, prevR, point.x, point.y, r, this.color, this.erase);
         expandRect(this.rect, prev.x, prev.y, prevR + 2);
       } else {
-        this.stamp(point.x, point.y, r, point.x, point.y, r);
+        stampSegment(layer.runtime.ctx, point.x, point.y, r, point.x, point.y, r, this.color, this.erase);
       }
       expandRect(this.rect, point.x, point.y, r + 2);
       prev = point;

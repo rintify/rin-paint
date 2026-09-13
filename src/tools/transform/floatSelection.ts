@@ -2,7 +2,6 @@ import type { StrokePoint } from '../../model';
 import { unionRect, type DirtyRect } from '../../engine/brush';
 import type { RasterLayer } from '../../engine/layers';
 import type { PaintEngine, SelectedObjectTransform } from '../../engine/PaintEngine';
-import type { SparseRasterSurface } from '../../engine/raster/SparseRasterSurface';
 import type { Tool } from '../types';
 
 export interface Pt {
@@ -24,12 +23,7 @@ interface Float {
   outline: Pt[];
 }
 
-interface RasterFloat {
-  layer: RasterLayer;
-  canvas: HTMLCanvasElement;
-  before: HTMLCanvasElement;
-  beforeSparse?: SparseRasterSurface;
-}
+interface RasterFloat { layer: RasterLayer; canvas: HTMLCanvasElement; before: HTMLCanvasElement }
 
 type DragMode = 'move' | 'scale' | 'rotate' | 'corner';
 
@@ -155,7 +149,7 @@ export class FloatSelection {
   ) {}
 
   setFreeTransform(on: boolean): void {
-    if (on && this.objectTransforms.some(entry => this.eng.layerById(entry.id)?.type !== 'transform')) return;
+    if (on && this.objectTransforms.length) return;
     if (this.free === on) return;
     this.free = on;
     this.drag = null;
@@ -211,11 +205,11 @@ export class FloatSelection {
   }
 
   extract(input: FloatExtractInput): boolean {
-    const { w: artW, h: artH } = this.eng.pageFrame;
-    const minX = Math.floor(input.minX);
-    const minY = Math.floor(input.minY);
-    const maxX = Math.ceil(input.maxX);
-    const maxY = Math.ceil(input.maxY);
+    const { w: artW, h: artH } = this.eng.artboard;
+    const minX = Math.max(0, Math.floor(input.minX));
+    const minY = Math.max(0, Math.floor(input.minY));
+    const maxX = Math.min(artW, Math.ceil(input.maxX));
+    const maxY = Math.min(artH, Math.ceil(input.maxY));
     const w = maxX - minX;
     const h = maxY - minY;
     if (w < 3 || h < 3) {
@@ -226,22 +220,11 @@ export class FloatSelection {
 
     const selected = this.eng.selectedRasters();
     this.rasterFloats = selected.map(item => {
-      const ppiBefore = this.eng.prepareRasterEdit(item);
       const before = document.createElement('canvas'); before.width = artW; before.height = artH; before.getContext('2d')!.drawImage(item.runtime.canvas, 0, 0);
-      const beforeSparse = ppiBefore ?? item.runtime.sparse?.clone();
       const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
-      const cc = canvas.getContext('2d')!;
-      if (item.runtime.sparse?.tileCount) {
-        item.runtime.sparse.drawDocumentTo(cc, { x: minX, y: minY, w, h }, this.eng.getPageSpec().ppi);
-      } else {
-        cc.translate(-minX, -minY); input.trace(cc); cc.clip(); cc.drawImage(item.runtime.canvas, 0, 0);
-      }
-      cc.save(); cc.setTransform(1, 0, 0, 1, -minX, -minY); input.trace(cc); cc.globalCompositeOperation = 'destination-in'; cc.fill(); cc.restore();
-      item.runtime.sparse?.drawDocumentInRect({ x: minX, y: minY, w, h }, this.eng.getPageSpec().ppi, sparseCtx => {
-        sparseCtx.save(); sparseCtx.globalCompositeOperation = 'destination-out'; input.trace(sparseCtx); sparseCtx.fill(); sparseCtx.restore();
-      });
+      const cc = canvas.getContext('2d')!; cc.translate(-minX, -minY); input.trace(cc); cc.clip(); cc.drawImage(item.runtime.canvas, 0, 0);
       item.runtime.ctx.save(); item.runtime.ctx.globalCompositeOperation = 'destination-out'; input.trace(item.runtime.ctx); item.runtime.ctx.fill(); item.runtime.ctx.restore();
-      return { layer: item, canvas, before, beforeSparse };
+      return { layer: item, canvas, before };
     });
     const canvas = (input.preferredLayerId
       ? this.rasterFloats.find(item => item.layer.id === input.preferredLayerId)?.canvas
@@ -272,9 +255,9 @@ export class FloatSelection {
     return true;
   }
 
-  beginDrag(p: StrokePoint, forceMove = false): boolean {
+  beginDrag(p: StrokePoint): boolean {
     if (this.phase !== 'float' || !this.float) return false;
-    const hit = this.hitTest(p.x, p.y) ?? (forceMove ? { mode: 'move' as const, corner: -1 } : null);
+    const hit = this.hitTest(p.x, p.y);
     if (hit === null) return false;
     const c = centroid(this.float.corners);
     this.drag = {
@@ -341,7 +324,7 @@ export class FloatSelection {
     if (this.phase !== 'float' || !this.float) return;
     this.stamp();
     const rect = unionRect(this.origRect!, this.transformedRect(4));
-    const entries = this.rasterFloats.map(item => ({ layer: item.layer, before: item.before, beforeSparse: item.beforeSparse, rect }));
+    const entries = this.rasterFloats.map(item => ({ layer: item.layer, before: item.before, rect }));
     const objects = this.objectTransforms;
     this.reset();
     this.eng.commitRasterBatch(entries, this.historyLabel, objects);
@@ -351,9 +334,7 @@ export class FloatSelection {
   cancelSelection(): void {
     if (this.phase === 'float') {
       for (const item of this.rasterFloats) {
-        item.layer.runtime.ctx.clearRect(0, 0, this.eng.pageFrame.w, this.eng.pageFrame.h); item.layer.runtime.ctx.drawImage(item.before, 0, 0);
-        if (item.beforeSparse) item.layer.runtime.sparse = item.beforeSparse.clone();
-        this.eng.cancelRasterEditPreparation(item.layer);
+        item.layer.runtime.ctx.clearRect(0, 0, this.eng.artboard.w, this.eng.artboard.h); item.layer.runtime.ctx.drawImage(item.before, 0, 0);
         this.eng.bumpLayer(item.layer.id);
       }
       this.eng.restoreObjectGroup(this.objectTransforms);
@@ -515,13 +496,7 @@ export class FloatSelection {
   }
 
   private stamp(): void {
-    const rect = this.transformedRect(2);
-    for (const item of this.rasterFloats) {
-      this.drawFloatImage(item.layer.runtime.ctx, item.canvas);
-      item.layer.runtime.sparse?.drawDocumentInRect({
-        x: rect.minX, y: rect.minY, w: rect.maxX - rect.minX, h: rect.maxY - rect.minY,
-      }, this.eng.getPageSpec().ppi, ctx => this.drawFloatImage(ctx, item.canvas));
-    }
+    for (const item of this.rasterFloats) this.drawFloatImage(item.layer.runtime.ctx, item.canvas);
   }
 
   private rotateHandlePos(): Pt {

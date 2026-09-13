@@ -15,7 +15,7 @@ import {
   Typography,
 } from '@mui/material';
 import { useEffect, useMemo, useState } from 'react';
-import { scopedAddressKey, type LayerAddress, type LayerMeta } from '../../model';
+import type { LayerMeta } from '../../model';
 import { useEngine } from '../EngineContext';
 import { InfoCard } from '../inspectorLayout';
 
@@ -40,9 +40,6 @@ export function LayerLinkControls({
   const link = meta.parameterLink;
   const source = meta.linkSource;
   const targets = meta.directLinkTargets ?? [];
-  const documentLabel = (address: LayerAddress, pageIndex: number) => address.document.kind === 'bin'
-    ? 'ビン'
-    : `ページ ${pageIndex + 1}`;
   useEffect(() => {
     if (!sourceDialogRequested) return;
     setDialogOpen(true);
@@ -63,7 +60,7 @@ export function LayerLinkControls({
                 sx={{ justifyContent: 'flex-start' }}
                 onClick={() => void engine.focusLayerReference(link.source)}
               >
-                {documentLabel(link.source, source?.pageIndex ?? link.sourcePageIndexHint)} / {source?.name ?? link.sourceNameHint}
+                ページ {(source?.pageIndex ?? link.sourcePageIndexHint) + 1} / {source?.name ?? link.sourceNameHint}
               </Button>
             </Stack>
             <Typography variant="caption" color="text.secondary">
@@ -79,14 +76,14 @@ export function LayerLinkControls({
             <Typography variant="caption" sx={{ fontWeight: 700 }}>このレイヤーはリンク元になっています（{targets.length}件）</Typography>
             {targets.slice(0, 4).map(target => (
               <Button
-                key={scopedAddressKey(target.address)}
+                key={`${target.address.pageId}:${target.address.layerId}`}
                 fullWidth
                 size="small"
                 color="secondary"
                 sx={{ justifyContent: 'flex-start' }}
                 onClick={() => void engine.focusLayerReference(target.address)}
               >
-                {documentLabel(target.address, target.pageIndex)} / {target.name}（{target.linkedCount}項目）
+                ページ {target.pageIndex + 1} / {target.name}（{target.linkedCount}項目）
               </Button>
             ))}
             {targets.length > 4 && <Button size="small" color="secondary" onClick={() => setTargetsOpen(true)}>すべて表示（{targets.length}件）</Button>}
@@ -108,7 +105,7 @@ export function LayerLinkControls({
           <List dense sx={{ maxHeight: 420, overflow: 'auto' }}>
             {filtered.map(candidate => (
               <ListItemButton
-                key={scopedAddressKey(candidate.address)}
+                key={`${candidate.address.pageId}:${candidate.address.layerId}`}
                 disabled={!!candidate.disabledReason}
                 onClick={() => {
                   void engine.changeLayerLinkSource(meta.id, candidate.address);
@@ -116,7 +113,7 @@ export function LayerLinkControls({
                 }}
               >
                 <ListItemText
-                  primary={`${candidate.documentLabel} / ${candidate.name}`}
+                  primary={`ページ ${candidate.pageIndex + 1} / ${candidate.name}`}
                   secondary={candidate.disabledReason ?? `${candidate.equalCount}件一致 / ${candidate.compatibleCount}件互換`}
                 />
               </ListItemButton>
@@ -132,10 +129,10 @@ export function LayerLinkControls({
           <List dense>
             {targets.map(target => (
               <ListItemButton
-                key={scopedAddressKey(target.address)}
+                key={`${target.address.pageId}:${target.address.layerId}`}
                 onClick={() => { setTargetsOpen(false); void engine.focusLayerReference(target.address); }}
               >
-                <ListItemText primary={`${documentLabel(target.address, target.pageIndex)} / ${target.name}`} secondary={`${target.linkedCount}項目をリンク中`} />
+                <ListItemText primary={`ページ ${target.pageIndex + 1} / ${target.name}`} secondary={`${target.linkedCount}項目をリンク中`} />
               </ListItemButton>
             ))}
           </List>

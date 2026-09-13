@@ -1,13 +1,11 @@
 import type {
   LayerCommonRecord,
-  LayerPlacement,
-  ScopedLayerAddress,
   LayerType,
 } from '../../model';
 import type { Layer, LayerOf } from '../layers';
 import type { ParameterCatalog } from '../parameters/types';
 import type {
-  PagePixelSize,
+  ArtboardSize,
   CanvasLease,
   EffectCacheStore,
   EffectScope,
@@ -19,7 +17,7 @@ import type {
   RenderStatsAccumulator,
 } from './types';
 
-export type { PagePixelSize, CanvasLease, EffectCacheStore, EffectScope, LayerDrawEnv, LayerMeasureEnv, MaskCanvas, ObjectBounds, Point, RenderStatsAccumulator };
+export type { ArtboardSize, CanvasLease, EffectCacheStore, EffectScope, LayerDrawEnv, LayerMeasureEnv, MaskCanvas, ObjectBounds, Point, RenderStatsAccumulator };
 
 export interface LayerTypeInfo {
   type: LayerType;
@@ -42,8 +40,8 @@ export interface LayerCodec<K extends LayerType> {
   encode(state: LayerOf<K>['state']): unknown;
   decode(value: unknown): LayerOf<K>['state'] | null;
   encodeContent?(layer: LayerOf<K>): Promise<Blob | undefined>;
-  decodeRuntime?(content: Blob | HTMLCanvasElement | undefined, env: { pageFrame: PagePixelSize; ppi?: number }): Promise<LayerOf<K>['runtime'] | null>;
-  scaleStored?(state: unknown, env: { pageFrame: PagePixelSize; factor: number }): unknown;
+  decodeRuntime?(content: Blob | HTMLCanvasElement | undefined, env: { artboard: ArtboardSize }): Promise<LayerOf<K>['runtime'] | null>;
+  scaleStored?(state: unknown, env: { artboard: ArtboardSize; factor: number }): unknown;
 }
 
 export interface LayerRenderer<K extends LayerType> {
@@ -55,11 +53,6 @@ export interface LayerRenderer<K extends LayerType> {
     apply(scope: EffectScope, layer: LayerOf<K>, env: LayerDrawEnv): void;
     paddingPx?(layer: LayerOf<K>, env: LayerDrawEnv): number;
     dependencyLayerIds?(layer: LayerOf<K>): readonly string[];
-    sourceRegion?(
-      layer: LayerOf<K>,
-      output: { x: number; y: number; w: number; h: number },
-      env: LayerDrawEnv,
-    ): { x: number; y: number; w: number; h: number } | null;
     /** 効果自身が足した可視画素をクリック選択の対象にする。 */
     clickableAddedPixels?: boolean;
   };
@@ -80,7 +73,6 @@ export interface ObjectTransformCapability<K extends LayerType> {
       angle: number;
       width?: number;
       height?: number;
-      ppi: number;
     },
   ): void;
 }
@@ -133,14 +125,6 @@ export interface LayerRecord {
   common: LayerCommonRecord;
   state: unknown;
   content?: Blob;
-  /** Clipboard/history occurrence metadata; project entities keep this omitted. */
-  placement?: LayerPlacement;
-  /** Link metadata belongs to the occurrence, not the shared layer entity. */
-  dataLink?: ScopedLayerAddress;
-  dataLinkInstanceId?: string;
-  canvasStructureSource?: ScopedLayerAddress;
-  /** Geometry-bearing state is persisted in millimetres. */
-  geometryUnit?: 'mm';
 }
 
 export interface LayerSnapshot extends LayerRecord {
@@ -168,6 +152,8 @@ export function commonRecordFrom(layer: Layer): LayerCommonRecord {
     opacity: layer.opacity,
     blend: layer.blend,
     visible: layer.visible,
+    parentId: layer.parentId,
+    childIds: [...layer.childIds],
     ...(layer.parameterLink ? { parameterLink: structuredClone(layer.parameterLink) } : {}),
   };
 }
@@ -177,5 +163,7 @@ export function applyCommonRecord(layer: Layer, common: LayerCommonRecord): void
   layer.opacity = common.opacity;
   layer.blend = common.blend;
   layer.visible = common.visible;
+  layer.parentId = common.parentId;
+  layer.childIds = [...common.childIds];
   layer.parameterLink = common.parameterLink ? structuredClone(common.parameterLink) : undefined;
 }

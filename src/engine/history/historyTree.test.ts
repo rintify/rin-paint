@@ -10,22 +10,23 @@ const shapeSnapshot: LayerSnapshot = {
     opacity: 1,
     blend: 'source-over',
     visible: true,
+    parentId: 'raster-1',
+    childIds: [],
   },
-  placement: { scopeId: 'raster-1', scopeLayerIds: [] },
   state: { shape: { kind: 'line', x1: 1, y1: 2, x2: 30, y2: 40, color: '#123456', strokeWidth: 5 }, snapEnabled: true },
 };
 
 describe('shape history persistence', () => {
   it('round-trips tree locations and shape parameters', async () => {
     const history = new HistoryTree();
-    history.push({ kind: 'layerAdd', location: { scopeId: 'raster-1', index: 2 }, snapshot: shapeSnapshot }, '図形を追加');
+    history.push({ kind: 'layerAdd', location: { parentId: 'raster-1', index: 2 }, snapshot: shapeSnapshot }, '図形を追加');
     const saved = await history.serialize(async () => new Blob());
     expect(saved.version).toBe(HISTORY_VERSION);
     const restored = new HistoryTree();
     expect(restored.restore(saved)).toBe(true);
     expect(restored.current.op).toMatchObject({
       kind: 'layerAdd',
-      location: { scopeId: 'raster-1', index: 2 },
+      location: { parentId: 'raster-1', index: 2 },
       snapshot: { state: shapeSnapshot.state },
     });
   });
@@ -38,7 +39,7 @@ describe('shape history persistence', () => {
       kind: 'layerMerge',
       format: 'tiles-v1',
       targetLayerId: 'raster-1',
-      removed: { location: { scopeId: 'raster-1', index: 0 }, snapshot: shapeSnapshot },
+      removed: { location: { parentId: 'raster-1', index: 0 }, snapshot: shapeSnapshot },
       tiles: [{ x: 0, y: 0, w: 32, h: 32, before, after }],
       beforeActiveId: 'shape-1',
       afterActiveId: 'raster-1',
@@ -64,19 +65,19 @@ describe('shape history persistence', () => {
       rootId: 0,
       currentId: 1,
       nodes: [
-        { id: 0, label: '開始', op: null, scopeId: null, scopeLayerIds: [1], lastChild: 0 },
+        { id: 0, label: '開始', op: null, parentId: null, childIds: [1], lastChild: 0 },
         {
           id: 1,
           label: '旧形式',
           op: {
             kind: 'layerMerge',
-            before: [{ location: { scopeId: null, index: 0 }, snapshot: shapeSnapshot }],
+            before: [{ location: { parentId: null, index: 0 }, snapshot: shapeSnapshot }],
             after: [],
             beforeActiveId: 'a',
             afterActiveId: 'b',
           },
-          scopeId: 0,
-          scopeLayerIds: [],
+          parentId: 0,
+          childIds: [],
           lastChild: 0,
         },
       ],
@@ -98,7 +99,7 @@ describe('shape history persistence', () => {
   it('round-trips cross-page layer link operations', async () => {
     const history = new HistoryTree();
     const link = {
-      source: { document: { kind: 'page' as const, id: 'source-page' }, scopePath: [], nodeId: 'source-layer' },
+      source: { pageId: 'source-page', layerId: 'source-layer' },
       sourceNameHint: '元',
       sourcePageIndexHint: 0,
       linkedParameterIds: ['layer.opacity'],
@@ -106,7 +107,7 @@ describe('shape history persistence', () => {
     };
     history.push({
       kind: 'layerLink',
-      target: { document: { kind: 'page', id: 'target-page' }, scopePath: [], nodeId: 'target-layer' },
+      target: { pageId: 'target-page', layerId: 'target-layer' },
       before: null,
       after: link,
     }, 'リンク元を変更');

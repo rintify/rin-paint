@@ -44,11 +44,11 @@ afterAll(() => vi.restoreAllMocks());
 function compositorFor(layers: Layer[]): Compositor {
   const byId = new Map(layers.map((layer) => [layer.id, layer]));
   const engine = {
-    pageFrame: { w: 16, h: 16, originX: 0, originY: 0 },
+    artboard: { w: 16, h: 16 },
     allLayers: () => layers,
     layerById: (id: string) => byId.get(id) ?? null,
-    getRootLayerIds: () => layers.filter((layer) => layer.scopeId === null).map((layer) => layer.id),
-    getPageSpec: () => ({ widthMm: 16, heightMm: 16, ppi: 25.4 }),
+    getRootLayerIds: () => layers.filter((layer) => layer.parentId === null).map((layer) => layer.id),
+    getCanvasSpec: () => ({ widthMm: 16, heightMm: 16, ppi: 25.4 }),
     getRenderRevision: () => 0,
     getMaskRevision: () => 0,
     activeTool: () => ({}),

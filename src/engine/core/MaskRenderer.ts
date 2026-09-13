@@ -21,7 +21,7 @@ export class MaskRenderer {
     ids: string[],
     env: LayerDrawEnv,
     revisionFor: (id: string) => number,
-    region = { x: 0, y: 0, w: env.pageFrame.w, h: env.pageFrame.h },
+    region = { x: 0, y: 0, w: env.artboard.w, h: env.artboard.h },
   ): MaskCanvas | null {
     const sources = [...new Set(ids)].sort()
       .map(id => env.layerById(id))
@@ -29,7 +29,7 @@ export class MaskRenderer {
     if (!sources.length) return null;
 
     const mask = env.handlerFor(sources[0]).capabilities.maskSource?.nativeCanvas?.(sources[0] as never);
-    const fullRegion = region.x === 0 && region.y === 0 && region.w === env.pageFrame.w && region.h === env.pageFrame.h;
+    const fullRegion = region.x === 0 && region.y === 0 && region.w === env.artboard.w && region.h === env.artboard.h;
     if (sources.length === 1 && mask && fullRegion) {
       return { canvas: mask, opacity: sources[0].opacity, x: 0, y: 0, release: noop };
     }
@@ -58,8 +58,8 @@ export class MaskRenderer {
     }
 
     const key = [
-      env.pageFrame.w,
-      env.pageFrame.h,
+      env.artboard.w,
+      env.artboard.h,
       `${region.x},${region.y},${region.w},${region.h}`,
       ...sources.map(layer => `${layer.id}:${revisionFor(layer.id)}:${layer.opacity}`),
     ].join('|');

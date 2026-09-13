@@ -47,9 +47,9 @@ export class PolygonSplitTool implements Tool {
     if (length < 0.01) return;
     const ux = dx / length;
     const uy = dy / length;
-    const extent = Math.hypot(this.eng.pageFrame.w, this.eng.pageFrame.h) * 2;
+    const extent = Math.hypot(this.eng.artboard.w, this.eng.artboard.h) * 2;
     const widthMm = normalizePolygonSplitToolSettings(this.eng.activeToolSettings()?.settings).widthMm;
-    const width = mmToPx(widthMm, this.eng.getPageSpec().ppi);
+    const width = mmToPx(widthMm, this.eng.getCanvasSpec().ppi);
     ctx.save();
     ctx.strokeStyle = '#ef5350';
     ctx.lineWidth = Math.max(this.eng.uiScale(), width);
