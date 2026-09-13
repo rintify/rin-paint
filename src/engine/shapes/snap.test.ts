@@ -53,10 +53,10 @@ describe('axis-aligned aspect constraint', () => {
 });
 
 describe('position snap', () => {
-  const artboard = { w: 200, h: 100 };
+  const pageFrame = { w: 200, h: 100 };
 
   it('snaps left/center/right to canvas and other-shape X lines', () => {
-    const lines = collectSnapLines(artboard, [{ x: 80, y: 0, w: 20, h: 10 }]);
+    const lines = collectSnapLines(pageFrame, [{ x: 80, y: 0, w: 20, h: 10 }]);
     expect(snapTranslation({ x: 5, y: 0, w: 10, h: 8 }, 0, 0, lines, 8)).toMatchObject({ dx: -5, xGuide: 0 });
     expect(snapTranslation({ x: 93, y: 0, w: 10, h: 8 }, 0, 0, lines, 8)).toMatchObject({ dx: 2, xGuide: 100 });
     expect(snapTranslation({ x: 186, y: 0, w: 10, h: 8 }, 0, 0, lines, 8)).toMatchObject({ dx: 4, xGuide: 200 });
@@ -66,7 +66,7 @@ describe('position snap', () => {
   });
 
   it('snaps top/center/bottom to canvas and other-shape Y lines', () => {
-    const lines = collectSnapLines(artboard, [{ x: 0, y: 40, w: 10, h: 20 }]);
+    const lines = collectSnapLines(pageFrame, [{ x: 0, y: 40, w: 10, h: 20 }]);
     expect(snapTranslation({ x: 0, y: 5, w: 8, h: 10 }, 0, 0, lines, 8)).toMatchObject({ dy: -5, yGuide: 0 });
     expect(snapTranslation({ x: 0, y: 46, w: 8, h: 8 }, 0, 0, lines, 8)).toMatchObject({ dy: 0, yGuide: 50 });
     expect(snapTranslation({ x: 0, y: 86, w: 8, h: 10 }, 0, 0, lines, 8)).toMatchObject({ dy: 4, yGuide: 100 });
@@ -75,22 +75,22 @@ describe('position snap', () => {
   });
 
   it('can snap X and Y to different targets at once', () => {
-    const lines = collectSnapLines(artboard, [{ x: 80, y: 40, w: 20, h: 20 }]);
+    const lines = collectSnapLines(pageFrame, [{ x: 80, y: 40, w: 20, h: 20 }]);
     const result = snapTranslation({ x: 4, y: 36, w: 10, h: 80 }, 0, 0, lines, 8);
     expect(result).toMatchObject({ dx: -4, dy: 4, xGuide: 0, yGuide: 40 });
   });
 
   it('snaps only within the tolerance', () => {
-    const lines = collectSnapLines(artboard, []);
+    const lines = collectSnapLines(pageFrame, []);
     expect(snapTranslation({ x: 8, y: 8, w: 10, h: 10 }, 0, 0, lines, 8)).toMatchObject({ dx: -8, dy: -8, xGuide: 0, yGuide: 0 });
     expect(snapTranslation({ x: 9, y: 9, w: 10, h: 10 }, 0, 0, lines, 8)).toMatchObject({ dx: 0, dy: 0, xGuide: null, yGuide: null });
   });
 
   it('prefers the smallest correction, then the canvas', () => {
     const start = { x: 10, y: 0, w: 0, h: 10 };
-    const layerCloser = collectSnapLines(artboard, [{ x: 18, y: 0, w: 0, h: 10 }]);
+    const layerCloser = collectSnapLines(pageFrame, [{ x: 18, y: 0, w: 0, h: 10 }]);
     expect(snapTranslation(start, 0, 0, layerCloser, 12)).toMatchObject({ dx: 8, xGuide: 18 });
-    const tied = collectSnapLines(artboard, [{ x: 20, y: 0, w: 0, h: 10 }]);
+    const tied = collectSnapLines(pageFrame, [{ x: 20, y: 0, w: 0, h: 10 }]);
     expect(snapTranslation(start, 0, 0, tied, 12)).toMatchObject({ dx: -10, xGuide: 0 });
   });
 

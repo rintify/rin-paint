@@ -14,12 +14,21 @@ export class LayerPicker {
   constructor(private engine: PaintEngine) {}
 
   pickAt(x: number, y: number): LayerPickHit | null {
-    const { w, h } = this.engine.artboard;
+    const { w, h } = this.engine.pageFrame;
     const cx = Math.round(x);
     const cy = Math.round(y);
     if (cx < 0 || cy < 0 || cx >= w || cy >= h) return null;
     const layers = this.engine.allLayers();
-    const order = flattenRenderOrder(this.engine.getRootLayerIds(), layers);
+    // Small renderer test hosts (and embedders that only expose picking) do not
+    // need an active-layer accessor. In that case picking naturally uses the
+    // document root scope.
+    const activeId = typeof this.engine.getActiveLayerId === 'function'
+      ? this.engine.getActiveLayerId()
+      : '';
+    const active = activeId ? this.engine.layerById(activeId) : null;
+    const activeScope = active?.scopeId ? this.engine.layerById(active.scopeId) : null;
+    const roots = activeScope?.type === 'canvas' ? activeScope.scopeLayerIds : this.engine.getRootLayerIds();
+    const order = flattenRenderOrder(roots, layers);
     const compositor = this.engine.compositor;
     const env = compositor.drawEnv(false);
     for (let index = order.length - 1; index >= 0; index--) {

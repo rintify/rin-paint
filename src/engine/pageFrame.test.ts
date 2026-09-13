@@ -1,17 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Artboard } from './artboard';
+import { PageFrame } from './pageFrame';
 import { EngineEvents } from './events';
-import { MAX_ART_SIZE, MIN_ART_SIZE } from '../model/canvas';
+import { MAX_PAGE_PIXEL_SIZE, MIN_PAGE_PIXEL_SIZE } from '../model/page';
 
-describe('Artboard', () => {
+describe('PageFrame', () => {
   it('clamps resize to min/max', () => {
-    const art = new Artboard();
+    const art = new PageFrame();
     art.resize(1, 1);
-    expect(art.w).toBe(MIN_ART_SIZE);
-    expect(art.h).toBe(MIN_ART_SIZE);
+    expect(art.w).toBe(MIN_PAGE_PIXEL_SIZE);
+    expect(art.h).toBe(MIN_PAGE_PIXEL_SIZE);
     art.resize(99999, 99999);
-    expect(art.w).toBe(MAX_ART_SIZE);
-    expect(art.h).toBe(MAX_ART_SIZE);
+    expect(art.w).toBe(MAX_PAGE_PIXEL_SIZE);
+    expect(art.h).toBe(MAX_PAGE_PIXEL_SIZE);
   });
 });
 

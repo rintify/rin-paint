@@ -20,12 +20,15 @@ import { outlineLayerType } from './outline';
 import { rasterLayerType, scaleRasterRuntime } from './raster';
 import { shapeLayerType } from './shape';
 import { textLayerType } from './text';
+import { canvasLayerType } from './canvas';
+import { transformLayerType } from './transform';
 import type {
   LayerContentEnv,
   LayerScaleEnv,
   LayerSnapshotEnv,
   LayerStoredScaleEnv,
 } from './types';
+import { decodeGeometryState, encodeGeometryState } from '../persistence/geometryState';
 
 export type { LayerProps, LayerRecord, LayerSnapshot };
 
@@ -37,6 +40,8 @@ const definitions = {
   shape: shapeLayerType,
   text: textLayerType,
   image: imageLayerType,
+  canvas: canvasLayerType,
+  transform: transformLayerType,
 } as const;
 
 type Definitions = typeof definitions;
@@ -76,7 +81,14 @@ export function buildLayerSnapshot(layer: Layer, env: LayerSnapshotEnv): LayerSn
     id: layer.id,
     type: layer.type,
     common: commonRecordFrom(layer),
-    state: def.codec.encode(layer.state as never),
+    state: env.ppi
+      ? encodeGeometryState(layer.type, def.codec.encode(layer.state as never), env.ppi)
+      : def.codec.encode(layer.state as never),
+    placement: { scopeId: layer.scopeId, scopeLayerIds: [...layer.scopeLayerIds] },
+    ...(layer.dataLink ? { dataLink: structuredClone(layer.dataLink) } : {}),
+    ...(layer.dataLinkInstanceId ? { dataLinkInstanceId: layer.dataLinkInstanceId } : {}),
+    ...(layer.canvasStructureSource ? { canvasStructureSource: structuredClone(layer.canvasStructureSource) } : {}),
+    ...(env.ppi ? { geometryUnit: 'mm' as const } : {}),
   };
   if (!env.withContent) return snapshot;
   if (layer.type === 'raster' || layer.type === 'image') {
@@ -101,7 +113,10 @@ export async function restoreLayerFrom(
 ): Promise<Layer | null> {
   if (!isLayerType(source.type)) return null;
   const def = layerDefinition(source.type);
-  const state = def.codec.decode(source.state);
+  const storedState = source.geometryUnit === 'mm' && env.ppi
+    ? decodeGeometryState(source.type, source.state, env.ppi)
+    : source.state;
+  const state = def.codec.decode(storedState);
   if (!state && source.type !== 'raster' && source.type !== 'adjust' && source.type !== 'outline' && source.type !== 'clip') {
     return null;
   }
@@ -117,9 +132,12 @@ export async function restoreLayerFrom(
     opacity: source.common.opacity ?? 1,
     blend: source.common.blend ?? 'source-over',
     visible: source.common.visible ?? true,
-    parentId: source.common.parentId,
-    childIds: [...source.common.childIds],
+    scopeId: 'placement' in source ? source.placement?.scopeId ?? null : null,
+    scopeLayerIds: 'placement' in source ? [...(source.placement?.scopeLayerIds ?? [])] : [],
     parameterLink: source.common.parameterLink ? structuredClone(source.common.parameterLink) : undefined,
+    dataLink: source.dataLink ? structuredClone(source.dataLink) : undefined,
+    dataLinkInstanceId: source.dataLinkInstanceId,
+    canvasStructureSource: source.canvasStructureSource ? structuredClone(source.canvasStructureSource) : undefined,
     state: def.state.normalize((state ?? def.state.initial()) as never),
     runtime,
   } as Layer;
@@ -132,8 +150,15 @@ export async function savedLayerFrom(layer: Layer, _env: LayerContentEnv): Promi
     id: layer.id,
     type: layer.type,
     common: commonRecordFrom(layer),
-    state: def.codec.encode(layer.state as never),
-    content: await def.codec.encodeContent?.(layer as never),
+    state: _env.ppi
+      ? encodeGeometryState(layer.type, def.codec.encode(layer.state as never), _env.ppi)
+      : def.codec.encode(layer.state as never),
+    // The owning bin stores large raster/image blobs exactly once.
+    content: layer.dataLink ? undefined : await def.codec.encodeContent?.(layer as never),
+    ...(layer.dataLink ? { dataLink: structuredClone(layer.dataLink) } : {}),
+    ...(layer.dataLinkInstanceId ? { dataLinkInstanceId: layer.dataLinkInstanceId } : {}),
+    ...(layer.canvasStructureSource ? { canvasStructureSource: structuredClone(layer.canvasStructureSource) } : {}),
+    ...(_env.ppi ? { geometryUnit: 'mm' as const } : {}),
   };
 }
 
@@ -154,18 +179,18 @@ export function scaleLayer(layer: Layer, factor: number, env: LayerScaleEnv): vo
 export async function scaleStoredLayer(source: LayerRecord | LayerSnapshot, env: LayerStoredScaleEnv): Promise<void> {
   if (!isLayerType(source.type)) return;
   const def = layerDefinition(source.type);
-  if (def.codec.scaleStored) source.state = def.codec.scaleStored(source.state, env);
+  if (def.codec.scaleStored && source.geometryUnit !== 'mm') source.state = def.codec.scaleStored(source.state, env);
   if (source.type === 'raster' && (source.content || ('canvas' in source && source.canvas))) {
     const content = 'canvas' in source && source.canvas ? source.canvas : source.content;
     if (content instanceof Blob) {
       const bitmap = await createImageBitmap(content);
-      const canvas = makeCanvas(env.artboard.w, env.artboard.h);
+      const canvas = makeCanvas(env.pageFrame.w, env.pageFrame.h);
       canvas.getContext('2d')!.drawImage(bitmap, 0, 0, bitmap.width * env.factor, bitmap.height * env.factor);
       bitmap.close();
       (source as LayerSnapshot).canvas = canvas;
       source.content = undefined;
     } else if (content instanceof HTMLCanvasElement) {
-      const canvas = makeCanvas(env.artboard.w, env.artboard.h);
+      const canvas = makeCanvas(env.pageFrame.w, env.pageFrame.h);
       canvas.getContext('2d')!.drawImage(content, 0, 0, content.width * env.factor, content.height * env.factor);
       (source as LayerSnapshot).canvas = canvas;
       source.content = undefined;
@@ -212,7 +237,7 @@ export function hostWithProps(layer: Layer, props: LayerProps): import('../param
   return next;
 }
 
-export function applyRecordProps(record: LayerRecord, props: LayerProps): void {
+export function applyRecordProps(record: LayerRecord, props: LayerProps, ppi?: number): void {
   if (props.name !== undefined) record.common.name = props.name;
   if (props.opacity !== undefined) record.common.opacity = props.opacity;
   if (props.blend !== undefined) record.common.blend = props.blend;
@@ -221,17 +246,25 @@ export function applyRecordProps(record: LayerRecord, props: LayerProps): void {
     record.common.parameterLink = props.parameterLink ? structuredClone(props.parameterLink) : undefined;
   }
   if (props.state !== undefined && isLayerType(record.type)) {
-    const current = layerDefinition(record.type).codec.decode(record.state)
+    const stored = record.geometryUnit === 'mm' && ppi
+      ? decodeGeometryState(record.type, record.state, ppi)
+      : record.state;
+    const current = layerDefinition(record.type).codec.decode(stored)
       ?? layerDefinition(record.type).state.initial();
     const next = layerDefinition(record.type).state.applyPatch(current as never, props.state as never);
-    record.state = layerDefinition(record.type).codec.encode(next as never);
+    const encoded = layerDefinition(record.type).codec.encode(next as never);
+    record.state = record.geometryUnit === 'mm' && ppi
+      ? encodeGeometryState(record.type, encoded, ppi)
+      : encoded;
   }
 }
 
 export function remapRecordIds(record: LayerRecord, mapId: (id: string) => string | undefined): void {
   record.id = mapId(record.id) ?? record.id;
-  record.common.parentId = record.common.parentId ? mapId(record.common.parentId) ?? null : null;
-  record.common.childIds = record.common.childIds.map(id => mapId(id)).filter((id): id is string => !!id);
+  if (record.placement) {
+    record.placement.scopeId = record.placement.scopeId ? mapId(record.placement.scopeId) ?? null : null;
+    record.placement.scopeLayerIds = record.placement.scopeLayerIds.map(id => mapId(id)).filter((id): id is string => !!id);
+  }
   if (isLayerType(record.type) && layerDefinition(record.type).state.remapReferences) {
     const current = layerDefinition(record.type).codec.decode(record.state)
       ?? layerDefinition(record.type).state.initial();

@@ -57,11 +57,11 @@ function raster(id: string, paint: (ctx: CanvasRenderingContext2D) => void) {
 function pickerFor(layers: Layer[], roots?: string[]) {
   const byId = new Map(layers.map(layer => [layer.id, layer]));
   const engine = {
-    artboard: { w: 16, h: 16 },
+    pageFrame: { w: 16, h: 16 },
     allLayers: () => layers,
     layerById: (id: string) => byId.get(id) ?? null,
-    getRootLayerIds: () => roots ?? layers.filter(layer => layer.parentId === null).map(layer => layer.id),
-    getCanvasSpec: () => ({ widthMm: 16, heightMm: 16, ppi: 25.4 }),
+    getRootLayerIds: () => roots ?? layers.filter(layer => layer.scopeId === null).map(layer => layer.id),
+    getPageSpec: () => ({ widthMm: 16, heightMm: 16, ppi: 25.4 }),
     getRenderRevision: () => 0,
     getMaskRevision: () => 0,
     activeTool: () => ({}),
@@ -117,8 +117,8 @@ describe('layer picking from visible pixels', () => {
   it('does not treat a shape interior or child pixels as the parent layer', () => {
     const parent = raster('parent', ctx => { ctx.fillStyle = '#00f'; ctx.fillRect(0, 0, 16, 16); });
     const child = raster('child', ctx => { ctx.fillStyle = '#f00'; ctx.fillRect(0, 0, 6, 6); });
-    child.parentId = parent.id;
-    parent.childIds = [child.id];
+    child.scopeId = parent.id;
+    parent.scopeLayerIds = [child.id];
     const frame = createShapeLayer('枠', {
       kind: 'rect', x: 2, y: 2, width: 10, height: 10, color: '#0f0',
       strokeWidth: 2, paintMode: 'stroke',
@@ -202,7 +202,7 @@ describe('cursor tool selection', () => {
       setActiveLayer,
       requestOverlayRender: vi.fn(),
       uiScale: () => 1,
-      artboard: { w: 16, h: 16 },
+      pageFrame: { w: 16, h: 16 },
     } as unknown as PaintEngine;
     const tool = new CursorTool(engine);
     expect(tool.allowsDirectShapeEdit).toBe(false);
@@ -221,7 +221,7 @@ describe('cursor tool selection', () => {
       setActiveLayer,
       requestOverlayRender: vi.fn(),
       uiScale: () => 1,
-      artboard: { w: 16, h: 16 },
+      pageFrame: { w: 16, h: 16 },
     } as unknown as PaintEngine);
     tool.onDown({ x: 1, y: 1, pressure: 1 }, {} as PointerEvent);
     expect(setActiveLayer).not.toHaveBeenCalled();
@@ -258,7 +258,7 @@ describe('cursor tool selection', () => {
       setActiveLayer,
       requestOverlayRender: vi.fn(),
       uiScale: () => 1,
-      artboard: { w: 8, h: 8 },
+      pageFrame: { w: 8, h: 8 },
     } as unknown as PaintEngine;
     const tool = new CursorTool(engine);
     tool.onDown({ x: 1, y: 1, pressure: 1 }, {} as PointerEvent);

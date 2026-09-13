@@ -15,8 +15,8 @@ export function Thumb({ meta }: { meta: LayerMeta }) {
     if (src) ctx.drawImage(src, 0, 0, c.width, c.height);
     else if (meta.type === 'shape') {
       ctx.save();
-      ctx.scale(c.width / engine.artboard.w, c.height / engine.artboard.h);
-      drawShape(ctx, meta.state.shape, false, engine.artboard);
+      ctx.scale(c.width / engine.pageFrame.w, c.height / engine.pageFrame.h);
+      drawShape(ctx, meta.state.shape, false, engine.pageFrame);
       ctx.restore();
     }
   }, [engine, meta.id, meta.version, meta.type === 'shape' ? meta.state.shape : null]);

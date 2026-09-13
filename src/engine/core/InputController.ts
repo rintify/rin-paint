@@ -113,6 +113,13 @@ export class InputController {
     return !!t && !!t.closest('button, [data-canvas-ui]');
   }
 
+  private isInsidePage(point: StrokePoint): boolean {
+    if (useStore.getState().editingDocument.kind === 'bin') return true;
+    if (!this.engine.pageFrame) return true;
+    return point.x >= 0 && point.y >= 0
+      && point.x < this.engine.pageFrame.w && point.y < this.engine.pageFrame.h;
+  }
+
   private onPointerDown = (e: PointerEvent): void => {
     const eng = this.engine;
     if (this.isUiTarget(e)) return;
@@ -138,7 +145,11 @@ export class InputController {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (this.loupe) return;
     if (eng.isBusy() || this.activePointer !== null) return;
+    const selection = useStore.getState();
+    if (selection.multiSelectMode && selection.selectedLayerIds.length === 0
+      && selection.tool !== 'cursor' && selection.tool !== 'move' && selection.tool !== 'eyedropper') return;
     const p = this.toPoint(e);
+    if (!this.isInsidePage(p)) return;
     this.activePointer = e.pointerId;
     this.area?.setPointerCapture(e.pointerId);
     if (this.isLayerPickClick(e)) {
@@ -246,8 +257,8 @@ export class InputController {
     }
     if (this.loupe && e.pointerId === this.loupe.pointerId) {
       const p = this.toPoint(e);
-      this.loupe.x = Math.max(0, Math.min(eng.artboard.w - 1, p.x));
-      this.loupe.y = Math.max(0, Math.min(eng.artboard.h - 1, p.y));
+      this.loupe.x = Math.max(0, Math.min(eng.pageFrame.w - 1, p.x));
+      this.loupe.y = Math.max(0, Math.min(eng.pageFrame.h - 1, p.y));
       this.loupe.color = eng.getPixel(this.loupe.x, this.loupe.y, this.loupe.source);
       eng.requestOverlayRender();
       return;
@@ -267,13 +278,17 @@ export class InputController {
       if (!this.beginEditableShape(pending.start, e)) eng.activeTool().onDown(pending.start, e);
     }
     if (eng.hasShapeEdit()) {
-      eng.updateShapeEdit(this.toPoint(e), e);
+      const point = this.toPoint(e);
+      if (this.isInsidePage(point) || useStore.getState().tool === 'move') eng.updateShapeEdit(point, e);
       return;
     }
     const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
     const events = coalesced.length > 0 ? coalesced : [e];
     const tool = eng.activeTool();
-    for (const ev of events) tool.onMove(this.toPoint(ev), ev);
+    for (const ev of events) {
+      const point = this.toPoint(ev);
+      if (this.isInsidePage(point) || useStore.getState().tool === 'move') tool.onMove(point, ev);
+    }
   };
 
   private onPointerUp = (e: PointerEvent): void => {
@@ -455,7 +470,7 @@ export class InputController {
     let cx = lp.x;
     let cy = lp.y - 96 * s;
     if (cy - R - 14 * s < 0) cy = lp.y + 96 * s;
-    cx = Math.max(R + 10 * s, Math.min(eng.artboard.w - R - 10 * s, cx));
+    cx = Math.max(R + 10 * s, Math.min(eng.pageFrame.w - R - 10 * s, cx));
     eng.ensureComposited();
 
     ctx.save();

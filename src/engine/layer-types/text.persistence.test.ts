@@ -4,7 +4,7 @@ import { newText } from '../text/model';
 import { buildLayerSnapshot, restoreLayerFrom, savedLayerFrom } from './registry';
 
 describe('text layer snapEnabled persistence', () => {
-  const env = { artboard: { w: 100, h: 80 }, withContent: false, keepCanvas: false, onEncoded() {} };
+  const env = { pageFrame: { w: 100, h: 80 }, withContent: false, keepCanvas: false, onEncoded() {} };
 
   it('defaults to on and round-trips an off setting', async () => {
     expect(createTextLayer('文字', newText(1, 2, '#000')).state.snapEnabled).toBe(true);

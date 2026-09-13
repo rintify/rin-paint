@@ -27,12 +27,12 @@ export class ShapeTool implements Tool {
     if (!start) return null;
     const active = this.eng.activeToolSettings();
     const color = active?.color ?? '#000';
-    const size = active?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getCanvasSpec().ppi);
+    const size = active?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getPageSpec().ppi);
     const settings = normalizeShapeToolSettings(active?.settings);
     const to = this.aspectConstrained(event) ? constrainAxisAlignedAspect(start, end) : end;
     const shape = shapeFromDrag(this.kind, start, to, color, size, settings.paintMode);
     return shape?.kind === 'rect'
-      ? { ...shape, strokeJoin: settings.strokeJoin, cornerRadius: mmToPx(settings.cornerRadiusMm, this.eng.getCanvasSpec().ppi) }
+      ? { ...shape, strokeJoin: settings.strokeJoin, cornerRadius: mmToPx(settings.cornerRadiusMm, this.eng.getPageSpec().ppi) }
       : shape;
   }
 
@@ -71,9 +71,9 @@ export class ShapeTool implements Tool {
     const shape = this.buildShape(this.cur, this.lastEvent);
     if (!shape) return;
     if (shape.color === TRANSPARENT) {
-      drawShape(ctx, { ...shape, color: '#aaaaaa' }, false, this.eng.artboard);
+      drawShape(ctx, { ...shape, color: '#aaaaaa' }, false, this.eng.pageFrame);
     } else {
-      drawShape(ctx, shape, false, this.eng.artboard);
+      drawShape(ctx, shape, false, this.eng.pageFrame);
     }
   }
 }

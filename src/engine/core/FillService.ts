@@ -42,6 +42,8 @@ export class FillService {
     const selected = new Set(state.multiSelectMode ? state.selectedLayerIds : [ls.activeLayerId]);
     const color = state.penColor;
     const token = ++this.token;
+    const ppiBefore = this.engine.prepareRasterEdit(target);
+    let committed = false;
     this.engine.setBusy(true);
     state.set({ fillProgress: 0 });
     try {
@@ -59,7 +61,7 @@ export class FillService {
         seedX: point.x,
         seedY: point.y,
         tolerance: settings.colorTolerance,
-        gapClosePx: gapCloseMmToPx(settings.gapCloseMm, useStore.getState().canvasSpec.ppi),
+        gapClosePx: gapCloseMmToPx(settings.gapCloseMm, useStore.getState().pageSpec.ppi),
       }, token);
       if (!result || token !== this.token || !result.bounds) return;
       const bounds = result.bounds;
@@ -77,9 +79,11 @@ export class FillService {
         }
       }
       target.runtime.ctx.putImageData(image, bounds.minX, bounds.minY);
-      this.engine.commitRasterBatch([{ layer: target, before, rect: bounds }], '塗りつぶし');
+      this.engine.commitRasterBatch([{ layer: target, before, beforeSparse: ppiBefore, rect: bounds }], '塗りつぶし');
+      committed = true;
       if (color !== TRANSPARENT) useStore.getState().pushColor(color);
     } finally {
+      if (!committed && ppiBefore) this.engine.cancelRasterEditPreparation(target);
       if (token === this.token) {
         this.worker = null;
         useStore.getState().set({ fillProgress: null });

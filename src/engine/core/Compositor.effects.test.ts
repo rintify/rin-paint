@@ -7,9 +7,11 @@ import {
   createClipLayer,
   createOutlineLayer,
   createRasterLayer,
+  createTransformLayer,
   type Layer,
   type RasterLayer,
 } from '../layers';
+import { composeHomography } from '../../model';
 import type { PaintEngine } from '../PaintEngine';
 
 const native = new WeakMap<HTMLCanvasElement, Canvas>();
@@ -55,11 +57,11 @@ function createRenderer(layers: Layer[], roots: string[], ppi = 25.4, size = 16)
   const byId = new Map(layers.map(layer => [layer.id, layer]));
   const revisions = new Map<string, number>();
   const engine = {
-    artboard: { w: size, h: size },
+    pageFrame: { w: size, h: size },
     allLayers: () => layers,
     layerById: (id: string) => byId.get(id) ?? null,
     getRootLayerIds: () => roots,
-    getCanvasSpec: () => ({ widthMm: size, heightMm: size, ppi }),
+    getPageSpec: () => ({ widthMm: size, heightMm: size, ppi }),
     getRenderRevision: (id: string) => revisions.get(id) ?? 0,
     getMaskRevision: (id: string) => revisions.get(id) ?? 0,
     activeTool: () => ({}),
@@ -93,6 +95,21 @@ function darkestRedNear(canvas: HTMLCanvasElement, x: number, y: number, radius 
 }
 
 describe('effect scopes', () => {
+  it('pulls negative sparse-raster coordinates into the page through a transform layer', () => {
+    const source = createRasterLayer('source', 16, 16, 'source', false, 25.4);
+    source.runtime.sparse!.drawInRect({ x: -8, y: 2, w: 6, h: 6 }, ctx => {
+      ctx.fillStyle = '#ff0000';
+      ctx.fillRect(-8, 2, 6, 6);
+    });
+    const transform = createTransformLayer('transform', {
+      matrix: composeHomography({ translateXmm: 10 }),
+      pivotMm: { x: 0, y: 0 }, interpolation: 'nearest',
+    }, 'transform');
+    const result = render([source, transform], [source.id, transform.id]);
+    expect(rgba(result, 3, 4)).toEqual([255, 0, 0, 255]);
+    expect(rgba(result, 12, 4)).toEqual([255, 255, 255, 255]);
+  });
+
   it('applies root adjustment to preceding roots and uses opacity as effect strength', () => {
     const source = raster('source', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 16, 16); });
     const adjust = createAdjustLayer('色調補正', 'adjust');
@@ -110,13 +127,13 @@ describe('effect scopes', () => {
     const parent = raster('parent', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 16, 16); });
     const mask = raster('mask', ctx => { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 8, 16); });
     mask.visible = false;
-    mask.parentId = parent.id;
+    mask.scopeId = parent.id;
     const clip = createClipLayer('クリップ', 'clip');
-    clip.parentId = parent.id;
+    clip.scopeId = parent.id;
     clip.state.maskLayerIds = [mask.id];
     const later = raster('later', ctx => { ctx.fillStyle = '#00ff00'; ctx.fillRect(10, 0, 1, 1); });
-    later.parentId = parent.id;
-    parent.childIds = [mask.id, clip.id, later.id];
+    later.scopeId = parent.id;
+    parent.scopeLayerIds = [mask.id, clip.id, later.id];
 
     const result = render([lower, parent, mask, clip, later], [lower.id, parent.id]);
     expect(rgba(result, 2, 2)).toEqual([255, 0, 0, 255]);
@@ -131,12 +148,12 @@ describe('effect scopes', () => {
     mask.visible = false;
     const skipped = createClipLayer('非表示クリップ', 'skipped');
     skipped.visible = false;
-    skipped.parentId = parent.id;
+    skipped.scopeId = parent.id;
     const nested = createClipLayer('子クリップ', 'nested');
-    nested.parentId = skipped.id;
+    nested.scopeId = skipped.id;
     nested.state.maskLayerIds = [mask.id];
-    skipped.childIds = [nested.id];
-    parent.childIds = [skipped.id];
+    skipped.scopeLayerIds = [nested.id];
+    parent.scopeLayerIds = [skipped.id];
     const result = render([lower, parent, mask, skipped, nested], [lower.id, parent.id, mask.id]);
     expect(rgba(result, 2, 2)).toEqual([255, 0, 0, 255]);
     expect(rgba(result, 12, 2)).toEqual([0, 0, 255, 255]);
@@ -341,7 +358,7 @@ describe('effect scopes', () => {
     expect(compositor.lastCompositedPixels).toBe(1);
   });
 
-  it('keeps local clip recomposition aligned with artboard coordinates', () => {
+  it('keeps local clip recomposition aligned with pageFrame coordinates', () => {
     const source = raster('source', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 16, 16); });
     const mask = raster('mask', ctx => { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 8, 16); });
     mask.visible = false;
@@ -407,8 +424,8 @@ describe('effect scopes', () => {
     const source = raster('source', ctx => { ctx.fillStyle = '#f00'; ctx.fillRect(0, 0, 16, 16); });
     const parent = raster('parent', ctx => { ctx.fillStyle = '#fff'; ctx.fillRect(12, 12, 1, 1); });
     const outline = createOutlineLayer('縁どり', 'outline');
-    outline.parentId = parent.id;
-    parent.childIds = [outline.id];
+    outline.scopeId = parent.id;
+    parent.scopeLayerIds = [outline.id];
     const { main, compositor, revisions } = createRenderer(
       [source, parent, outline],
       [source.id, parent.id],
@@ -451,7 +468,7 @@ describe('effect scopes', () => {
       let transformA = Number.NaN;
       let transformD = Number.NaN;
       const engine = {
-        artboard: { w: 16, h: 16 },
+        pageFrame: { w: 16, h: 16 },
         view: { x: 5, y: 6, rot: 0, displayScale: () => 2 },
         activeTool: () => ({ drawOverlay: (ctx: CanvasRenderingContext2D) => {
           const value = ctx.getTransform();

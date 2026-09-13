@@ -8,8 +8,8 @@ describe('ShapeTool overlay invalidation', () => {
     const engine = {
       requestOverlayRender,
       activeToolSettings: () => ({ color: '#000', sizePx: 2, settings: {} }),
-      getCanvasSpec: () => ({ ppi: 96 }),
-      artboard: { w: 100, h: 100 },
+      getPageSpec: () => ({ ppi: 96 }),
+      pageFrame: { w: 100, h: 100 },
     } as unknown as PaintEngine;
     const tool = new ShapeTool(engine, 'rect');
     const point = (x: number, y: number) => ({ x, y, pressure: 1 });
@@ -30,8 +30,8 @@ describe('ShapeTool overlay invalidation', () => {
         color: '#123456', sizePx: 2,
         settings: { paintMode: 'stroke', strokeJoin: 'miter', cornerRadiusMm: 3.5 },
       }),
-      getCanvasSpec: () => ({ ppi: 25.4 }),
-      artboard: { w: 100, h: 100 },
+      getPageSpec: () => ({ ppi: 25.4 }),
+      pageFrame: { w: 100, h: 100 },
     } as unknown as PaintEngine;
     const tool = new ShapeTool(engine, 'rect');
     const point = (x: number, y: number) => ({ x, y, pressure: 1 });

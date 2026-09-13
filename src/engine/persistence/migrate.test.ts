@@ -9,14 +9,12 @@ const common = {
   opacity: 1,
   blend: 'source-over',
   visible: true,
-  parentId: null,
-  childIds: [],
 };
 
-describe('v10 project load', () => {
-  it('accepts a valid v10 page and keeps history version 8', () => {
+describe('current destructive project format', () => {
+  it('accepts a current page and keeps the current history version', () => {
     const page = migrateSavedPage({
-      id: 'p', canvasSpec: { widthMm: 10, heightMm: 10, ppi: 300 }, rootLayerIds: ['l'], activeLayerId: 'l',
+      id: 'p', pageSpec: { widthMm: 10, heightMm: 10, ppi: 300 }, rootLayerIds: ['l'], hierarchy: [{ kind: 'layer', id: 'n', layerId: 'l' }], activeLayerId: 'l',
       layers: [{
         id: 'l', type: 'shape', common: { ...common },
         state: { shape: line(), snapEnabled: true },
@@ -24,12 +22,12 @@ describe('v10 project load', () => {
       history: {
         version: HISTORY_VERSION, rootId: 0, currentId: 0,
         nodes: [
-          { id: 0, label: '開始', op: null, parentId: null, childIds: [], lastChild: 0 },
+          { id: 0, label: '開始', op: null, scopeId: null, scopeLayerIds: [], lastChild: 0 },
         ],
       },
       view: { x: 0, y: 0, scale: 1, rot: 0 }, thumbnailVersion: 0,
     });
-    expect(page.history.version).toBe(8);
+    expect(page.history.version).toBe(HISTORY_VERSION);
     expect(page.layers[0].state).toMatchObject({ shape: { kind: 'line', strokeWidth: 5 } });
   });
 
@@ -44,9 +42,9 @@ describe('v10 project load', () => {
 
   it('keeps project meta independent and accepts current clipboard envelopes', () => {
     const meta = migrateProjectMeta({
-      version: PROJECT_VERSION, pageOrder: ['p'], activePageId: 'p', fonts: [],
+      version: PROJECT_VERSION, pageOrder: ['p'], activePageId: 'p', fonts: [], binOrder: [], lastPagePpi: 300,
     });
-    expect(meta.version).toBe(10);
+    expect(meta.version).toBe(PROJECT_VERSION);
     const clipboard = migrateClipboard({
       version: CLIPBOARD_VERSION, sourcePageId: 'p', sourcePageIndex: 0, sourcePpi: 300, rootIds: ['l'],
       layers: [{

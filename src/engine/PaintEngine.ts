@@ -1,5 +1,5 @@
 import { useStore } from '../state/store';
-import { Artboard } from './artboard';
+import { PageFrame } from './pageFrame';
 import { EngineEvents } from './events';
 import {
   type LayerMeta,
@@ -7,7 +7,7 @@ import {
   type ShapeParams,
   type StrokePoint,
   type TextParams,
-  type CanvasSpec,
+  type PageSpec,
   type ProjectFont,
 } from '../model';
 import {
@@ -29,7 +29,7 @@ import {
   type HistoryTree,
   type LayerLocation,
   type LayerProps,
-  type CanvasSnapshot,
+  type PageSnapshot,
 } from './history/historyTree';
 import type { SavedPage } from './persistence/db';
 import { TimelapseRecorder } from './timelapse/recorder';
@@ -49,9 +49,11 @@ import { FillService } from './core/FillService';
 import { PolygonSplitService } from './core/PolygonSplitService';
 import { SettingsService } from './core/SettingsService';
 import { ParameterLinkService, type LayerLinkCandidate } from './core/ParameterLinkService';
+import { BinService } from './core/BinService';
 import { ParameterService } from './parameters/ParameterService';
 import { layerHandler } from './layer-types/registry';
 import type { RasterLayer } from './layers';
+import type { SparseRasterSurface } from './raster/SparseRasterSurface';
 import type { LayerParameterValue } from './parameters/types';
 import { mmToPx } from './units';
 import { imageToolBoxPx } from '../tools/image/settings';
@@ -60,7 +62,7 @@ import { canvasFromImageFile } from './image/load';
 export interface SelectedObjectTransform { id: string; before: LayerProps; width?: number; height?: number }
 
 export class PaintEngine {
-  readonly artboard = new Artboard();
+  readonly pageFrame = new PageFrame();
   readonly events = new EngineEvents();
 
   /** @internal */ readonly compositor = new Compositor(this);
@@ -79,6 +81,7 @@ export class PaintEngine {
   /** @internal */ readonly fill = new FillService(this);
   /** @internal */ readonly polygonSplit = new PolygonSplitService(this);
   /** @internal */ readonly settings = new SettingsService(this);
+  /** @internal */ readonly bins = new BinService(this);
 
   private recorder = new TimelapseRecorder(this, () => this.scheduleStorageRefresh());
 
@@ -86,7 +89,7 @@ export class PaintEngine {
   private readonly toolCache = new Map<ToolKind, Tool>();
 
   private busy = false;
-  readonly view = new ViewController(this.artboard);
+  readonly view = new ViewController(this.pageFrame);
   private initPromise: Promise<void> | null = null;
   private lastViewState: ViewState = this.view.snapshot();
   private toolBeforeEyedropperId: string | null = null;
@@ -155,12 +158,12 @@ export class PaintEngine {
 
   /** @internal */ isBusy(): boolean { return this.busy; }
   /** @internal */ setBusy(v: boolean): void { this.busy = v; }
-  /** @internal */ getCanvasSpec(): CanvasSpec { return this.project.canvasSpec; }
+  /** @internal */ getPageSpec(): PageSpec { return this.project.pageSpec; }
   /** @internal */ syncTextRendersPublic(): void { this.compositor.syncTextRenders(); }
   /** @internal */ scheduleStorageRefresh(): void { this.autosave.scheduleStorageRefresh(); }
   /** @internal */ flushSavePublic(): Promise<void> { return this.autosave.flushSave(); }
   /** @internal */ restoreSavedPagePublic(page: SavedPage): Promise<void> { return this.project.restoreSavedPage(page); }
-  /** @internal */ restoreCanvasSnapshotPublic(snapshot: CanvasSnapshot): Promise<void> { return this.project.restoreCanvasSnapshot(snapshot); }
+  /** @internal */ restorePageSnapshotPublic(snapshot: PageSnapshot): Promise<void> { return this.project.restorePageSnapshot(snapshot); }
   /** @internal */ recorderPublic(): TimelapseRecorder { return this.recorder; }
   /** @internal */ setLastViewState(view: ViewState): void { this.lastViewState = view; }
   /** @internal */ hasShapeEdit(): boolean { return this.shapeEdit.hasEdit(); }
@@ -205,7 +208,7 @@ export class PaintEngine {
     this.compositor.syncTextRenders();
     if (requestFullRender) this.requestRender();
     this.syncStore();
-    this.recorder.schedule();
+    if (!this.bins.activeBinId) this.recorder.schedule();
     this.scheduleSave();
     this.scheduleStorageRefresh();
   }
@@ -237,6 +240,7 @@ export class PaintEngine {
     this.initPromise ??= (async () => {
       await this.settings.init();
       await this.project.doInit();
+      await this.bins.init();
       await this.links.refreshCatalog();
       this.links.reconcileAll();
     })();
@@ -283,7 +287,7 @@ export class PaintEngine {
       this.notify('画像ツールを追加してください');
       return true;
     }
-    const box = imageToolBoxPx(tool.settings, this.getCanvasSpec().ppi);
+    const box = imageToolBoxPx(tool.settings, this.getPageSpec().ppi);
     const point = this.view.clientToArt(clientX, clientY);
     this.addImageLayer(canvas, point.x, point.y, box.width, box.height);
     return true;
@@ -311,7 +315,18 @@ export class PaintEngine {
   // ---------------------------------------------------------------- layers / objects / history
 
   activeRaster(): RasterLayer | null { return this.layerService.activeRaster(); }
+  isEditingBin(): boolean { return this.bins.activeBinId !== null; }
   selectedRasters(): RasterLayer[] { return this.layerService.selectedRasters(); }
+  effectiveTransformLayerIds(): Set<string> {
+    const state = useStore.getState();
+    return this.layerService.effectiveTransformLayerIds(
+      state.multiSelectMode ? state.selectedLayerIds : [this.layerService.activeLayerId],
+    );
+  }
+  ensureCanvasTransformTargets(): void {
+    const state = useStore.getState();
+    this.layerService.ensureCanvasTransformTargets(state.multiSelectMode ? state.selectedLayerIds : [this.layerService.activeLayerId]);
+  }
   hasSelectedObjects(): boolean { return this.layerService.hasSelectedObjects(); }
 
   selectedObjectsInRect(rect: DirtyRect, polygon?: { x: number; y: number }[]): SelectedObjectTransform[] {
@@ -323,11 +338,23 @@ export class PaintEngine {
   commitObjectGroup(entries: SelectedObjectTransform[]): void { this.objects.commitObjectGroup(entries); }
   restoreObjectGroup(entries: SelectedObjectTransform[]): void { this.objects.restoreObjectGroup(entries); }
 
-  commitRasterBatch(entries: { layer: RasterLayer; before: HTMLCanvasElement; rect: DirtyRect }[], label: string, objects: SelectedObjectTransform[] = []): void {
+  commitRasterBatch(entries: { layer: RasterLayer; before: HTMLCanvasElement; beforeSparse?: SparseRasterSurface; rect: DirtyRect }[], label: string, objects: SelectedObjectTransform[] = []): void {
     this.historyService.commitRasterBatch(entries, label, objects);
   }
-  captureBefore(layer: RasterLayer): void { this.compositor.captureBefore(layer); }
-  restoreBefore(layer: RasterLayer, rect?: DirtyRect): void { this.compositor.restoreBefore(layer, rect); }
+  prepareRasterEdit(layer: RasterLayer): SparseRasterSurface | undefined { return this.historyService.prepareRasterEdit(layer); }
+  captureBefore(layer: RasterLayer): void {
+    this.historyService.prepareRasterEdit(layer);
+    this.compositor.captureBefore(layer);
+  }
+  restoreBefore(layer: RasterLayer, rect?: DirtyRect): void {
+    this.compositor.restoreBefore(layer, rect);
+    this.historyService.cancelPreparedRasterEdit(layer);
+  }
+  restoreRasterPreviewBefore(layer: RasterLayer, rect?: DirtyRect): void {
+    this.compositor.restoreBefore(layer, rect);
+    this.historyService.restartPreparedRasterEdit(layer);
+  }
+  cancelRasterEditPreparation(layer: RasterLayer): void { this.historyService.cancelPreparedRasterEdit(layer); }
   commitRasterEdit(layer: RasterLayer, rect: DirtyRect, label: string): void {
     this.historyService.commitRasterEdit(layer, rect, label);
   }
@@ -352,8 +379,10 @@ export class PaintEngine {
     return layerHandler(layer).capabilities.objectTransform?.bounds(layer as never, this.compositor.measureEnv()) ?? null;
   }
   visibleObjectBounds(excludeId: string): { x: number; y: number; w: number; h: number }[] {
+    const excluded = this.layerService.byId(excludeId);
     return this.layerService.layers.flatMap(layer => {
-      if (layer.id === excludeId || !layer.visible || !layerHandler(layer).capabilities.objectTransform) return [];
+      if (layer.id === excludeId || !layer.visible || layer.scopeId !== excluded?.scopeId
+        || !layerHandler(layer).capabilities.objectTransform) return [];
       const bounds = this.objectBounds(layer.id);
       return bounds ? [bounds] : [];
     });
@@ -373,6 +402,12 @@ export class PaintEngine {
   async addFont(file: File): Promise<ProjectFont | null> { return this.project.addFont(file); }
 
   addRasterLayer(): void { this.layerService.addRasterLayer(); }
+  addCanvasLayer(): void { this.layerService.addCanvasLayer(); }
+  addTransformLayer(): void { this.layerService.addTransformLayer(); }
+  createStack(layerIds = useStore.getState().selectedLayerIds): boolean { return this.layerService.createStack(layerIds); }
+  stackForLayer(layerId: string) { return this.layerService.stackForLayer(layerId); }
+  setStackSelection(layerId: string, selected: boolean): void { this.layerService.setStackSelection(layerId, selected); }
+  convertStackToCanvas(layerId: string): boolean { return this.layerService.convertStackToCanvas(layerId); }
   addAdjustLayer(): void { this.layerService.addAdjustLayer(); }
   addOutlineLayer(): void { this.layerService.addOutlineLayer(); }
   addClipLayer(): void { this.layerService.addClipLayer(); }
@@ -388,8 +423,8 @@ export class PaintEngine {
   }
   layerChildren(id: string): string[] { return this.layerService.layerChildren(id); }
   layerRootIds(): string[] { return this.layerService.layerRootIds(); }
-  canMoveLayer(id: string, parentId: string | null): boolean { return this.layerService.canMoveLayer(id, parentId); }
-  moveLayerAsTopChild(id: string, parentId: string): void { this.layerService.moveLayerAsTopChild(id, parentId); }
+  canMoveLayer(id: string, scopeId: string | null): boolean { return this.layerService.canMoveLayer(id, scopeId); }
+  moveLayerAsTopChild(id: string, scopeId: string): void { this.layerService.moveLayerAsTopChild(id, scopeId); }
   moveLayerOut(id: string): void { this.layerService.moveLayerOut(id); }
   removeLayer(id: string): void { this.layerService.removeLayer(id); }
   canRemoveLayer(id: string): boolean { return this.layerService.canRemoveLayer(id); }
@@ -415,8 +450,27 @@ export class PaintEngine {
   async relinkLayerParameter(targetId: string, semanticId: string): Promise<void> { return this.links.relink(targetId, semanticId); }
   async relinkAllLayerParameters(targetId: string): Promise<void> { return this.links.relink(targetId); }
   async focusLayerReference(address: LayerAddress): Promise<void> {
-    if (address.pageId !== this.pages.activePageId) await this.pages.switchPage(address.pageId);
-    window.dispatchEvent(new CustomEvent<string>('rin-paint:focus-layer-row', { detail: address.layerId }));
+    if (address.document.kind === 'bin') await this.bins.open(address.document.id);
+    else {
+      if (this.bins.activeBinId) await this.bins.returnToPage();
+      if (address.document.id !== this.pages.activePageId) await this.pages.switchPage(address.document.id);
+    }
+    window.dispatchEvent(new CustomEvent<string>('rin-paint:focus-layer-row', { detail: address.nodeId }));
+  }
+
+  layerAddress(layerId: string): LayerAddress {
+    const editing = useStore.getState().editingDocument;
+    const scopePath: string[] = [];
+    let layer = this.layerService.byId(layerId);
+    while (layer?.scopeId) {
+      scopePath.unshift(layer.scopeId);
+      layer = this.layerService.byId(layer.scopeId);
+    }
+    return {
+      document: editing.id ? editing : { kind: 'page', id: this.pages.activePageId },
+      scopePath,
+      nodeId: layerId,
+    };
   }
 
   beginShapeEdit(point: StrokePoint, event?: PointerEvent): boolean { return this.shapeEdit.beginShapeEdit(point, event); }
@@ -446,7 +500,7 @@ export class PaintEngine {
       kind: st.tool,
       color: st.penColor,
       sizeMm,
-      sizePx: mmToPx(sizeMm, st.canvasSpec.ppi),
+      sizePx: mmToPx(sizeMm, st.pageSpec.ppi),
       settings: inst?.settings,
     };
   }
@@ -604,9 +658,14 @@ export class PaintEngine {
   async switchPage(id: string): Promise<void> { return this.pages.switchPage(id); }
   async deletePage(id: string): Promise<void> { return this.pages.deletePage(id); }
   async reorderPages(from: number, to: number): Promise<void> { return this.pages.reorderPages(from, to); }
+  async putLayerInBin(id: string): Promise<void> { return this.bins.putLayer(id); }
+  async placeBinItem(id: string): Promise<void> { return this.bins.place(id); }
+  async openBinItem(id: string): Promise<void> { return this.bins.open(id); }
+  async returnToPage(): Promise<void> { return this.bins.returnToPage(); }
+  async deleteBinItem(id: string): Promise<void> { return this.bins.remove(id); }
 
   setSelectionFreeTransform(on: boolean): void { this.activeFloat()?.setFreeTransform(on); }
-  async resizeCanvas(spec: CanvasSpec): Promise<void> { return this.project.resizeCanvas(spec); }
+  async resizePage(spec: PageSpec): Promise<void> { return this.project.resizePage(spec); }
   async newProject(): Promise<void> { return this.project.newProject(); }
 
   commitFloatSelection(): void { this.activeSession()?.commit(); this.syncStore(); }
@@ -639,8 +698,9 @@ export class PaintEngine {
       opacity: l.opacity,
       blend: l.blend,
       visible: l.visible,
-      parentId: l.parentId,
-      childIds: [...l.childIds],
+      scopeId: l.scopeId,
+      scopeLayerIds: [...l.scopeLayerIds],
+      ...(l.dataLink ? { dataLink: structuredClone(l.dataLink) } : {}),
       ...(l.parameterLink ? { parameterLink: structuredClone(l.parameterLink) } : { parameterLink: undefined }),
       linkSource: linkInfo.source,
       directLinkTargets: linkInfo.targets,
@@ -656,7 +716,7 @@ export class PaintEngine {
       ? state.selectedLayerIds.filter(id => ls.byId(id))
       : [ls.activeLayerId].filter(Boolean);
     let multiSelectMode = state.multiSelectMode;
-    if (multiSelectMode && selectedLayerIds.length <= 1 && selectedLayerIds.length < state.selectedLayerIds.length) {
+    if (multiSelectMode && selectedLayerIds.length === 1 && selectedLayerIds.length < state.selectedLayerIds.length) {
       multiSelectMode = false;
       if (selectedLayerIds[0]) ls.activeLayerId = selectedLayerIds[0];
       selectedLayerIds = [ls.activeLayerId].filter(Boolean);
@@ -664,6 +724,7 @@ export class PaintEngine {
     useStore.getState().set({
       layers: metas,
       rootLayerIds: ls.layerRootIds(),
+      hierarchy: structuredClone(ls.rootHierarchy),
       activeLayerId: ls.activeLayerId,
       selectedLayerIds,
       multiSelectMode,

@@ -32,7 +32,7 @@ export class BlurTool implements Tool {
     if (!layer) return;
     this.layer = layer;
     this.eng.captureBefore(layer);
-    const size = this.eng.activeToolSettings()?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getCanvasSpec().ppi);
+    const size = this.eng.activeToolSettings()?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getPageSpec().ppi);
     this.radius = Math.max(3, size * 0.5);
     this.blurPx = Math.max(1, size * 0.14);
     this.rect = emptyRect();
@@ -100,7 +100,9 @@ export class BlurTool implements Tool {
 
     this.srcCtx.save();
     this.srcCtx.clearRect(0, 0, s, s);
-    this.srcCtx.drawImage(layer.runtime.canvas, -ox, -oy);
+    if (this.eng.isEditingBin() && layer.runtime.sparse) {
+      layer.runtime.sparse.drawDocumentTo(this.srcCtx, { x: ox, y: oy, w: s, h: s }, this.eng.getPageSpec().ppi);
+    } else this.srcCtx.drawImage(layer.runtime.canvas, -ox, -oy);
     this.srcCtx.restore();
 
     this.blurredCtx.save();
@@ -140,6 +142,12 @@ export class BlurTool implements Tool {
     layer.runtime.ctx.clearRect(ox, oy, s, s);
     layer.runtime.ctx.drawImage(this.mix, ox, oy);
     layer.runtime.ctx.restore();
+    if (this.eng.isEditingBin() && layer.runtime.sparse) {
+      layer.runtime.sparse.drawDocumentInRect({ x: ox, y: oy, w: s, h: s }, this.eng.getPageSpec().ppi, ctx => {
+        ctx.clearRect(ox, oy, s, s);
+        ctx.drawImage(this.mix, ox, oy);
+      });
+    }
 
     expandRect(this.rect, cx, cy, r + pad);
     return { minX: ox, minY: oy, maxX: ox + s, maxY: oy + s };

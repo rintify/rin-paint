@@ -1,7 +1,8 @@
-import { canvasToBlob, createRasterLayer, ensureRasterSurface, makeCanvas, type Layer, type RasterLayer } from '../layers';
+import { canvasToBlob, createRasterLayer, ensureRasterSurface, makeCanvas, markRasterContent, type Layer, type RasterLayer } from '../layers';
 import { emptyCatalog } from '../parameters/catalog';
 import type { LayerDefinition } from './definition';
 import type { LayerDrawEnv } from './types';
+import { SparseRasterSurface } from '../raster/SparseRasterSurface';
 
 export const rasterLayerType: LayerDefinition<'raster'> = {
   info: {
@@ -25,17 +26,22 @@ export const rasterLayerType: LayerDefinition<'raster'> = {
     decode: () => ({}),
     async encodeContent(layer) {
       if (layer.runtime.deferred) return undefined;
+      if (layer.runtime.sparse) return layer.runtime.sparse.toBlob();
       const copy = makeCanvas(layer.runtime.canvas.width, layer.runtime.canvas.height);
       copy.getContext('2d')!.drawImage(layer.runtime.canvas, 0, 0);
       return canvasToBlob(copy);
     },
     async decodeRuntime(content, env) {
-      const layer = createRasterLayer('tmp', env.artboard.w, env.artboard.h, undefined, !content);
-      if (content instanceof HTMLCanvasElement) layer.runtime.ctx.drawImage(content, 0, 0);
+      const documentPpi = env.ppi ?? 300;
+      const layer = createRasterLayer('tmp', env.pageFrame.w, env.pageFrame.h, undefined, !content, documentPpi);
+      if (content instanceof HTMLCanvasElement) {
+        layer.runtime.ctx.drawImage(content, 0, 0);
+        markRasterContent(layer, { x: 0, y: 0, w: content.width, h: content.height }, documentPpi);
+      }
       else if (content) {
-        const bitmap = await createImageBitmap(content);
-        layer.runtime.ctx.drawImage(bitmap, 0, 0);
-        bitmap.close();
+        const sparse = await SparseRasterSurface.fromBlob(content);
+        layer.runtime.sparse = sparse;
+        sparse.drawDocumentTo(layer.runtime.ctx, { x: 0, y: 0, w: env.pageFrame.w, h: env.pageFrame.h }, documentPpi);
       }
       return layer.runtime;
     },
@@ -47,25 +53,38 @@ export const rasterLayerType: LayerDefinition<'raster'> = {
   renderer: {
     draw(ctx, layer, env) {
       if (layer.runtime.deferred) return;
-      const erasers = layer.childIds
+      const erasers = layer.scopeLayerIds
         .map(id => env.layerById(id))
         .filter((child): child is Layer => !!child && child.visible && !!env.handlerFor(child).renderer.eraser?.applies(child as never));
       let source: HTMLCanvasElement = layer.runtime.canvas;
-      let borrowed: ReturnType<LayerDrawEnv['borrowCanvas']> | null = null;
+      let sourceOrigin = { x: 0, y: 0 };
+      const borrowed: ReturnType<LayerDrawEnv['borrowCanvas']>[] = [];
+      if (layer.runtime.sparse?.tileCount) {
+        const region = env.borrowCanvas();
+        layer.runtime.sparse.drawDocumentTo(region.ctx, {
+          x: env.originX, y: env.originY,
+          w: region.canvas.width, h: region.canvas.height,
+        }, env.ppi);
+        borrowed.push(region);
+        source = region.canvas;
+        sourceOrigin = { x: env.originX, y: env.originY };
+      }
       if (erasers.length) {
-        borrowed = env.borrowCanvas();
-        borrowed.ctx.save();
-        borrowed.ctx.setTransform(1, 0, 0, 1, -env.originX, -env.originY);
-        borrowed.ctx.drawImage(layer.runtime.canvas, 0, 0);
-        for (const eraser of erasers) env.handlerFor(eraser).renderer.eraser!.draw(borrowed.ctx, eraser as never, env);
-        borrowed.ctx.restore();
-        source = borrowed.canvas;
+        const erased = env.borrowCanvas();
+        borrowed.push(erased);
+        erased.ctx.save();
+        erased.ctx.setTransform(1, 0, 0, 1, -env.originX, -env.originY);
+        erased.ctx.drawImage(source, sourceOrigin.x, sourceOrigin.y);
+        for (const eraser of erasers) env.handlerFor(eraser).renderer.eraser!.draw(erased.ctx, eraser as never, env);
+        erased.ctx.restore();
+        source = erased.canvas;
+        sourceOrigin = { x: env.originX, y: env.originY };
       }
       ctx.globalAlpha = layer.opacity;
       ctx.globalCompositeOperation = layer.blend;
-      ctx.drawImage(source, borrowed ? env.originX : 0, borrowed ? env.originY : 0);
+      ctx.drawImage(source, sourceOrigin.x, sourceOrigin.y);
       env.drawAboveLayer?.(ctx, layer.id);
-      borrowed?.release();
+      for (const lease of borrowed) lease.release();
     },
     drawMask(ctx, layer) {
       if (layer.runtime.deferred) return;
@@ -100,6 +119,7 @@ export function scaleRasterRuntime(layer: RasterLayer, factor: number, width: nu
     return;
   }
   const contentBounds = layer.runtime.contentBounds;
+  const sparse = layer.runtime.sparse?.resample(layer.runtime.sparse.ppi * factor);
   const canvas = makeCanvas(width, height);
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('キャンバス用のメモリを確保できませんでした');
@@ -109,6 +129,7 @@ export function scaleRasterRuntime(layer: RasterLayer, factor: number, width: nu
   layer.runtime = {
     canvas,
     ctx,
+    sparse,
     logicalWidth: width,
     logicalHeight: height,
     ...(contentBounds === null ? { contentBounds: null } : contentBounds ? {

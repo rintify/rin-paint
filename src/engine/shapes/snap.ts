@@ -54,9 +54,9 @@ function linesFromValues(values: number[], rank: number): SnapLine[] {
 }
 
 /** 画布と他図形の外接矩形から、X/Y の吸着候補をレイヤー順で作る */
-export function collectSnapLines(artboard: { w: number; h: number }, others: ShapeBounds[]): SnapLines {
-  const x = linesFromValues([0, artboard.w / 2, artboard.w], 0);
-  const y = linesFromValues([0, artboard.h / 2, artboard.h], 0);
+export function collectSnapLines(pageFrame: { w: number; h: number }, others: ShapeBounds[]): SnapLines {
+  const x = linesFromValues([0, pageFrame.w / 2, pageFrame.w], 0);
+  const y = linesFromValues([0, pageFrame.h / 2, pageFrame.h], 0);
   others.forEach((bounds, index) => {
     const anchors = boundsAnchors(bounds);
     x.push(...linesFromValues(anchors.x, index + 1));

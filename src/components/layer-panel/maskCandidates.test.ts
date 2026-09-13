@@ -13,8 +13,8 @@ function layer(
     : {}
   );
   return {
-    parentId: null,
-    childIds: [],
+    scopeId: null,
+    scopeLayerIds: [],
     opacity: 1,
     blend: 'source-over',
     visible: true,
@@ -29,24 +29,23 @@ function layer(
 
 describe('maskCandidateRows', () => {
   const layers: LayerMeta[] = [
-    layer({ id: 'folder', name: 'Folder', type: 'raster', childIds: ['a', 'adj', 'outline', 'clip', 'b'] }),
-    layer({ id: 'a', name: 'Alpha', type: 'raster', parentId: 'folder' }),
-    layer({ id: 'adj', name: 'Adjust', type: 'adjust', parentId: 'folder' }),
-    layer({ id: 'outline', name: 'Outline', type: 'outline', parentId: 'folder' }),
-    layer({ id: 'clip', name: 'Clip', type: 'clip', parentId: 'folder' }),
-    layer({ id: 'b', name: 'Beta', type: 'raster', parentId: 'folder' }),
+    layer({ id: 'folder', name: 'Canvas', type: 'canvas', scopeLayerIds: ['a', 'adj', 'outline', 'clip', 'b'], state: { hierarchy: [], propagateTransform: true } }),
+    layer({ id: 'a', name: 'Alpha', type: 'raster', scopeId: 'folder' }),
+    layer({ id: 'adj', name: 'Adjust', type: 'adjust', scopeId: 'folder' }),
+    layer({ id: 'outline', name: 'Outline', type: 'outline', scopeId: 'folder' }),
+    layer({ id: 'clip', name: 'Clip', type: 'clip', scopeId: 'folder' }),
+    layer({ id: 'b', name: 'Beta', type: 'raster', scopeId: 'folder' }),
   ];
 
-  it('allows only earlier outline effects and excludes other effects and the target', () => {
-    const rows = maskCandidateRows(['folder'], layers, 'a', '');
-    expect(rows.map((r) => r.layer.id)).toEqual(['folder', 'b']);
+  it('allows only lower mask-capable siblings in the same Canvas scope', () => {
+    const rows = maskCandidateRows(['folder'], layers, 'b', '');
+    expect(rows.map((r) => r.layer.id)).toEqual(['a', 'outline']);
     expect(canUseLayerAsMask(['folder'], layers, 'clip', 'outline')).toBe(true);
-    expect(maskCandidateRows(['folder'], layers, 'clip', '').map(row => row.layer.id))
-      .toEqual(['folder', 'a', 'outline', 'b']);
+    expect(canUseLayerAsMask(['folder'], layers, 'a', 'folder')).toBe(false);
   });
 
   it('filters by query and keeps ancestor layers', () => {
-    const rows = maskCandidateRows(['folder'], layers, 'none', 'bet');
-    expect(rows.map((r) => r.layer.id)).toEqual(['folder', 'b']);
+    const rows = maskCandidateRows(['folder'], layers, 'b', 'alp');
+    expect(rows.map((r) => r.layer.id)).toEqual(['a']);
   });
 });

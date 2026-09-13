@@ -53,7 +53,7 @@ export class CursorTool implements Tool {
     ctx.drawImage(glow.silhouette, 0, 0);
     ctx.globalCompositeOperation = 'source-in';
     ctx.fillStyle = GLOW_FILL;
-    ctx.fillRect(0, 0, this.engine.artboard.w, this.engine.artboard.h);
+    ctx.fillRect(0, 0, this.engine.pageFrame.w, this.engine.pageFrame.h);
     ctx.globalCompositeOperation = 'destination-out';
     ctx.shadowBlur = 0;
     ctx.drawImage(glow.silhouette, 0, 0);

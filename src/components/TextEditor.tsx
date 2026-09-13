@@ -12,7 +12,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   const layers = useStore(s => s.layers);
   const activeId = useStore(s => s.activeLayerId);
   const editingId = useStore(s => s.textEditingId);
-  const ppi = useStore(s => s.canvasSpec.ppi);
+  const ppi = useStore(s => s.pageSpec.ppi);
   const viewScale = useStore(s => s.viewScale);
   const found = layers.find(l => l.id === activeId);
   const layer = found?.type === 'text' ? found : undefined;
@@ -137,7 +137,11 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   const width = text.width ?? Math.max(30, measured.width || Number(canvas?.dataset.textWidth ?? 100));
   const height = text.height ?? Math.max(30, measured.height || Number(canvas?.dataset.textHeight ?? 60));
   const displayScale = Math.max(0.0001, fitScale * viewScale);
-  const frameOrigin = textEditorFrameOrigin(text.x, text.y, width, height, fitScale);
+  const frameOrigin = textEditorFrameOrigin(
+    text.x - engine.pageFrame.originX,
+    text.y - engine.pageFrame.originY,
+    width, height, fitScale,
+  );
   const begin = (event: ReactPointerEvent<HTMLDivElement>, mode: 'move' | 'resize' | 'rotate', corner?: TextResizeCorner) => {
     if (composing.current) return;
     if (event.button !== 0) return;
@@ -149,7 +153,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
       pointerId: event.pointerId, mode, corner, x: point.x, y: point.y, width, height,
       before: structuredClone(text), capture,
       snapLines: mode === 'move' && layer.state.snapEnabled !== false
-        ? collectSnapLines(engine.artboard, engine.visibleObjectBounds(activeId))
+        ? collectSnapLines(engine.pageFrame, engine.visibleObjectBounds(activeId))
         : undefined,
     };
     setSnapGuides({ x: null, y: null });

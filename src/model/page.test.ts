@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchingPaperTemplate, paperSizeDimensions, PAPER_SIZE_TEMPLATES } from './canvas';
+import { matchingPaperTemplate, paperSizeDimensions, PAPER_SIZE_TEMPLATES } from './page';
 
 describe('paper size templates', () => {
   it('matches portrait and landscape A4', () => {

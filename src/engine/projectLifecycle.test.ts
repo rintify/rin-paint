@@ -10,6 +10,8 @@ import { useStore } from '../state/store';
 import { addFrame, frameCount, loadPage, loadProjectMeta, loadReferenceImage, saveReferenceImage, referenceEpoch } from './persistence/db';
 import { layerMaskIds } from './layer-types/definition';
 import type { HistoryTree, TileLayerMergeOp } from './history/historyTree';
+import { SparseRasterSurface } from './raster/SparseRasterSurface';
+import { objectTransformProps } from './layer-types/registry';
 
 // Real pixel buffers/PNG roundtrips without launching a browser.
 const native = new WeakMap<HTMLCanvasElement, Canvas>();
@@ -77,11 +79,12 @@ describe('canvas history and new project', () => {
     };
     engine.addPanelFrame(shape, { outlineColor: '#112233', outlineWidthMm: 2 });
     const panel = useStore.getState().layers.find(layer => layer.name === 'コマ')!;
-    const [rasterId, clipId] = panel.childIds;
+    expect(panel.type).toBe('canvas');
+    const [, rasterId, clipId, outlineId] = panel.scopeLayerIds;
     const clip = useStore.getState().layers.find(layer => layer.id === clipId)!;
-    const outline = useStore.getState().layers.find(layer => layer.id === clip.childIds[0])!;
+    const outline = useStore.getState().layers.find(layer => layer.id === outlineId)!;
     expect(useStore.getState().activeLayerId).toBe(rasterId);
-    expect(clip.state).toEqual({ maskLayerIds: [panel.id] });
+    expect(clip.state).toEqual({ maskLayerIds: [panel.scopeLayerIds[0]] });
     expect(outline.state).toMatchObject({ outline: { color: '#112233', widthMm: 2, cornerStyle: 'sharp' } });
     const internal = (engine as unknown as { layerById(id: string): { runtime?: { deferred?: boolean; canvas?: HTMLCanvasElement } } | null }).layerById(rasterId);
     expect(internal?.runtime).toMatchObject({ deferred: true });
@@ -102,19 +105,23 @@ describe('canvas history and new project', () => {
       textFrame: { x: 58, y: 72, w: 84, h: 56 },
     });
     const bubble = useStore.getState().layers.find(layer => layer.name === '吹き出し')!;
-    const children = bubble.childIds.map(id => useStore.getState().layers.find(layer => layer.id === id)!);
-    expect(children.map(layer => layer.name)).toEqual(['しっぽ', '吹き出し枠', '文字']);
-    expect(children[0].parameterLink).toMatchObject({ source: { layerId: bubble.id }, linkedParameterIds: ['appearance.color'] });
-    expect(children[1].state).toMatchObject({ outline: { cornerStyle: 'round' } });
-    expect(children[2].state).toMatchObject({ text: { direction: 'vertical', horizontalAlign: 'left', verticalAlign: 'top', lineHeight: 1.5, width: 84, height: 56 } });
-    expect(useStore.getState().textEditingId).toBe(children[2].id);
+    const children = bubble.scopeLayerIds.map(id => useStore.getState().layers.find(layer => layer.id === id)!);
+    expect(bubble.type).toBe('canvas');
+    expect(children.map(layer => layer.name)).toEqual(['吹き出し本体', 'しっぽ', '吹き出し枠', '文字']);
+    expect(children[1].parameterLink).toMatchObject({
+      source: { document: { kind: 'page' }, scopePath: [bubble.id], nodeId: children[0].id },
+      linkedParameterIds: ['appearance.color'],
+    });
+    expect(children[2].state).toMatchObject({ outline: { cornerStyle: 'round' } });
+    expect(children[3].state).toMatchObject({ text: { direction: 'vertical', horizontalAlign: 'left', verticalAlign: 'top', lineHeight: 1.5, width: 84, height: 56 } });
+    expect(useStore.getState().textEditingId).toBe(children[3].id);
     await engine.undo();
     expect(useStore.getState().layers.some(layer => layer.id === bubble.id)).toBe(false);
     await engine.redo();
     expect(useStore.getState().layers.some(layer => layer.id === bubble.id)).toBe(true);
   });
 
-  it('converts a rotated rectangle to an editable polygon without changing its identity or children', async () => {
+  it('converts a rotated rectangle without accepting arbitrary child ownership', async () => {
     await engine.newProject();
     engine.addShapeLayer({ kind: 'rect', x: 20, y: 30, width: 100, height: 60, rotation: Math.PI / 6, color: '#abcdef', strokeWidth: 7, paintMode: 'fill-outside' });
     const id = useStore.getState().activeLayerId;
@@ -125,16 +132,17 @@ describe('canvas history and new project', () => {
     engine.convertRectToPolygon(id);
     const converted = engine.getShape(id);
     expect(converted).toMatchObject({ kind: 'polygon', color: '#abcdef', strokeWidth: 7, paintMode: 'fill-outside' });
-    expect(useStore.getState().layers.find(layer => layer.id === id)).toMatchObject({ name: '多角形', childIds: [childId] });
+    expect(useStore.getState().layers.find(layer => layer.id === id)).toMatchObject({ name: '多角形', scopeLayerIds: [] });
+    expect(useStore.getState().layers.find(layer => layer.id === childId)?.scopeId).toBeNull();
     expect(converted?.kind === 'polygon' ? converted.points : []).toHaveLength(4);
     await engine.undo();
     expect(engine.getShape(id)).toMatchObject({ kind: 'rect', rotation: Math.PI / 6 });
-    expect(useStore.getState().layers.find(layer => layer.id === id)).toMatchObject({ name: '四角形', childIds: [childId] });
+    expect(useStore.getState().layers.find(layer => layer.id === id)).toMatchObject({ name: '四角形', scopeLayerIds: [] });
     await engine.redo();
     expect(engine.getShape(id)?.kind).toBe('polygon');
   });
 
-  it('splits a rectangle and its child tree as one persistent structural history action', async () => {
+  it('splits a rectangle as one persistent structural history action', async () => {
     await engine.newProject();
     engine.addShapeLayer({ kind: 'rect', x: 0, y: 0, width: 100, height: 100, rotation: 0, color: '#123456', strokeWidth: 3, paintMode: 'fill-inside' });
     const sourceId = useStore.getState().activeLayerId;
@@ -149,7 +157,7 @@ describe('canvas history and new project', () => {
     const shapes = useStore.getState().layers.filter(layer => layer.type === 'shape');
     const rasters = useStore.getState().layers.filter(layer => layer.type === 'raster');
     expect(shapes).toHaveLength(2);
-    expect(rasters).toHaveLength(3);
+    expect(rasters).toHaveLength(2);
     expect(shapes.map(layer => layer.type === 'shape' && layer.state.shape)).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'polygon', paintMode: 'fill-inside', color: '#123456' }),
       expect.objectContaining({ kind: 'polygon', paintMode: 'fill-inside', color: '#123456' }),
@@ -162,28 +170,28 @@ describe('canvas history and new project', () => {
     expect(engine.getShape(sourceId)?.kind).toBe('rect');
     await engine.redo();
     expect(useStore.getState().layers.filter(layer => layer.type === 'shape')).toHaveLength(2);
-    expect(useStore.getState().layers.filter(layer => layer.type === 'raster')).toHaveLength(3);
+    expect(useStore.getState().layers.filter(layer => layer.type === 'raster')).toHaveLength(2);
     await (engine as unknown as { flushSave(): Promise<void> }).flushSave();
     const { page } = await loadActivePersisted();
     expect(page?.history.nodes.some(node => node.op?.kind === 'layerReplace')).toBe(true);
   });
 
-  it('aborts the whole split when selected target polygons have an ancestor relationship', async () => {
+  it('does not create an ancestor relationship between ordinary shape layers', async () => {
     await engine.newProject();
     engine.addShapeLayer({ kind: 'rect', x: 0, y: 0, width: 100, height: 100, color: '#000', strokeWidth: 2, paintMode: 'stroke' });
-    const parentId = useStore.getState().activeLayerId;
+    const scopeId = useStore.getState().activeLayerId;
     engine.addShapeLayer({ kind: 'rect', x: 20, y: 20, width: 40, height: 40, color: '#000', strokeWidth: 2, paintMode: 'stroke' });
     const childId = useStore.getState().activeLayerId;
-    engine.moveLayerAsTopChild(childId, parentId);
-    engine.beginMultiSelect(parentId);
+    engine.moveLayerAsTopChild(childId, scopeId);
+    expect(useStore.getState().layers.find(layer => layer.id === childId)?.scopeId).toBeNull();
+    engine.beginMultiSelect(scopeId);
     const historyBefore = useStore.getState().historyCount;
     await (engine as unknown as { polygonSplit: { split(a: { x: number; y: number; pressure: number }, b: { x: number; y: number; pressure: number }): Promise<void> } }).polygonSplit.split(
       { x: 50, y: -20, pressure: 1 },
       { x: 50, y: 120, pressure: 1 },
     );
-    expect(useStore.getState().layers.filter(layer => layer.type === 'shape')).toHaveLength(2);
-    expect(useStore.getState().historyCount).toBe(historyBefore);
-    expect(useStore.getState().toolNotice).toContain('親子関係');
+    expect(useStore.getState().layers.filter(layer => layer.type === 'shape')).toHaveLength(4);
+    expect(useStore.getState().historyCount).toBeGreaterThan(historyBefore);
   });
 
   it('fills only the primary raster using mixed selected layers as the visible boundary', async () => {
@@ -280,11 +288,11 @@ describe('canvas history and new project', () => {
     engine.commitRasterEdit(engine.activeRaster()!, { minX: 1200, minY: 900, maxX: 1220, maxY: 920 }, '描画');
     engine.commitLayerProps(id, { opacity: 1 }, { opacity: .6 }, 'opacity');
     const smaller = { widthMm: 800 * 25.4 / 300, heightMm: 600 * 25.4 / 300, ppi: 300 };
-    await engine.resizeCanvas(smaller);
+    await engine.resizePage(smaller);
     expect(engine.getLayerCanvas(id)!.width).toBe(800);
     await (engine as unknown as { flushSave(): Promise<void> }).flushSave();
     const { page: persisted } = await loadActivePersisted();
-    expect(persisted?.history?.nodes.some(n => n.op?.kind === 'canvasChange')).toBe(true);
+    expect(persisted?.history?.nodes.some(n => n.op?.kind === 'pageChange')).toBe(true);
     const { HistoryTree } = await import('./history/historyTree');
     const restored = new HistoryTree();
     expect(restored.restore(persisted?.history)).toBe(true);
@@ -309,7 +317,7 @@ describe('canvas history and new project', () => {
     const text: TextParams = { ...newText(30, 40, '#000000', 200, 100), content: '文字' };
     engine.addTextLayer(text);
     const textId = useStore.getState().activeLayerId;
-    await engine.resizeCanvas({ ...useStore.getState().canvasSpec, ppi: 600 });
+    await engine.resizePage({ ...useStore.getState().pageSpec, ppi: 600 });
     expect(engine.getLayerCanvas(raster)!.width).toBe(1600);
     expect([...engine.getLayerCanvas(raster)!.getContext('2d')!.getImageData(30, 30, 1, 1).data]).toEqual([0, 255, 0, 255]);
     expect(engine.getShape(shapeId)).toMatchObject({ x1: 20, y1: 40, strokeWidth: 6 });
@@ -317,14 +325,70 @@ describe('canvas history and new project', () => {
     await engine.undo();
     expect(engine.getText(textId)).toEqual(text);
     await engine.redo();
-    expect(useStore.getState().canvasSpec.ppi).toBe(600);
+    expect(useStore.getState().pageSpec.ppi).toBe(600);
+  });
+  it('resamples a bin raster at first pixel edit in the same undo operation', async () => {
+    await engine.newProject();
+    const layer = engine.activeRaster()!;
+    const currentPpi = useStore.getState().pageSpec.ppi;
+    const original = new SparseRasterSurface(currentPpi / 2);
+    original.drawInRect({ x: 4, y: 4, w: 8, h: 8 }, ctx => {
+      ctx.fillStyle = '#ff0000'; ctx.fillRect(4, 4, 8, 8);
+    });
+    layer.runtime.sparse = original;
+    engine.bins.activeBinId = 'test-bin';
+    engine.captureBefore(layer);
+    expect(layer.runtime.sparse?.ppi).toBe(currentPpi);
+    layer.runtime.ctx.fillStyle = '#0000ff';
+    layer.runtime.ctx.fillRect(30, 30, 4, 4);
+    engine.commitRasterEdit(layer, { minX: 30, minY: 30, maxX: 34, maxY: 34 }, 'ビン描画');
+    await awaitHistoryReady();
+    expect(layer.runtime.sparse?.ppi).toBe(currentPpi);
+    await engine.undo();
+    expect(engine.activeRaster()?.runtime.sparse?.ppi).toBe(currentPpi / 2);
+    await engine.redo();
+    expect(engine.activeRaster()?.runtime.sparse?.ppi).toBe(currentPpi);
+    engine.bins.activeBinId = null;
+  });
+  it('creates the propagate-off transform target in the same history operation as its edit', async () => {
+    await engine.newProject();
+    engine.addCanvasLayer();
+    const canvasId = useStore.getState().activeLayerId;
+    engine.updateSelectedParameter('canvas.propagateTransform', false);
+    const historyBefore = useStore.getState().historyCount;
+    engine.ensureCanvasTransformTargets();
+    const transform = engine.allLayers().find(layer => layer.type === 'transform' && layer.scopeId === canvasId)!;
+    expect(transform).toBeTruthy();
+    expect(useStore.getState().historyCount).toBe(historyBefore);
+    const before = objectTransformProps(transform);
+    const source = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+    const target = source.map(point => ({ x: point.x + 20, y: point.y + 10 }));
+    engine.previewObjectGroup([{ id: transform.id, before, width: 100, height: 100 }], source, target);
+    engine.commitObjectGroup([{ id: transform.id, before, width: 100, height: 100 }]);
+    expect(useStore.getState().historyCount).toBe(historyBefore + 1);
+    await engine.undo();
+    expect(engine.allLayers().some(layer => layer.id === transform.id)).toBe(false);
+    await engine.redo();
+    expect(engine.allLayers().some(layer => layer.id === transform.id)).toBe(true);
+  });
+  it('adds a dropped layer to an existing stack without losing its members', async () => {
+    await engine.newProject();
+    const first = useStore.getState().activeLayerId;
+    engine.addRasterLayer();
+    const second = useStore.getState().activeLayerId;
+    engine.addRasterLayer();
+    const third = useStore.getState().activeLayerId;
+    expect(engine.createStack([first, second])).toBe(true);
+    expect(engine.createStack([second, third])).toBe(true);
+    expect(engine.stackForLayer(third)?.layerIds).toEqual([first, second, third]);
+    expect(useStore.getState().rootLayerIds).toEqual([first, second, third]);
   });
   it('new project clears project data atomically and rejects delayed reference writes', async () => {
     const oldEpoch = referenceEpoch();
     const reference = { blob: new Blob(['image']), name: 'reference', naturalWidth: 1, naturalHeight: 1, x: 0, y: 0, width: 100, rotation: 0, opacity: 1, locked: false };
     await saveReferenceImage(reference, oldEpoch);
     await addFrame({ t: 1, blob: new Blob(['frame']) });
-    const spec = useStore.getState().canvasSpec;
+    const spec = useStore.getState().pageSpec;
     const tools = structuredClone(useStore.getState().tools);
     await engine.newProject();
     await saveReferenceImage(reference, oldEpoch);
@@ -332,7 +396,7 @@ describe('canvas history and new project', () => {
     expect(page?.layers).toHaveLength(1);
     expect(page?.history?.nodes).toHaveLength(1);
     expect(meta?.fonts).toEqual([]);
-    expect(page?.canvasSpec).toEqual(spec);
+    expect(page?.pageSpec).toEqual(spec);
     expect(useStore.getState().tools).toEqual(tools);
     expect(await frameCount()).toBe(0);
     expect(await loadReferenceImage()).toBeUndefined();
@@ -375,31 +439,21 @@ describe('canvas history and new project', () => {
     expect(useStore.getState().selectedLayerIds).toEqual([id]);
   });
 
-  it('selects then clears descendants from a long-pressed parent', async () => {
+  it('does not select descendants by long-pressing a Canvas layer', async () => {
     await engine.newProject();
-    const parentId = useStore.getState().activeLayerId;
+    engine.addCanvasLayer();
+    const scopeId = useStore.getState().activeLayerId;
     engine.addRasterLayer();
     const childId = useStore.getState().activeLayerId;
     engine.addRasterLayer();
     const grandChildId = useStore.getState().activeLayerId;
-    engine.moveLayerAsTopChild(grandChildId, childId);
-    engine.moveLayerAsTopChild(childId, parentId);
-    engine.setActiveLayer(parentId);
-    engine.toggleDescendantSelection(parentId);
-    expect(useStore.getState().multiSelectMode).toBe(true);
-    expect(useStore.getState().selectedLayerIds).toEqual([parentId, childId, grandChildId]);
-    engine.toggleDescendantSelection(parentId);
-    expect(useStore.getState().selectedLayerIds).toEqual([parentId]);
-    expect(useStore.getState().activeLayerId).toBe(parentId);
+    engine.moveLayerAsTopChild(childId, scopeId);
+    engine.moveLayerAsTopChild(grandChildId, scopeId);
+    engine.setActiveLayer(scopeId);
+    engine.toggleDescendantSelection(scopeId);
+    expect(useStore.getState().selectedLayerIds).toEqual([scopeId]);
+    expect(useStore.getState().activeLayerId).toBe(scopeId);
     expect(useStore.getState().multiSelectMode).toBe(false);
-    engine.addRasterLayer();
-    const otherId = useStore.getState().activeLayerId;
-    engine.setActiveLayer(parentId);
-    engine.beginMultiSelect(otherId);
-    engine.toggleDescendantSelection(parentId);
-    engine.toggleDescendantSelection(parentId);
-    expect(useStore.getState().selectedLayerIds).toEqual([otherId]);
-    expect(useStore.getState().multiSelectMode).toBe(true);
   });
 
   it('stores raster merges as tiles-v1 across undo, redo and reload', async () => {
@@ -523,7 +577,7 @@ describe('canvas history and new project', () => {
     expect(useStore.getState().layers.find(layer => layer.id === targetId)?.opacity).toBe(1);
   });
 
-  it('enables effect merge only for the two exact single-raster structures', async () => {
+  it('does not change effect merge structure through invalid ordinary-layer parenting', async () => {
     await engine.newProject();
     const rasterId = useStore.getState().activeLayerId;
     engine.addClipLayer();
@@ -534,9 +588,9 @@ describe('canvas history and new project', () => {
     engine.addRasterLayer();
     const extraId = useStore.getState().activeLayerId;
     engine.moveLayerAsTopChild(extraId, rasterId);
-    expect(useStore.getState().layers.find(layer => layer.id === effectId)?.canMergeDown).toBe(false);
+    expect(useStore.getState().layers.find(layer => layer.id === effectId)?.canMergeDown).toBe(true);
     engine.moveLayerAsTopChild(extraId, effectId);
-    expect(useStore.getState().layers.find(layer => layer.id === effectId)?.canMergeDown).toBe(false);
+    expect(useStore.getState().layers.find(layer => layer.id === effectId)?.canMergeDown).toBe(true);
   });
 
   it('detaches clip mask references on source deletion and restores both through history', async () => {

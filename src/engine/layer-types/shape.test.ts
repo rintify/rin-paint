@@ -8,10 +8,10 @@ const common = {
   opacity: 1,
   blend: 'source-over' as const,
   visible: true,
-  parentId: null as string | null,
-  childIds: [] as string[],
+  scopeId: null as string | null,
+  scopeLayerIds: [] as string[],
 };
-const env = { artboard: { w: 100, h: 80 }, withContent: false, keepCanvas: false, onEncoded() {} };
+const env = { pageFrame: { w: 100, h: 80 }, withContent: false, keepCanvas: false, onEncoded() {} };
 
 describe('shape layer snapEnabled persistence', () => {
   it('defaults new shapes to snapEnabled true', () => {
@@ -39,7 +39,7 @@ describe('shape layer snapEnabled persistence', () => {
       type: 'shape',
       common,
       state: { shape: line },
-    }, { artboard: { w: 100, h: 80 } });
+    }, { pageFrame: { w: 100, h: 80 } });
     expect(layer && layer.type === 'shape' && layer.state.snapEnabled).toBe(true);
   });
 });

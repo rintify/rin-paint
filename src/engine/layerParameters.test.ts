@@ -6,8 +6,8 @@ const base = {
   opacity: 1,
   blend: 'source-over' as const,
   visible: true,
-  parentId: null,
-  childIds: [],
+  scopeId: null,
+  scopeLayerIds: [],
   version: 0,
   canMergeDown: false,
   canRemove: true,
@@ -80,9 +80,9 @@ describe('generic layer parameters', () => {
       state: { snapEnabled: true, shape: { ...rect, x: 1, y: 2 } },
     };
     const descriptors = commonLayerParameterDescriptors([layer]);
-    expect(descriptors.find(value => value.key === 'strokeWidth')?.canvasLength).toBe(true);
-    expect(descriptors.find(value => value.key === 'rect.x')?.canvasLength).toBe(true);
-    expect(descriptors.find(value => value.key === 'rotation')?.canvasLength).toBeFalsy();
+    expect(descriptors.find(value => value.key === 'strokeWidth')?.pageLength).toBe(true);
+    expect(descriptors.find(value => value.key === 'rect.x')?.pageLength).toBe(true);
+    expect(descriptors.find(value => value.key === 'rotation')?.pageLength).toBeFalsy();
   });
 
   it('normalizes pixel geometry through millimeters across different PPI values', () => {

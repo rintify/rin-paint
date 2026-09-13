@@ -3,6 +3,7 @@ import type { PaintEngine } from '../PaintEngine';
 import type { Layer, ShapeLayer } from '../layers';
 import { applyLayerProps } from '../layer-types/registry';
 import { ParameterLinkService } from './ParameterLinkService';
+import { useStore } from '../../state/store';
 
 function shape(id: string, color: string, x = 0): ShapeLayer {
   return {
@@ -12,14 +13,15 @@ function shape(id: string, color: string, x = 0): ShapeLayer {
     opacity: 1,
     blend: 'source-over',
     visible: true,
-    parentId: null,
-    childIds: [],
+    scopeId: null,
+    scopeLayerIds: [],
     state: { snapEnabled: true, shape: { kind: 'rect', x, y: 0, width: 20, height: 10, color, strokeWidth: 2, paintMode: 'stroke' } },
     runtime: undefined,
   };
 }
 
 function setup(layers: Layer[]) {
+  useStore.getState().set({ editingDocument: { kind: 'page', id: 'p1' } });
   const history: unknown[] = [];
   const engine = {
     pages: { activePageId: 'p1', pageOrder: ['p1'] },
@@ -29,7 +31,7 @@ function setup(layers: Layer[]) {
         applyLayerProps(layer, props);
       },
     },
-    getCanvasSpec: () => ({ widthMm: 10, heightMm: 10, ppi: 254 }),
+    getPageSpec: () => ({ widthMm: 10, heightMm: 10, ppi: 254 }),
     history: { push: (op: unknown) => history.push(op) },
     committed: () => undefined,
   } as unknown as PaintEngine;
@@ -38,26 +40,30 @@ function setup(layers: Layer[]) {
   return { service, history };
 }
 
+const address = (nodeId: string, kind: 'page' | 'bin' = 'page', id = kind === 'page' ? 'p1' : 'b1') => ({
+  document: { kind, id }, scopePath: [] as string[], nodeId,
+});
+
 describe('ParameterLinkService', () => {
   it('propagates an immediate A to B to C chain', () => {
     const a = shape('a', '#111111');
     const b = shape('b', '#222222');
     const c = shape('c', '#333333');
     const { service } = setup([a, b, c]);
-    service.createPasteLink('b', { pageId: 'p1', layerId: 'a' });
-    service.createPasteLink('c', { pageId: 'p1', layerId: 'b' });
+    service.createPasteLink('b', address('a'));
+    service.createPasteLink('c', address('b'));
     a.state.shape.color = '#abcdef';
-    service.propagateFrom({ pageId: 'p1', layerId: 'a' });
+    service.propagateFrom(address('a'));
     expect(b.state.shape.color).toBe('#abcdef');
     expect(c.state.shape.color).toBe('#abcdef');
-    expect(c.parameterLink?.source.layerId).toBe('b');
+    expect(c.parameterLink?.source.nodeId).toBe('b');
   });
 
   it('detaches only values that actually changed', () => {
     const a = shape('a', '#111111');
     const b = shape('b', '#222222');
     const { service } = setup([a, b]);
-    service.createPasteLink('b', { pageId: 'p1', layerId: 'a' });
+    service.createPasteLink('b', address('a'));
     const before = structuredClone(b);
     const after = structuredClone(b);
     after.state.shape.color = '#fedcba';
@@ -71,7 +77,7 @@ describe('ParameterLinkService', () => {
     const a = shape('a', '#111111');
     const b = shape('b', '#222222');
     const { service, history } = setup([a, b]);
-    service.createPasteLink('b', { pageId: 'p1', layerId: 'a' });
+    service.createPasteLink('b', address('a'));
     const color = b.state.shape.color;
     service.unlinkParameter('b', 'appearance.color');
     expect(b.state.shape.color).toBe(color);
@@ -84,9 +90,18 @@ describe('ParameterLinkService', () => {
     const a = shape('a', '#111111');
     const b = shape('b', '#111111');
     const { service } = setup([a, b]);
-    service.createPasteLink('b', { pageId: 'p1', layerId: 'a' });
+    service.createPasteLink('b', address('a'));
     const forA = service.candidates('a');
-    expect(forA.find(candidate => candidate.address.layerId === 'a')?.disabledReason).toBe('自分自身です');
-    expect(forA.find(candidate => candidate.address.layerId === 'b')?.disabledReason).toBe('循環参照になります');
+    expect(forA.find(candidate => candidate.address.nodeId === 'a')?.disabledReason).toBe('自分自身です');
+    expect(forA.find(candidate => candidate.address.nodeId === 'b')?.disabledReason).toBe('循環参照になります');
+  });
+
+  it('does not expose parameters across a sealed Canvas scope', () => {
+    const outside = shape('outside', '#111111');
+    const inside = shape('inside', '#111111');
+    inside.scopeId = 'canvas';
+    const { service } = setup([outside, inside]);
+    expect(service.candidates('inside').find(candidate => candidate.address.nodeId === 'outside')?.disabledReason)
+      .toMatch(/キャンバスレイヤー/);
   });
 });

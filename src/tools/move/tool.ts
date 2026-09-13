@@ -58,14 +58,14 @@ export class MoveTool implements Tool {
 
   onDown(p: StrokePoint): void {
     if (this.floatSelection.phase === 'float') {
-      if (!this.floatSelection.beginDrag(p)) {
+      if (!this.floatSelection.beginDrag(p, true)) {
         this.floatSelection.commit();
         this.beginFromSelection();
       }
       return;
     }
     this.beginFromSelection();
-    this.floatSelection.beginDrag(p);
+    this.floatSelection.beginDrag(p, true);
   }
 
   onMove(p: StrokePoint): void {
@@ -118,6 +118,7 @@ export class MoveTool implements Tool {
   }
 
   private beginFromSelection(): void {
+    this.eng.ensureCanvasTransformTargets();
     const rect = this.selectionBounds();
     if (!rect) {
       this.floatSelection.emitSelectionState();
@@ -131,10 +132,13 @@ export class MoveTool implements Tool {
   private selectionBounds(): DirtyRect | null {
     let bounds: DirtyRect | null = null;
     for (const layer of this.eng.selectedRasters()) {
-      const opaque = opaqueBounds(layer.runtime.canvas);
+      const sparse = layer.runtime.sparse?.contentBoundsDocumentPx(this.eng.getPageSpec().ppi);
+      const opaque = sparse
+        ? { minX: sparse.x, minY: sparse.y, maxX: sparse.x + sparse.w, maxY: sparse.y + sparse.h }
+        : opaqueBounds(layer.runtime.canvas);
       if (opaque) bounds = bounds ? unionRect(bounds, opaque) : opaque;
     }
-    const ids = new Set(useStore.getState().selectedLayerIds);
+    const ids = this.eng.effectiveTransformLayerIds();
     for (const layer of this.eng.allLayers()) {
       if (!ids.has(layer.id) || !layerHandler(layer).capabilities.objectTransform) continue;
       const box = this.eng.objectBounds(layer.id);

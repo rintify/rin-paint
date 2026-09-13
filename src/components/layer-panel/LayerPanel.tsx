@@ -1,4 +1,5 @@
 import AddIcon from '@mui/icons-material/Add';
+import DashboardCustomizeIcon from '@mui/icons-material/DashboardCustomize';
 import LibraryAddCheckIcon from '@mui/icons-material/LibraryAddCheck';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -25,6 +26,7 @@ import { liftListOriginIfTooLow } from './layerListLayout';
 import { selectedLayerRows } from '../../engine/layerTree';
 import { useStore } from '../../state/store';
 import type { LayerMeta } from '../../model';
+import { identityTransformState } from '../../model';
 import { appAlert } from '../AppDialogs';
 import { useEngine } from '../EngineContext';
 import { useLongPress } from '../hooks/useLongPress';
@@ -32,22 +34,25 @@ import { NameEditor } from '../NameEditor';
 import { LayerControlsPalette } from './LayerControlsPalette';
 import { Thumb } from './Thumb';
 import { LAYER_FOCUS_EVENT } from './layerPanelEvents';
+import { BinPanel } from '../BinPanel';
 
 interface VisibleRow { id: string; depth: number; index: number; exiting?: boolean }
 interface DropTarget {
-  parentId: string | null;
+  scopeId: string | null;
   index: number;
   anchorId: string;
   edge: 'before' | 'after' | 'inside';
   depth: number;
+  stackWithId?: string;
 }
 const ROW_HEIGHT = 48;
 const MOTION_MS = 220;
 
-export function LayerPanel() {
+export function HierarchyPanel() {
   const engine = useEngine();
   const layers = useStore(s => s.layers);
   const rootLayerIds = useStore(s => s.rootLayerIds);
+  const hierarchy = useStore(s => s.hierarchy);
   const activeId = useStore(s => s.activeLayerId);
   const selectedIds = useStore(s => s.selectedLayerIds);
   const multi = useStore(s => s.multiSelectMode);
@@ -65,18 +70,37 @@ export function LayerPanel() {
   }));
   const [menu, setMenu] = useState<{ id: string; anchor: HTMLElement } | null>(null);
   const [addEffectAnchor, setAddEffectAnchor] = useState<HTMLElement | null>(null);
+  const [binOpen, setBinOpen] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [drop, setDrop] = useState<DropTarget | null>(null);
+  const [canvasDropChoice, setCanvasDropChoice] = useState<{ dragId: string; canvasId: string; index: number } | null>(null);
   const [focusRequest, setFocusRequest] = useState<{ id: string; token: number } | null>(null);
   const frozen = useRef<{ id: string; depth: number }[] | null>(null);
-  const desired = useMemo(
-    () => selectedLayerRows(
+  const stacks = useMemo(() => [
+    ...hierarchy.filter(item => item.kind === 'stack'),
+    ...layers.flatMap(layer => layer.type === 'canvas'
+      ? layer.state.hierarchy.filter(item => item.kind === 'stack')
+      : []),
+  ], [hierarchy, layers]);
+  const stackByLayer = useMemo(() => new Map(stacks.flatMap(stack => stack.layerIds.map(id => [id, stack] as const))), [stacks]);
+  const collapsedStackByLayer = useMemo(() => {
+    const result = new Map<string, (typeof stacks)[number]>();
+    for (const stack of stacks) if (!stack.layerIds.some(id => selectedIds.includes(id))) {
+      for (const id of stack.layerIds) result.set(id, stack);
+    }
+    return result;
+  }, [stacks, selectedIds]);
+  const desired = useMemo(() => {
+    const rows = selectedLayerRows(
       rootLayerIds,
       layers,
       [...(multi ? selectedIds : [activeId]), ...(focusRequest ? [focusRequest.id] : [])],
-    ),
-    [rootLayerIds, layers, activeId, multi, selectedIds, focusRequest],
-  );
+    );
+    return rows.filter(row => {
+      const stack = collapsedStackByLayer.get(row.id);
+      return !stack || stack.layerIds[0] === row.id;
+    });
+  }, [rootLayerIds, layers, activeId, multi, selectedIds, focusRequest, collapsedStackByLayer]);
   const [rename, setRename] = useState<{ id: string; value: string } | null>(null);
   const renameSubmit = useRef<(() => boolean) | null>(null);
   const pendingRename = useRef<{ id: string; value: string } | null>(null);
@@ -85,8 +109,14 @@ export function LayerPanel() {
   const longPress = useLongPress(() => {
     const id = longPressTarget.current;
     if (!id) return;
+    const stack = stackByLayer.get(id);
+    if (stack) {
+      ignoreClick.current = true;
+      engine.setStackSelection(id, !selectedIds.includes(id));
+      return;
+    }
     const layer = byId.get(id) ?? metadata.current.get(id);
-    if (!layer?.childIds.length) return;
+    if (!layer?.scopeLayerIds.length) return;
     ignoreClick.current = true;
     engine.toggleDescendantSelection(id);
     setPalette({ id, open: true });
@@ -254,7 +284,9 @@ export function LayerPanel() {
     }
     oldRects.current = new Map([...elements.current].map(([key, node]) => [key, node.getBoundingClientRect()]));
     setFocusRequest(null);
-    if (additive) engine.beginMultiSelect(id);
+    const stack = collapsedStackByLayer.get(id);
+    if (stack) engine.setStackSelection(id, true);
+    else if (additive) engine.beginMultiSelect(id);
     else engine.setActiveLayer(id);
   };
   const finishDrag = () => {
@@ -263,10 +295,26 @@ export function LayerPanel() {
     setDrop(null);
   };
   const menuMeta = menu ? byId.get(menu.id) : undefined;
+  const menuStack = menu ? stackByLayer.get(menu.id) : undefined;
   const applyDrop = () => {
-    if (dragId && drop && engine.canMoveLayer(dragId, drop.parentId)) {
+    if (dragId && drop?.stackWithId) {
+      engine.createStack([drop.stackWithId, dragId]);
+      finishDrag();
+      return;
+    }
+    if (dragId && drop?.scopeId) {
+      const canvas = byId.get(drop.scopeId);
+      const expanded = canvas?.type === 'canvas' && (selectedIds.includes(canvas.id)
+        || selectedIds.some(id => byId.get(id)?.scopeId === canvas.id));
+      if (canvas?.type === 'canvas' && !expanded) {
+        setCanvasDropChoice({ dragId, canvasId: canvas.id, index: drop.index });
+        finishDrag();
+        return;
+      }
+    }
+    if (dragId && drop && engine.canMoveLayer(dragId, drop.scopeId)) {
       skipAnchorOnce.current = true;
-      if (!engine.moveLayer(dragId, { parentId: drop.parentId, index: drop.index })) {
+      if (!engine.moveLayer(dragId, { scopeId: drop.scopeId, index: drop.index })) {
         skipAnchorOnce.current = false;
       }
     }
@@ -277,7 +325,7 @@ export function LayerPanel() {
     <Box className="section layers-section">
       <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
         <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1 }}>
-          レイヤー
+          ヒエラルキー
         </Typography>
         <Stack direction="row" spacing={0.5}>
           {clipboard && (
@@ -304,6 +352,11 @@ export function LayerPanel() {
               <AddIcon fontSize="small" />
             </IconButton>
           </Tooltip>
+          <Tooltip title="キャンバスレイヤーを追加">
+            <IconButton size="small" onClick={() => engine.addCanvasLayer()} aria-label="キャンバスレイヤーを追加">
+              <DashboardCustomizeIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
           <Tooltip title="効果レイヤーを追加">
             <IconButton
               size="small"
@@ -314,14 +367,30 @@ export function LayerPanel() {
             </IconButton>
           </Tooltip>
           <Menu anchorEl={addEffectAnchor} open={!!addEffectAnchor} onClose={() => setAddEffectAnchor(null)}>
+            <MenuItem disabled={selectedIds.length < 2} onClick={() => { engine.createStack(); setAddEffectAnchor(null); }}>選択をスタック化</MenuItem>
             <MenuItem onClick={() => { engine.addAdjustLayer(); setAddEffectAnchor(null); }}>色調補正を追加</MenuItem>
             <MenuItem onClick={() => { engine.addOutlineLayer(); setAddEffectAnchor(null); }}>縁どりを追加</MenuItem>
             <MenuItem onClick={() => { engine.addClipLayer(); setAddEffectAnchor(null); }}>クリップを追加</MenuItem>
+            <MenuItem onClick={() => { engine.addTransformLayer(); setAddEffectAnchor(null); }}>トランスフォームを追加</MenuItem>
+            <MenuItem onClick={() => { setBinOpen(true); setAddEffectAnchor(null); }}>ビンを表示</MenuItem>
           </Menu>
         </Stack>
       </Stack>
       <Box
         ref={list}
+        onDragOverCapture={event => {
+          if (event.dataTransfer.types.includes('application/x-rin-bin-item')) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+          }
+        }}
+        onDropCapture={event => {
+          const binId = event.dataTransfer.getData('application/x-rin-bin-item');
+          if (!binId) return;
+          event.preventDefault();
+          event.stopPropagation();
+          void engine.placeBinItem(binId).catch(error => appAlert(String(error)));
+        }}
         className="layer-list layer-flat-list"
         onDragLeave={event => {
           if (!event.currentTarget.contains(event.relatedTarget as Node)) setDrop(null);
@@ -343,14 +412,14 @@ export function LayerPanel() {
               let anchor = byId.get(hovered.id)!;
               let depth = hovered.depth;
               const targetDepth = Math.max(0, Math.floor((event.clientX - rect.left) / 16));
-              while (depth > targetDepth && anchor.parentId) {
-                anchor = byId.get(anchor.parentId)!;
+              while (depth > targetDepth && anchor.scopeId) {
+                anchor = byId.get(anchor.scopeId)!;
                 depth--;
               }
-              if (engine.canMoveLayer(dragId, anchor.parentId)) {
-                const siblings = anchor.parentId ? byId.get(anchor.parentId)!.childIds : rootLayerIds;
+              if (engine.canMoveLayer(dragId, anchor.scopeId)) {
+                const siblings = anchor.scopeId ? byId.get(anchor.scopeId)!.scopeLayerIds : rootLayerIds;
                 setDrop({
-                  parentId: anchor.parentId,
+                  scopeId: anchor.scopeId,
                   index: siblings.indexOf(anchor.id) + 1,
                   anchorId: hovered.id,
                   edge: 'after',
@@ -378,6 +447,8 @@ export function LayerPanel() {
             if (!meta) return null;
             const isPrimary = selectedIds[0] === meta.id;
             const isSelected = selectedIds.includes(meta.id);
+            const memberStack = stackByLayer.get(meta.id);
+            const collapsedStack = collapsedStackByLayer.get(meta.id);
             const guide = drop?.anchorId === meta.id ? drop : null;
             return (
               <Box
@@ -392,6 +463,8 @@ export function LayerPanel() {
                   + (multi && isSelected && !isPrimary ? ' selected' : '')
                   + (dragId === meta.id ? ' is-dragging' : '')
                   + (guide?.edge === 'inside' ? ' drop-inside' : '')
+                  + (memberStack && !collapsedStack ? ' stack-member-expanded' : '')
+                  + (collapsedStack ? ' stack-collapsed' : '')
                 }
                 aria-current={isPrimary ? 'true' : undefined}
                 style={{
@@ -435,28 +508,34 @@ export function LayerPanel() {
                     0,
                     Math.floor((event.clientX - list.current!.getBoundingClientRect().left) / 16),
                   );
-                  while (depth > requestedDepth && anchor.parentId) {
-                    anchor = byId.get(anchor.parentId)!;
+                  while (depth > requestedDepth && anchor.scopeId) {
+                    anchor = byId.get(anchor.scopeId)!;
                     depth--;
                   }
-                  const siblings = anchor.parentId ? byId.get(anchor.parentId)!.childIds : rootLayerIds;
+                  const siblings = anchor.scopeId ? byId.get(anchor.scopeId)!.scopeLayerIds : rootLayerIds;
                   const inside = anchor.id === meta.id && ratio >= 0.28 && ratio <= 0.72;
+                  if (inside && meta.type !== 'canvas') {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = 'move';
+                    setDrop({ scopeId: meta.scopeId, index: siblings.indexOf(meta.id), anchorId: meta.id, edge: 'inside', depth, stackWithId: meta.id });
+                    return;
+                  }
                   const target: DropTarget = inside
                     ? {
-                        parentId: meta.id,
-                        index: meta.childIds.length,
+                        scopeId: meta.id,
+                        index: meta.scopeLayerIds.length,
                         anchorId: meta.id,
                         edge: 'inside',
                         depth: row.depth + 1,
                       }
                     : {
-                        parentId: anchor.parentId,
+                        scopeId: anchor.scopeId,
                         index: siblings.indexOf(anchor.id) + (ratio < 0.5 ? 0 : 1),
                         anchorId: meta.id,
                         edge: ratio < 0.5 ? 'before' : 'after',
                         depth,
                       };
-                  if (!engine.canMoveLayer(dragId, target.parentId)) {
+                  if (!engine.canMoveLayer(dragId, target.scopeId)) {
                     setDrop(null);
                     return;
                   }
@@ -500,15 +579,18 @@ export function LayerPanel() {
                     : <VisibilityOffIcon sx={{ fontSize: 16 }} />}
                 </IconButton>
                 </Tooltip>
-                {meta.type === 'adjust' || meta.type === 'outline' || meta.type === 'clip'
+                {collapsedStack
+                  ? <Box sx={{ position: 'relative', width: 32, height: 30, flex: 'none' }}><Box sx={{ position: 'absolute', left: 4, top: 3, width: 22, height: 22, borderRadius: .5, bgcolor: 'action.selected', border: 1, borderColor: 'divider' }} /><Box sx={{ position: 'absolute', left: 8, top: 7, width: 22, height: 22, borderRadius: .5, bgcolor: 'background.paper', border: 1, borderColor: 'primary.main' }} /></Box>
+                  : meta.type === 'adjust' || meta.type === 'outline' || meta.type === 'clip'
                   ? <Box className={`effect-badge ${meta.type}`}>{meta.type === 'adjust' ? '補正' : meta.type === 'outline' ? '縁' : 'クリップ'}</Box>
                   : <Thumb meta={meta} />}
                 <Typography variant="body2" noWrap sx={{ flex: 1, opacity: meta.visible ? 1 : 0.5 }}>
-                  {meta.name}
+                  {collapsedStack ? collapsedStack.layerIds.map(id => byId.get(id)?.name ?? '').join('・') : meta.name}
                 </Typography>
-                {(meta.parameterLink || !!meta.directLinkTargets?.length) && (
+                {(meta.dataLink || meta.parameterLink || !!meta.directLinkTargets?.length) && (
                   <Tooltip title={[
-                    meta.parameterLink && (meta.linkSource?.missing ? 'リンク元が見つかりません' : 'リンク元を参照中'),
+                    meta.dataLink && 'レイヤーデータ全体をビンから参照中',
+                    meta.parameterLink && (meta.linkSource?.missing ? 'リンク元が見つかりません' : 'パラメータのリンク元を参照中'),
                     !!meta.directLinkTargets?.length && `${meta.directLinkTargets.length}レイヤーから参照`,
                   ].filter(Boolean).join('・')}>
                     <Badge
@@ -552,7 +634,7 @@ export function LayerPanel() {
             onDragOver={event => {
               if (!dragId) return;
               event.preventDefault();
-              setDrop({ parentId: null, index: rootLayerIds.length, anchorId: 'end', edge: 'after', depth: 0 });
+              setDrop({ scopeId: null, index: rootLayerIds.length, anchorId: 'end', edge: 'after', depth: 0 });
             }}
             onDrop={event => {
               event.preventDefault();
@@ -599,6 +681,16 @@ export function LayerPanel() {
         >
           名称変更
         </MenuItem>
+        {menuMeta?.type === 'transform' && (
+          <MenuItem onClick={() => {
+            const id = menuMeta.id;
+            const before = structuredClone(menuMeta.state);
+            setMenu(null);
+            engine.commitLayerProps(id, { state: before }, { state: identityTransformState() }, 'トランスフォームをリセット');
+          }}>
+            トランスフォームをリセット
+          </MenuItem>
+        )}
         <MenuItem
           onClick={() => {
             const id = menu?.id;
@@ -607,6 +699,23 @@ export function LayerPanel() {
           }}
         >
           コピー
+        </MenuItem>
+        <MenuItem disabled={selectedIds.length < 2} onClick={() => { engine.createStack(); setMenu(null); }}>
+          選択をスタック化
+        </MenuItem>
+        {menuStack && (
+          <MenuItem onClick={() => { if (menu) engine.convertStackToCanvas(menu.id); setMenu(null); }}>
+            キャンバスレイヤーへ変換
+          </MenuItem>
+        )}
+        <MenuItem
+          onClick={() => {
+            const id = menu?.id;
+            setMenu(null);
+            if (id) void engine.putLayerInBin(id).catch(error => appAlert(String(error)));
+          }}
+        >
+          ビンに保管
         </MenuItem>
         <MenuItem
           disabled={!menuMeta?.canMergeDown}
@@ -664,6 +773,24 @@ export function LayerPanel() {
           onClose={() => setPalette({ id: active.id, open: false })}
         />
       )}
+      {binOpen && <BinPanel onClose={() => setBinOpen(false)} />}
+      <Dialog open={!!canvasDropChoice} onClose={() => setCanvasDropChoice(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>キャンバスレイヤーへドロップ</DialogTitle>
+        <DialogContent>
+          <Typography>外側でまとめるか、キャンバス内部の描画スコープへ移動するかを選択してください。</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCanvasDropChoice(null)}>キャンセル</Button>
+          <Button onClick={() => {
+            if (canvasDropChoice) engine.createStack([canvasDropChoice.canvasId, canvasDropChoice.dragId]);
+            setCanvasDropChoice(null);
+          }}>外側でスタック化</Button>
+          <Button variant="contained" onClick={() => {
+            if (canvasDropChoice) engine.moveLayer(canvasDropChoice.dragId, { scopeId: canvasDropChoice.canvasId, index: canvasDropChoice.index });
+            setCanvasDropChoice(null);
+          }}>キャンバス内部へ移動</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

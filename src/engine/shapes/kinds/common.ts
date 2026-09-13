@@ -1,7 +1,7 @@
 import type { ShapePaintMode, ShapeParams, ShapePoint, StrokePoint } from '../../../model';
 import type { ShapeBounds } from '../geometry';
 import type {
-  ShapeArtboard,
+  ShapePageFrame,
   ShapeControlField,
   ShapeEditMode,
   ShapeHit,
@@ -21,13 +21,13 @@ export function shapeFields<S extends ShapeParams>(kind: S['kind']) {
       value: number,
       make: (shape: S, value: number) => S,
       min?: number,
-      canvasLength = false,
+      pageLength = false,
     ): ShapeControlField {
       return {
         label,
         value,
         min,
-        canvasLength: canvasLength || undefined,
+        pageLength: pageLength || undefined,
         make: (input, shape) => { const own = narrow(shape); return own ? make(own, input) : shape; },
       };
     },
@@ -37,13 +37,13 @@ export function shapeFields<S extends ShapeParams>(kind: S['kind']) {
       read: (shape: S) => number,
       write: (shape: S, value: number) => S,
       min?: number,
-      canvasLength = false,
+      pageLength = false,
     ): ShapeParameterField {
       return {
         key,
         label,
         min,
-        canvasLength: canvasLength || undefined,
+        pageLength: pageLength || undefined,
         read: shape => { const own = narrow(shape); return own ? read(own) : 0; },
         write: (shape, value) => { const own = narrow(shape); return own ? write(own, value) : shape; },
       };
@@ -64,11 +64,11 @@ export function rotationControlField(angle: number): ShapeControlField {
 export function paintClosed(
   ctx: CanvasRenderingContext2D,
   mode: ShapePaintMode,
-  artboard: ShapeArtboard,
+  pageFrame: ShapePageFrame,
   appendPath: () => void,
 ): void {
   ctx.beginPath();
-  if (mode === 'fill-outside') ctx.rect(0, 0, artboard.w, artboard.h);
+  if (mode === 'fill-outside') ctx.rect(0, 0, pageFrame.w, pageFrame.h);
   appendPath();
   if (mode === 'stroke') ctx.stroke();
   else ctx.fill(mode === 'fill-outside' ? 'evenodd' : 'nonzero');

@@ -1,5 +1,5 @@
 import { TRANSPARENT, type ShapePaintMode, type ShapeParams, type ShapeState } from '../../model';
-import { scaleShape } from '../canvasSpec';
+import { scaleShape } from '../pageSpec';
 import { createShapeLayer } from '../layers';
 import {
   cloneShape,
@@ -72,7 +72,7 @@ function shapeCatalog(kind: ShapeParams['kind']): ParameterCatalog<ShapeState> {
     },
     {
       id: 'strokeWidth', semanticId: 'appearance.widthMm', groupId: 'appearance', label: '線の太さ',
-      editor: { kind: 'slider', min: 0, max: 20, unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
+      editor: { kind: 'slider', min: 0, max: 20, unit: { kind: 'page-mm' } }, surfaces: SURFACES,
       read: state => state.shape.strokeWidth,
       write: (state, value) => ({ ...cloneState(state), shape: { ...state.shape, strokeWidth: Math.max(0, Number(value)) } }),
     },
@@ -117,7 +117,7 @@ function shapeCatalog(kind: ShapeParams['kind']): ParameterCatalog<ShapeState> {
     });
     definitions.push({
       id: 'cornerRadius', semanticId: 'shape.cornerRadiusMm', groupId: 'appearance', label: '角丸半径',
-      editor: { kind: 'number', min: 0, unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
+      editor: { kind: 'number', min: 0, unit: { kind: 'page-mm' } }, surfaces: SURFACES,
       read: state => state.shape.kind === 'rect' || state.shape.kind === 'polygon' ? state.shape.cornerRadius ?? 0 : 0,
       write: (state, value) => {
         const shape = cloneShape(state.shape);
@@ -145,7 +145,7 @@ function shapeCatalog(kind: ShapeParams['kind']): ParameterCatalog<ShapeState> {
     semanticId: semanticForShapeKey(field.key),
     groupId: field.key.startsWith('rect.') || field.key.startsWith('ellipse.') || field.key.startsWith('polygon.') || field.key.startsWith('line.') ? 'frame' : 'shape',
     label: field.label,
-    editor: { kind: 'number' as const, min: field.min, unit: field.canvasLength ? { kind: 'canvas-mm' as const } : undefined },
+    editor: { kind: 'number' as const, min: field.min, unit: field.pageLength ? { kind: 'page-mm' as const } : undefined },
     surfaces: SURFACES,
     read: (state: ShapeState) => field.read(state.shape),
     write: (state: ShapeState, value: import('../parameters/types').ParameterValue) => ({
@@ -201,17 +201,17 @@ export const shapeLayerType: LayerDefinition<'shape'> = {
       if (layer.state.shape.color === TRANSPARENT) return;
       ctx.globalAlpha = layer.opacity;
       ctx.globalCompositeOperation = layer.blend;
-      drawShape(ctx, layer.state.shape, undefined, env.artboard);
+      drawShape(ctx, layer.state.shape, undefined, env.pageFrame);
     },
     drawMask(ctx, layer, env) {
       if (layer.state.shape.color === TRANSPARENT) return;
-      drawShape(ctx, { ...layer.state.shape, color: '#fff' }, false, env.artboard);
+      drawShape(ctx, { ...layer.state.shape, color: '#fff' }, false, env.pageFrame);
     },
     bakeOnto(target, layer, env) {
       target.runtime.ctx.save();
       target.runtime.ctx.globalAlpha = layer.opacity;
       target.runtime.ctx.globalCompositeOperation = layer.blend;
-      drawShape(target.runtime.ctx, layer.state.shape, undefined, env.artboard);
+      drawShape(target.runtime.ctx, layer.state.shape, undefined, env.pageFrame);
       target.runtime.ctx.restore();
     },
     contentCanvas: () => null,
@@ -219,7 +219,7 @@ export const shapeLayerType: LayerDefinition<'shape'> = {
       applies: layer => layer.state.shape.color === TRANSPARENT,
       draw(ctx, layer, env) {
         ctx.globalAlpha = layer.opacity;
-        drawShape(ctx, layer.state.shape, undefined, env.artboard);
+        drawShape(ctx, layer.state.shape, undefined, env.pageFrame);
       },
     },
   },
@@ -248,7 +248,7 @@ export const shapeLayerType: LayerDefinition<'shape'> = {
       drawOpacity: layer => layer.opacity,
     },
     transferToRaster: {
-      canTransfer: layer => layer.childIds.length === 0 && !!layer.parentId,
+      canTransfer: layer => layer.scopeLayerIds.length === 0 && !!layer.scopeId,
     },
   },
 };

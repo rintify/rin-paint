@@ -6,7 +6,7 @@ import { useStore } from '../state/store';
 import type { LayerMeta } from '../types';
 import type { PaintEngine } from '../engine/PaintEngine';
 import { EngineProvider } from './EngineContext';
-import { LayerPanel, maskCandidateRows } from './LayerPanel';
+import { HierarchyPanel, maskCandidateRows } from './HierarchyPanel';
 
 const actions = vi.hoisted(() => ({
   remove: vi.fn(),
@@ -31,15 +31,15 @@ const actions = vi.hoisted(() => ({
     const state = useStore.getState();
     const layer = state.layers.find(item => item.id === id);
     const descendants: string[] = [];
-    const visit = (parentId: string) => {
-      const parent = state.layers.find(item => item.id === parentId);
-      for (const childId of parent?.childIds ?? []) {
+    const visit = (scopeId: string) => {
+      const parent = state.layers.find(item => item.id === scopeId);
+      for (const childId of parent?.scopeLayerIds ?? []) {
         descendants.push(childId);
         visit(childId);
       }
     };
     visit(id);
-    if (!layer?.childIds.length) return;
+    if (!layer?.scopeLayerIds.length) return;
     const selected = new Set(state.selectedLayerIds.length ? state.selectedLayerIds : [state.activeLayerId]);
     const allSelected = descendants.every(descendant => selected.has(descendant));
     if (state.multiSelectMode && selected.has(id) && allSelected) {
@@ -58,7 +58,7 @@ const actions = vi.hoisted(() => ({
   }),
 }));
 const mockEngine = vi.hoisted(() => ({
-  artboard: { w: 1600, h: 1200 },
+  pageFrame: { w: 1600, h: 1200 },
   getLayerCanvas: () => null,
   setActiveLayer: actions.setActiveLayer,
   beginMultiSelect: actions.beginMultiSelect,
@@ -92,8 +92,8 @@ const base = {
   opacity: 1,
   blend: 'source-over' as const,
   visible: true,
-  parentId: null,
-  childIds: [],
+  scopeId: null,
+  scopeLayerIds: [],
   version: 0,
   ...caps,
 };
@@ -152,7 +152,7 @@ function renderPanel() {
   return act(async () =>
     root.render(
       <EngineProvider engine={mockEngine}>
-        <LayerPanel />
+        <HierarchyPanel />
       </EngineProvider>,
     ));
 }
@@ -250,8 +250,8 @@ describe('layer settings entry points', () => {
     actions.beginMultiSelect.mockClear();
     actions.toggleDescendantSelection.mockClear();
     const nested: LayerMeta[] = [
-      { ...base, id: 'parent', name: '親', type: 'raster', childIds: ['child'], state: {} },
-      { ...base, id: 'child', name: '子', type: 'shape', parentId: 'parent', canRemove: true, state: { snapEnabled: true, shape: { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 1, color: '#123456' } } },
+      { ...base, id: 'parent', name: '親', type: 'raster', scopeLayerIds: ['child'], state: {} },
+      { ...base, id: 'child', name: '子', type: 'shape', scopeId: 'parent', canRemove: true, state: { snapEnabled: true, shape: { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 1, color: '#123456' } } },
     ];
     useStore.getState().set({
       layers: nested,
@@ -326,8 +326,8 @@ describe('layer settings entry points', () => {
 describe('mask candidates', () => {
   it('keeps matching layers in hierarchy order with their ancestors', () => {
     const nested: LayerMeta[] = [
-      { ...base, id: 'parent', name: '親', type: 'raster', childIds: ['child'], state: {} },
-      { ...base, id: 'child', name: '対象文字', type: 'text', parentId: 'parent', state: { snapEnabled: true, text: {} as never } },
+      { ...base, id: 'parent', name: '親', type: 'raster', scopeLayerIds: ['child'], state: {} },
+      { ...base, id: 'child', name: '対象文字', type: 'text', scopeId: 'parent', state: { snapEnabled: true, text: {} as never } },
       {
         ...base,
         id: 'adjust',
@@ -337,7 +337,7 @@ describe('mask candidates', () => {
       },
     ];
     const result = maskCandidateRows(['parent', 'adjust'], nested, 'adjust', '対象');
-    expect(result.map(row => [row.layer.id, row.depth])).toEqual([['parent', 0], ['child', 1]]);
+    expect(result).toEqual([]);
   });
 });
 
@@ -389,7 +389,7 @@ describe('mask interactions', () => {
     });
     await renderPanel();
     animate.mockClear();
-    await click(container.querySelector('[aria-label="直線をレイヤー一覧で表示"]'));
+    await click(container.querySelector('[aria-label="直線をヒエラルキーで表示"]'));
     expect((animate.mock.calls as unknown as [Keyframe[]][]).some(([frames]) =>
       Array.isArray(frames) && frames.some(frame => frame.transform === 'scale(1.06)'),
     )).toBe(true);

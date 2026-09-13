@@ -64,14 +64,18 @@ export class AutosaveService {
 
   async saveSnapshot(): Promise<void> {
     const eng = this.engine;
+    if (eng.bins.activeBinId) {
+      await eng.bins.saveActive();
+      return;
+    }
     const ls = eng.layerService;
     const pages = eng.pages;
     const st = useStore.getState();
     // レイヤー内容は同期でコピーされ、PNG 化だけが非同期に進む。
-    const layerSources = ls.layers.map((l) => savedLayerFrom(l, { artboard: eng.artboard }));
+    const layerSources = ls.layers.map((l) => savedLayerFrom(l, { pageFrame: eng.pageFrame, ppi: eng.getPageSpec().ppi }));
     const activeLayerId = ls.activeLayerId;
     const view = eng.view.snapshot();
-    const canvasSpec = { ...eng.getCanvasSpec() };
+    const pageSpec = { ...eng.getPageSpec() };
     const fonts = structuredClone(st.fonts);
     const rootLayerIds = [...ls.rootLayerIds];
     const historyPromise = eng.history.serialize(canvasToBlob);
@@ -81,7 +85,7 @@ export class AutosaveService {
       eng.ensureComposited();
       const thumb = document.createElement('canvas');
       thumb.width = 240;
-      thumb.height = Math.max(1, Math.round(240 * eng.artboard.h / eng.artboard.w));
+      thumb.height = Math.max(1, Math.round(240 * eng.pageFrame.h / eng.pageFrame.w));
       thumb.getContext('2d')!.drawImage(eng.compositor.main, 0, 0, thumb.width, thumb.height);
       thumbnail = await new Promise(resolve => thumb.toBlob(blob => resolve(blob ?? undefined), 'image/webp', .72));
       pages.thumbnailVersion++;
@@ -91,11 +95,14 @@ export class AutosaveService {
       pageOrder: [...pages.pageOrder],
       activePageId: pages.activePageId,
       fonts,
+      binOrder: st.binItems.map(item => item.id),
+      lastPagePpi: pageSpec.ppi,
     });
     const page = {
       id: pages.activePageId,
-      canvasSpec,
+      pageSpec,
       rootLayerIds,
+      hierarchy: structuredClone(ls.rootHierarchy),
       layers,
       activeLayerId,
       history: await historyPromise,

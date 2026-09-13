@@ -1,14 +1,15 @@
-import { useStore } from '../../state/store';
 import { layerHandler, objectTransformProps } from '../layer-types/registry';
 import { unionRect, type DirtyRect } from '../brush';
 import type { PaintEngine, SelectedObjectTransform } from '../PaintEngine';
+import { homographyFromQuads, multiplyHomography } from '../../model';
+import { pixelHomographyToMm } from '../transform/projectiveWarp';
 
 /** Multi-object selection transforms (lasso free-transform of shapes/text). */
 export class ObjectTransform {
   constructor(private engine: PaintEngine) {}
 
   selectedObjectsInRect(rect: DirtyRect, polygon?: { x: number; y: number }[]): SelectedObjectTransform[] {
-    const ids = new Set(useStore.getState().selectedLayerIds);
+    const ids = this.engine.effectiveTransformLayerIds();
     const pointInPolygon = (point: { x: number; y: number }) => {
       if (!polygon?.length) return true;
       let inside = false;
@@ -60,18 +61,25 @@ export class ObjectTransform {
         const objectTransform = layerHandler(layer).capabilities.objectTransform;
         const beforeBounds = dirtyFor(objectTransform?.bounds(layer as never, env) ?? null);
         const beforeState = (entry.before.state ?? layerHandler(layer).state.clone(layer.state as never)) as never;
-        objectTransform?.apply(layer as never, {
-          before: beforeState,
-          transform,
-          scale,
-          angle,
-          width: entry.width,
-          height: entry.height,
-        });
+        if (layer.type === 'transform') {
+          const deltaPixels = homographyFromQuads(source, target);
+          if (deltaPixels) layer.state.matrix = multiplyHomography(
+            pixelHomographyToMm(deltaPixels, env.ppi),
+            (beforeState as typeof layer.state).matrix,
+          );
+        } else objectTransform?.apply(layer as never, {
+            before: beforeState,
+            transform,
+            scale,
+            angle,
+            width: entry.width,
+            height: entry.height,
+            ppi: env.ppi,
+          });
         const afterBounds = dirtyFor(objectTransform?.bounds(layer as never, env) ?? null);
         const dirty = beforeBounds && afterBounds ? unionRect(beforeBounds, afterBounds) : beforeBounds ?? afterBounds;
         eng.layerService.bumpLayer(entry.id, dirty ?? undefined);
-        eng.links.propagateFrom({ pageId: eng.pages.activePageId, layerId: entry.id }, true);
+        eng.links.propagateFrom(eng.layerAddress(entry.id), true);
       }
     }
     eng.syncTextRendersPublic(); eng.syncStore();
@@ -79,15 +87,19 @@ export class ObjectTransform {
 
   commitObjectGroup(entries: SelectedObjectTransform[]): void {
     const eng = this.engine;
-    const ops: import('../history/historyTree').AtomicOp[] = entries.flatMap(entry => {
+    const ops: import('../history/historyTree').AtomicOp[] = [
+      ...eng.layerService.consumePendingTransformTargetOps(),
+      ...entries.flatMap(entry => {
       const layer = eng.layerService.byId(entry.id);
       if (!layer) return [];
       const after = objectTransformProps(layer);
       const propsOp = { kind: 'layerProps' as const, layerId: entry.id, before: entry.before, after };
+      const dataLinkOp = eng.layerService.detachDataLink(layer);
       const linkOp = eng.layerService.linkOpForUserChange(layer, entry.before, after);
-      eng.links.propagateFrom({ pageId: eng.pages.activePageId, layerId: entry.id });
-      return linkOp ? [propsOp, linkOp] : [propsOp];
-    });
+      eng.links.propagateFrom(eng.layerAddress(entry.id));
+      return [propsOp, ...(dataLinkOp ? [dataLinkOp] : []), ...(linkOp ? [linkOp] : [])];
+      }),
+    ];
     if (!ops.length) return;
     eng.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, '複数オブジェクトを変形');
     eng.committed();
@@ -99,6 +111,7 @@ export class ObjectTransform {
       const layer = eng.layerService.byId(entry.id);
       if (layer) eng.layerService.assignProps(layer, entry.before);
     }
+    eng.layerService.cancelPendingTransformTargets();
     eng.syncTextRendersPublic();
     eng.requestRender();
     eng.syncStore();

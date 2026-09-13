@@ -47,8 +47,8 @@ export const ellipseShapeKind: ShapeKindHandler<EllipseShapeParams> = {
 
   normalize: shape => ({ ...shape, rotation: shape.rotation ?? 0 }),
 
-  draw(ctx, shape, artboard) {
-    paintClosed(ctx, normalizeShapePaintMode(shape.paintMode), artboard, () => {
+  draw(ctx, shape, pageFrame) {
+    paintClosed(ctx, normalizeShapePaintMode(shape.paintMode), pageFrame, () => {
       ctx.ellipse(shape.cx, shape.cy, shape.rx, shape.ry, shape.rotation ?? 0, 0, Math.PI * 2);
     });
   },

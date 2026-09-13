@@ -2,7 +2,7 @@ import type { Layer } from '../layers';
 import type { TextRenderer } from '../text/render';
 import type { LayerDefinition } from './definition';
 
-export interface ArtboardSize {
+export interface PagePixelSize {
   w: number;
   h: number;
 }
@@ -13,7 +13,9 @@ export interface Point {
 }
 
 export interface LayerContentEnv {
-  artboard: ArtboardSize;
+  pageFrame: PagePixelSize;
+  /** Present for persisted v11 geometry; omitted by lightweight unit hosts. */
+  ppi?: number;
 }
 
 export interface LayerRestoreEnv extends LayerContentEnv {
@@ -36,7 +38,7 @@ export interface LayerStoredScaleEnv extends LayerContentEnv {
 }
 
 export interface LayerMeasureEnv {
-  artboard: ArtboardSize;
+  pageFrame: PagePixelSize;
   textRenderer: TextRenderer;
   ppi: number;
 }
@@ -83,6 +85,10 @@ export interface EffectScope {
   width: number;
   height: number;
   inputRevision: number;
+  /** Optional larger lower-scope render used by projective transforms. */
+  sourceCanvas?: HTMLCanvasElement;
+  sourceX?: number;
+  sourceY?: number;
 }
 
 export interface EffectCacheStore {

@@ -49,7 +49,7 @@ describe('rich text edits', () => {
     expect(textAlignment(horizontal)).toEqual({ textAlign: 'right', alignContent: 'end' });
     expect(textAlignment({ ...horizontal, direction: 'vertical' })).toEqual({ textAlign: 'end', alignContent: 'start' });
   });
-  it('keeps the editor frame center aligned when the artboard is scaled', () => {
+  it('keeps the editor frame center aligned when the pageFrame is scaled', () => {
     expect(textEditorFrameOrigin(100, 60, 200, 80, 0.25)).toEqual({ left: -50, top: -15 });
     const origin = textEditorFrameOrigin(100, 60, 200, 80, 0.25);
     expect(origin.left + 100).toBe((100 + 100) * 0.25);
