@@ -41,25 +41,25 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 
-function raster(id: string, paint: (ctx: CanvasRenderingContext2D) => void): RasterLayer {
-  const layer = createRasterLayer(id, 16, 16, id);
+function raster(id: string, paint: (ctx: CanvasRenderingContext2D) => void, size = 16): RasterLayer {
+  const layer = createRasterLayer(id, size, size, id);
   paint(layer.runtime.ctx);
   return layer;
 }
 
-function render(layers: Layer[], roots: string[], ppi = 25.4): HTMLCanvasElement {
-  return createRenderer(layers, roots, ppi).main;
+function render(layers: Layer[], roots: string[], ppi = 25.4, size = 16): HTMLCanvasElement {
+  return createRenderer(layers, roots, ppi, size).main;
 }
 
-function createRenderer(layers: Layer[], roots: string[], ppi = 25.4) {
+function createRenderer(layers: Layer[], roots: string[], ppi = 25.4, size = 16) {
   const byId = new Map(layers.map(layer => [layer.id, layer]));
   const revisions = new Map<string, number>();
   const engine = {
-    artboard: { w: 16, h: 16 },
+    artboard: { w: size, h: size },
     allLayers: () => layers,
     layerById: (id: string) => byId.get(id) ?? null,
     getRootLayerIds: () => roots,
-    getCanvasSpec: () => ({ widthMm: 16, heightMm: 16, ppi }),
+    getCanvasSpec: () => ({ widthMm: size, heightMm: size, ppi }),
     getRenderRevision: (id: string) => revisions.get(id) ?? 0,
     getMaskRevision: (id: string) => revisions.get(id) ?? 0,
     activeTool: () => ({}),
@@ -71,8 +71,8 @@ function createRenderer(layers: Layer[], roots: string[], ppi = 25.4) {
   const compositor = new Compositor(engine);
   const main = document.createElement('canvas');
   const overlay = document.createElement('canvas');
-  main.width = overlay.width = 16;
-  main.height = overlay.height = 16;
+  main.width = overlay.width = size;
+  main.height = overlay.height = size;
   compositor.attachCanvases(main, overlay);
   compositor.composite();
   return { main, overlay, compositor, revisions };
@@ -80,6 +80,16 @@ function createRenderer(layers: Layer[], roots: string[], ppi = 25.4) {
 
 function rgba(canvas: HTMLCanvasElement, x: number, y: number): number[] {
   return [...canvas.getContext('2d')!.getImageData(x, y, 1, 1).data];
+}
+
+function darkestRedNear(canvas: HTMLCanvasElement, x: number, y: number, radius = 1): number {
+  let result = 255;
+  for (let offsetY = -radius; offsetY <= radius; offsetY++) {
+    for (let offsetX = -radius; offsetX <= radius; offsetX++) {
+      result = Math.min(result, rgba(canvas, Math.round(x) + offsetX, Math.round(y) + offsetY)[0]);
+    }
+  }
+  return result;
 }
 
 describe('effect scopes', () => {
@@ -206,7 +216,116 @@ describe('effect scopes', () => {
     outline.state.outline.cornerStyle = 'sharp';
     const sharp = render([source, outline], [source.id, outline.id]);
     expect(rgba(round, 6, 6)).toEqual([255, 255, 255, 255]);
-    expect(rgba(sharp, 6, 6)[0]).toBeLessThan(200);
+    expect(rgba(sharp, 6, 6)[0]).toBeLessThan(250);
+  });
+
+  it('keeps a sharp outline equally thick on horizontal and diagonal edges', () => {
+    const size = 40;
+    const source = raster('source', ctx => {
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.moveTo(10, 10);
+      ctx.lineTo(30, 10);
+      ctx.lineTo(30, 30);
+      ctx.closePath();
+      ctx.fill();
+    }, size);
+    const outline = createOutlineLayer('縁どり', 'outline');
+    outline.state.outline = { color: '#000000', widthMm: 2, alphaThreshold: .5, cornerStyle: 'sharp' };
+    const result = render([source, outline], [source.id, outline.id], 25.4, size);
+
+    // Both samples are about 1.5 px outside their edge. A point 2.8 px
+    // perpendicular to the diagonal stays empty (the old square dilation did not).
+    expect(rgba(result, 20, 8)[0]).toBeLessThan(200);
+    expect(rgba(result, 17, 19)[0]).toBeLessThan(200);
+    expect(rgba(result, 16, 20)[0]).toBeGreaterThan(240);
+  });
+
+  it('extends an acute sharp corner as a miter instead of flattening its tip', () => {
+    const size = 48;
+    const source = raster('source', ctx => {
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.moveTo(24, 12);
+      ctx.lineTo(31, 35);
+      ctx.lineTo(17, 35);
+      ctx.closePath();
+      ctx.fill();
+    }, size);
+    const outline = createOutlineLayer('縁どり', 'outline');
+    outline.state.outline = { color: '#000000', widthMm: 2, alphaThreshold: .5, cornerStyle: 'sharp' };
+    const result = render([source, outline], [source.id, outline.id], 25.4, size);
+    expect(rgba(result, 24, 7)[0]).toBeLessThan(80);
+  });
+
+  it('reconstructs every rasterized corner instead of leaving later corners chamfered', () => {
+    const size = 64;
+    const source = raster('source', ctx => {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(16, 16, 32, 32);
+    }, size);
+    const outline = createOutlineLayer('縁どり', 'outline');
+    outline.state.outline = { color: '#000000', widthMm: 3, alphaThreshold: .5, cornerStyle: 'sharp' };
+    const result = render([source, outline], [source.id, outline.id], 25.4, size);
+
+    for (const [x, y] of [[13, 13], [50, 13], [50, 50], [13, 50]]) {
+      expect(rgba(result, x, y)[0]).toBeLessThan(200);
+    }
+  });
+
+  it('keeps all four corners pointed after rasterizing a rotated rectangle', () => {
+    const size = 256;
+    const center = { x: 128, y: 128 };
+    const halfWidth = 70, halfHeight = 50, angle = -.23;
+    const ppi = 300, outlineWidthMm = 1, outlineRadius = outlineWidthMm * ppi / 25.4;
+    const rotate = (x: number, y: number) => ({
+      x: center.x + x * Math.cos(angle) - y * Math.sin(angle),
+      y: center.y + x * Math.sin(angle) + y * Math.cos(angle),
+    });
+    const vertices = [
+      rotate(-halfWidth, -halfHeight), rotate(halfWidth, -halfHeight),
+      rotate(halfWidth, halfHeight), rotate(-halfWidth, halfHeight),
+    ];
+    const source = raster('source', ctx => {
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.moveTo(vertices[0].x, vertices[0].y);
+      for (const vertex of vertices.slice(1)) ctx.lineTo(vertex.x, vertex.y);
+      ctx.closePath();
+      ctx.fill();
+    }, size);
+    const outline = createOutlineLayer('縁どり', 'outline');
+    outline.state.outline = {
+      color: '#000000', widthMm: outlineWidthMm, alphaThreshold: .5, cornerStyle: 'sharp',
+    };
+    const result = render([source, outline], [source.id, outline.id], ppi, size);
+    const expandedCorners = [
+      rotate(-halfWidth - outlineRadius, -halfHeight - outlineRadius),
+      rotate(halfWidth + outlineRadius, -halfHeight - outlineRadius),
+      rotate(halfWidth + outlineRadius, halfHeight + outlineRadius),
+      rotate(-halfWidth - outlineRadius, halfHeight + outlineRadius),
+    ];
+    const cornerSamples = expandedCorners.map(corner => darkestRedNear(result, corner.x, corner.y, 2));
+    expect(cornerSamples.every(sample => sample < 200), JSON.stringify(cornerSamples)).toBe(true);
+  });
+
+  it('keeps both sides of a very acute raster corner connected at its tip', () => {
+    const size = 72;
+    const source = raster('source', ctx => {
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.moveTo(10, 36);
+      ctx.lineTo(65, 29);
+      ctx.lineTo(65, 43);
+      ctx.closePath();
+      ctx.fill();
+    }, size);
+    const outline = createOutlineLayer('縁どり', 'outline');
+    outline.state.outline = { color: '#000000', widthMm: 3, alphaThreshold: .5, cornerStyle: 'sharp' };
+    const result = render([source, outline], [source.id, outline.id], 25.4, size);
+    const darkRows = Array.from({ length: size }, (_, y) => y).filter(y => rgba(result, 7, y)[0] < 200);
+    expect(darkRows.length).toBeGreaterThan(0);
+    expect(darkRows.at(-1)! - darkRows[0] + 1).toBe(darkRows.length);
   });
 
   it('recomposites only the invalidated pixels when no spatial effect expands them', () => {

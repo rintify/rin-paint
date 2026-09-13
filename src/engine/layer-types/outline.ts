@@ -4,7 +4,7 @@ import { createOutlineLayer } from '../layers';
 import { buildCatalog } from '../parameters/catalog';
 import type { LayerDefinition } from './definition';
 import type { OutlineState } from '../../model';
-import { applyOutline } from './effectUtils';
+import { applyOutline, SHARP_OUTLINE_MITER_LIMIT } from './effectUtils';
 
 function normalize(value: Partial<OutlineParams> | undefined): OutlineParams {
   const width = Number(value?.widthMm);
@@ -64,7 +64,8 @@ export const outlineLayerType: LayerDefinition<'outline'> = {
     effect: {
       clickableAddedPixels: true,
       paddingPx(layer, env) {
-        return Math.ceil(layer.state.outline.widthMm * env.ppi / 25.4 + 1);
+        const radius = layer.state.outline.widthMm * env.ppi / 25.4;
+        return Math.ceil(radius * (layer.state.outline.cornerStyle === 'sharp' ? SHARP_OUTLINE_MITER_LIMIT : 1) + 1);
       },
       apply(scope, layer, env) {
         const o = layer.state.outline;
