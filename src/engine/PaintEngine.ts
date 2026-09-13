@@ -50,6 +50,7 @@ import { PolygonSplitService } from './core/PolygonSplitService';
 import { SettingsService } from './core/SettingsService';
 import { ParameterLinkService, type LayerLinkCandidate } from './core/ParameterLinkService';
 import { BinService } from './core/BinService';
+import { LayerEntityStore } from './entities/LayerEntityStore';
 import { ParameterService } from './parameters/ParameterService';
 import { layerHandler } from './layer-types/registry';
 import type { RasterLayer } from './layers';
@@ -82,6 +83,7 @@ export class PaintEngine {
   /** @internal */ readonly polygonSplit = new PolygonSplitService(this);
   /** @internal */ readonly settings = new SettingsService(this);
   /** @internal */ readonly bins = new BinService(this);
+  /** @internal */ readonly entities = new LayerEntityStore(this);
 
   private recorder = new TimelapseRecorder(this, () => this.scheduleStorageRefresh());
 

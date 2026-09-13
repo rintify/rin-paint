@@ -2,6 +2,13 @@ import { flattenHierarchy, type HierarchyItem, type ScopedLayerAddress } from '.
 import type { SavedBinItem, SavedLayer } from '../persistence/db';
 import { remapRecordIds } from '../layer-types/registry';
 
+/** Reconstruct Canvas structure from the live bin, then hydrate linked payloads. */
+export function hydrateDocumentRecords(records: readonly SavedLayer[], bins: readonly SavedBinItem[]): SavedLayer[] {
+  let output = [...records];
+  for (const item of bins) output = synchronizeCanvasLinkedRecords(output, item).records;
+  return hydrateLinkedRecords(output, bins);
+}
+
 /** Hydrate lightweight linked occurrences from bin-owned layer entities. */
 export function hydrateLinkedRecords(records: readonly SavedLayer[], bins: readonly SavedBinItem[]): SavedLayer[] {
   const binsById = new Map(bins.map(bin => [bin.id, bin]));

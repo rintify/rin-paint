@@ -23,6 +23,7 @@ describe('layer tree', () => {
 
   it('validates ownership and rejects cycles', () => {
     expect(validateLayerTree(['e', 'a'], layers)).toBe(true);
+    expect(validateLayerTree(['a'], [{ id: 'a', type: 'raster', scopeId: null, scopeLayerIds: ['b'] }, { id: 'b', type: 'shape', scopeId: 'a', scopeLayerIds: [] }])).toBe(false);
     expect(validateLayerTree(['a'], [{ id: 'a', type: 'raster', scopeId: null, scopeLayerIds: ['b'] }, { id: 'b', type: 'shape', scopeId: 'a', scopeLayerIds: ['a'] }])).toBe(false);
   });
 

@@ -248,7 +248,7 @@ export const shapeLayerType: LayerDefinition<'shape'> = {
       drawOpacity: layer => layer.opacity,
     },
     transferToRaster: {
-      canTransfer: layer => layer.scopeLayerIds.length === 0 && !!layer.scopeId,
+      canTransfer: layer => layer.scopeLayerIds.length === 0,
     },
   },
 };

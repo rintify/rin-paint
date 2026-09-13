@@ -269,6 +269,7 @@ export class LayerService {
 
   applyHierarchy(scopeId: string | null, items: HierarchyItem[]): void {
     this.setHierarchyItems(scopeId, structuredClone(items));
+    this.rebuildScopePlacements();
   }
 
   descendantIds(id: string): string[] {
@@ -360,6 +361,7 @@ export class LayerService {
     const beforeStructureSource = layer.canvasStructureSource ? structuredClone(layer.canvasStructureSource) : undefined;
     delete layer.dataLink;
     delete layer.dataLinkInstanceId;
+    this.engine.entities.cow(layer.id);
     return {
       kind: 'layerDataLink', layerId: layer.id, before, after: null,
       beforeInstanceId, afterInstanceId: beforeInstanceId,
@@ -402,23 +404,14 @@ export class LayerService {
   }
 
   private mergeTargetFor(layer: Layer): RasterLayer | null {
-    if (!layerHandler(layer).renderer.effect) return this.mergeTarget(layer);
-    if (layer.scopeLayerIds.length) return null;
-    if (layer.scopeId) {
-      const parent = this.rasterById(layer.scopeId);
-      return parent?.scopeLayerIds.length === 1 && parent.scopeLayerIds[0] === layer.id ? parent : null;
-    }
-    const index = this.rootLayerIds.indexOf(layer.id);
-    if (index !== 1) return null;
-    const target = this.rasterById(this.rootLayerIds[0]);
-    return target && target.scopeLayerIds.length === 0 ? target : null;
+    return this.mergeTarget(layer);
   }
 
   canTransferShape(id = this.activeLayerId): boolean {
     const layer = this.byId(id);
     return !!layer
       && !!layerHandler(layer).capabilities.transferToRaster?.canTransfer(layer as never)
-      && !!this.rasterById(layer.scopeId!);
+      && !!this.mergeTarget(layer);
   }
 
   canMoveLayer(id: string, scopeId: string | null): boolean {
@@ -621,12 +614,12 @@ export class LayerService {
   }
 
   textAt(x: number, y: number): string | null {
+    const scopeId = activeCanvasScope(this.layers, this.activeLayerId);
+    const roots = scopeId ? this.siblingIds(scopeId) : this.rootLayerIds;
     const walk = (ids: string[]): string | null => {
       for (const id of [...ids].reverse()) {
-        const layer = this.byId(id)!;
-        const child = walk(layer.scopeLayerIds);
-        if (child) return child;
-        if (layer.type !== 'text' || !layer.visible) continue;
+        const layer = this.byId(id);
+        if (!layer || layer.type === 'canvas' || layer.type !== 'text' || !layer.visible) continue;
         const frame = textFrame(layer, this.engine.compositor.textRenderer);
         const cx = frame.x + frame.w / 2, cy = frame.y + frame.h / 2, angle = -(layer.state.text.rotation ?? 0);
         const dx = x - cx, dy = y - cy;
@@ -636,7 +629,7 @@ export class LayerService {
       }
       return null;
     };
-    return walk(this.rootLayerIds);
+    return walk(roots);
   }
 
   textFrameSize(id: string): { width: number; height: number } | null {
@@ -1030,8 +1023,9 @@ export class LayerService {
     if (this.engine.isBusy()) return;
     if (!this.canTransferShape()) return;
     const layer = this.byId(this.activeLayerId)!;
-    const parent = this.rasterById(layer.scopeId!)!;
-    this.bakeAndMerge(layer, parent, layer.type === 'image' ? '画像を転写' : '図形を転写', layer.id);
+    const target = this.mergeTarget(layer);
+    if (!target) return;
+    this.bakeAndMerge(layer, target, layer.type === 'image' ? '画像を転写' : '図形を転写', layer.id);
   }
 
   async applyLayerContent(snapshot: LayerSnapshot): Promise<void> {

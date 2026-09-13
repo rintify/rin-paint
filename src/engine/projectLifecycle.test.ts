@@ -7,7 +7,7 @@ import { TRANSPARENT, type TextParams } from '../types';
 import { Blob as NodeBlob } from 'node:buffer';
 import { newText } from './text/model';
 import { useStore } from '../state/store';
-import { addFrame, frameCount, loadPage, loadProjectMeta, loadReferenceImage, saveReferenceImage, referenceEpoch } from './persistence/db';
+import { addFrame, frameCount, loadBinItems, loadPage, loadProjectMeta, loadReferenceImage, saveReferenceImage, referenceEpoch } from './persistence/db';
 import { layerMaskIds } from './layer-types/definition';
 import type { HistoryTree, TileLayerMergeOp } from './history/historyTree';
 import { SparseRasterSurface } from './raster/SparseRasterSurface';
@@ -892,5 +892,29 @@ describe('selection and layer transform', () => {
     expect(pixel(rasterId, 15, 15)[3]).toBe(0);
     expect(pixel(rasterId, 35, 15)[0]).toBeGreaterThan(200);
     expect(engine.getShape(shapeId)).toMatchObject({ x: 60, y: 40 });
+  });
+
+  it('moves page data into a bin and restores only the page on undo', async () => {
+    await engine.newProject();
+    engine.bins.activeBinId = null;
+    engine.cancelSessions();
+    expect(engine.hasOpenSession()).toBe(false);
+    const layerId = useStore.getState().activeLayerId;
+    await engine.putLayerInBin(layerId);
+    const linked = useStore.getState().layers.find(layer => layer.id === layerId);
+    expect(linked?.dataLink?.document.kind).toBe('bin');
+    const binId = linked!.dataLink!.document.id;
+    engine.scheduleSave();
+    await engine.flushSave();
+    const { page } = await loadActivePersisted();
+    const saved = page?.layers.find(layer => layer.id === layerId);
+    expect(saved?.dataLink?.document.id).toBe(binId);
+    expect(saved?.content).toBeUndefined();
+    expect((await loadBinItems()).some(item => item.id === binId)).toBe(true);
+    await engine.undo();
+    expect(useStore.getState().layers.find(layer => layer.id === layerId)?.dataLink).toBeUndefined();
+    engine.scheduleSave();
+    await engine.flushSave();
+    expect((await loadBinItems()).some(item => item.id === binId)).toBe(true);
   });
 });

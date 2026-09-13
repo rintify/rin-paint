@@ -113,13 +113,7 @@ export function HierarchyPanel() {
     if (stack) {
       ignoreClick.current = true;
       engine.setStackSelection(id, !selectedIds.includes(id));
-      return;
     }
-    const layer = byId.get(id) ?? metadata.current.get(id);
-    if (!layer?.scopeLayerIds.length) return;
-    ignoreClick.current = true;
-    engine.toggleDescendantSelection(id);
-    setPalette({ id, open: true });
   });
   const visible = dragId && frozen.current ? frozen.current : desired;
   const signature = visible.map(r => r.id + ':' + r.depth).join('|');

@@ -1,4 +1,4 @@
-import { canLinkDocuments, type DocumentAddress, type ScopedLayerAddress } from '../../model/document';
+import { canLinkDocuments, scopedAddressKey, type DocumentAddress, type ScopedLayerAddress } from '../../model/document';
 
 export interface LayerEntity<T> {
   id: string;
@@ -38,32 +38,66 @@ export class LayerEntityRepository<T> {
   constructor(private clone: (value: T) => T = structuredClone) {}
 
   createOwned(address: ScopedLayerAddress, value: T, entityId: string = crypto.randomUUID()): LayerOccurrence {
-    if (this.occurrences.has(address.nodeId)) throw new Error('配置ノードIDが重複しています');
+    const id = scopedAddressKey(address);
+    if (this.occurrences.has(id)) throw new Error('配置ノードIDが重複しています');
     this.entities.set(entityId, {
       id: entityId, owner: { ...address.document }, value: this.clone(value), tombstone: false, historyRetainCount: 0,
     });
-    const occurrence = { id: address.nodeId, address: structuredClone(address), entityId };
+    const occurrence = { id, address: structuredClone(address), entityId };
     this.occurrences.set(occurrence.id, occurrence);
     return occurrence;
   }
 
   createLink(address: ScopedLayerAddress, sourceOccurrenceId: string): LayerOccurrence {
     const source = this.requireOccurrence(sourceOccurrenceId);
+    const id = scopedAddressKey(address);
     if (!canLinkDocuments(address.document, source.address.document)) {
       throw new Error('ビン内のレイヤーはページをリンク元にできません');
     }
-    if (address.nodeId === sourceOccurrenceId || this.wouldCycle(address.nodeId, sourceOccurrenceId)) {
+    if (id === sourceOccurrenceId || this.wouldCycle(id, sourceOccurrenceId)) {
       throw new Error('リンクが循環します');
     }
     const final = this.resolve(sourceOccurrenceId);
     const occurrence = {
-      id: address.nodeId,
+      id,
       address: structuredClone(address),
       entityId: final.entityId,
       sourceOccurrenceId,
     };
     this.occurrences.set(occurrence.id, occurrence);
     return occurrence;
+  }
+
+  /** Turn an existing owned occurrence into a live link sharing the source entity. */
+  adoptAsLink(occurrenceId: string, sourceOccurrenceId: string): LayerOccurrence {
+    const target = this.requireOccurrence(occurrenceId);
+    const source = this.requireOccurrence(sourceOccurrenceId);
+    if (!canLinkDocuments(target.address.document, source.address.document)) {
+      throw new Error('ビン内のレイヤーはページをリンク元にできません');
+    }
+    if (occurrenceId === sourceOccurrenceId || this.wouldCycle(occurrenceId, sourceOccurrenceId)) {
+      throw new Error('リンクが循環します');
+    }
+    const previousEntityId = target.entityId;
+    const final = this.resolve(sourceOccurrenceId);
+    target.entityId = final.entityId;
+    target.sourceOccurrenceId = sourceOccurrenceId;
+    const previous = this.entities.get(previousEntityId);
+    if (previous && previousEntityId !== final.entityId) {
+      const stillUsed = [...this.occurrences.values()].some(item => item.entityId === previous.id);
+      if (!stillUsed && previous.historyRetainCount > 0) previous.tombstone = true;
+      else if (!stillUsed) this.entities.delete(previous.id);
+    }
+    return target;
+  }
+
+  /** Persist an owned occurrence. Linked occurrences must go through edit() to copy-on-write. */
+  writeOwned(occurrenceId: string, value: T): void {
+    const occurrence = this.requireOccurrence(occurrenceId);
+    if (occurrence.sourceOccurrenceId) return;
+    const entity = this.entities.get(occurrence.entityId);
+    if (!entity) throw new Error('レイヤー実体が見つかりません');
+    entity.value = this.clone(value);
   }
 
   resolve(occurrenceId: string): LayerOccurrence {

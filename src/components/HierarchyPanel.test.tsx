@@ -39,7 +39,7 @@ const actions = vi.hoisted(() => ({
       }
     };
     visit(id);
-    if (!layer?.scopeLayerIds.length) return;
+    if (!layer?.scopeLayerIds.length || layer.type === 'canvas') return;
     const selected = new Set(state.selectedLayerIds.length ? state.selectedLayerIds : [state.activeLayerId]);
     const allSelected = descendants.every(descendant => selected.has(descendant));
     if (state.multiSelectMode && selected.has(id) && allSelected) {
@@ -56,6 +56,18 @@ const actions = vi.hoisted(() => ({
     }
     state.set({ multiSelectMode: true, selectedLayerIds: next, activeLayerId: next[0] });
   }),
+  setStackSelection: vi.fn((id: string, selected: boolean) => {
+    const stack = useStore.getState().hierarchy
+      .filter((item): item is Extract<typeof item, { kind: 'stack' }> => item.kind === 'stack')
+      .find(item => item.layerIds.includes(id));
+    if (!stack) return;
+    const next = selected ? [...stack.layerIds] : [];
+    useStore.getState().set({
+      selectedLayerIds: next,
+      multiSelectMode: true,
+      activeLayerId: next[0] ?? useStore.getState().activeLayerId,
+    });
+  }),
 }));
 const mockEngine = vi.hoisted(() => ({
   pageFrame: { w: 1600, h: 1200 },
@@ -64,6 +76,7 @@ const mockEngine = vi.hoisted(() => ({
   beginMultiSelect: actions.beginMultiSelect,
   exitMultiSelect: actions.exitMultiSelect,
   toggleDescendantSelection: actions.toggleDescendantSelection,
+  setStackSelection: actions.setStackSelection,
   canMoveLayer: () => true,
   getShape: () => null,
   removeLayer: actions.remove,
@@ -244,33 +257,67 @@ describe('layer settings entry points', () => {
     expect(actions.exitMultiSelect).toHaveBeenCalledOnce();
     expect(useStore.getState().multiSelectMode).toBe(false);
   });
-  it('selects descendants on long-press and ignores the following click', async () => {
+  it('does not select canvas children on long-press', async () => {
     vi.useFakeTimers();
     actions.setActiveLayer.mockClear();
     actions.beginMultiSelect.mockClear();
     actions.toggleDescendantSelection.mockClear();
     const nested: LayerMeta[] = [
-      { ...base, id: 'parent', name: '親', type: 'raster', scopeLayerIds: ['child'], state: {} },
-      { ...base, id: 'child', name: '子', type: 'shape', scopeId: 'parent', canRemove: true, state: { snapEnabled: true, shape: { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 1, color: '#123456' } } },
+      {
+        ...base,
+        id: 'canvas',
+        name: 'キャンバス',
+        type: 'canvas',
+        scopeLayerIds: ['child'],
+        state: { hierarchy: [{ kind: 'layer', id: 'node-child', layerId: 'child' }], propagateTransform: true },
+      },
+      { ...base, id: 'child', name: '子', type: 'shape', scopeId: 'canvas', canRemove: true, state: { snapEnabled: true, shape: { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 1, color: '#123456' } } },
     ];
     useStore.getState().set({
       layers: nested,
-      rootLayerIds: ['parent'],
-      activeLayerId: 'parent',
-      selectedLayerIds: ['parent'],
+      rootLayerIds: ['canvas'],
+      hierarchy: [{ kind: 'layer', id: 'node-canvas', layerId: 'canvas' }],
+      activeLayerId: 'canvas',
+      selectedLayerIds: ['canvas'],
     });
     await renderPanel();
-    const row = [...container.querySelectorAll('.layer-row')].find(el => el.textContent?.includes('親'))!;
+    const row = [...container.querySelectorAll('.layer-row')].find(el => el.textContent?.includes('キャンバス'))!;
     await act(async () => {
       row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
       await vi.advanceTimersByTimeAsync(500);
       row.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 10, clientY: 10 }));
       row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(actions.toggleDescendantSelection).toHaveBeenCalledWith('parent');
-    expect(actions.beginMultiSelect).not.toHaveBeenCalled();
-    expect(actions.setActiveLayer).not.toHaveBeenCalled();
-    expect(useStore.getState().selectedLayerIds).toEqual(['parent', 'child']);
+    expect(actions.toggleDescendantSelection).not.toHaveBeenCalled();
+    expect(useStore.getState().selectedLayerIds).toEqual(['canvas']);
+    vi.useRealTimers();
+  });
+  it('selects every stack member on long-press of an unselected member', async () => {
+    vi.useFakeTimers();
+    actions.setStackSelection.mockClear();
+    useStore.getState().set({
+      layers: [
+        ...layers,
+        { ...base, id: 'other', name: '別', type: 'raster', canRemove: true, state: {} },
+      ],
+      rootLayerIds: ['raster', 'shape', 'other'],
+      hierarchy: [
+        { kind: 'stack', id: 'stack-1', layerIds: ['raster', 'shape'] },
+        { kind: 'layer', id: 'node-other', layerId: 'other' },
+      ],
+      activeLayerId: 'other',
+      selectedLayerIds: ['other'],
+    });
+    await renderPanel();
+    const row = [...container.querySelectorAll('.layer-row')].find(el => el.textContent?.includes('ラスター'))!;
+    await act(async () => {
+      row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
+      await vi.advanceTimersByTimeAsync(500);
+      row.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 10, clientY: 10 }));
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(actions.setStackSelection).toHaveBeenCalledWith('raster', true);
+    expect(useStore.getState().selectedLayerIds).toEqual(['raster', 'shape']);
     vi.useRealTimers();
   });
   it('enters multi-select while keeping the first layer primary', async () => {
@@ -379,17 +426,20 @@ describe('mask interactions', () => {
   });
 
   it('scrolls to and pulses a mask source when its chip is clicked', async () => {
+    vi.useRealTimers();
     const animate = vi.fn(() => ({ cancel() {} }));
     Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: animate });
     useStore.getState().set({
       layers: [...layers, { ...adjust, state: { ...adjust.state, maskLayerIds: ['shape'] } }],
       rootLayerIds: ['raster', 'shape', 'adjust'],
+      hierarchy: [],
       activeLayerId: 'adjust',
       selectedLayerIds: ['adjust'],
     });
     await renderPanel();
     animate.mockClear();
     await click(container.querySelector('[aria-label="直線をヒエラルキーで表示"]'));
+    await act(async () => undefined);
     expect((animate.mock.calls as unknown as [Keyframe[]][]).some(([frames]) =>
       Array.isArray(frames) && frames.some(frame => frame.transform === 'scale(1.06)'),
     )).toBe(true);

@@ -21,7 +21,7 @@ export function selectedLayerRows(roots: string[], layers: TreeLayerLike[], acti
       const layer = byId.get(id);
       if (!layer) continue;
       rows.push({ id, depth });
-      if (open.has(id)) visit(layer.scopeLayerIds, layer.type === 'canvas' ? depth : depth + 1);
+      if (open.has(id) && layer.type === 'canvas') visit(layer.scopeLayerIds, depth);
     }
   };
   visit(roots, 0);
@@ -54,6 +54,7 @@ export function validateLayerTree(roots: string[], layers: TreeLayerLike[]): boo
     if (!layer || layer.scopeId !== scopeId || visiting.has(id) || seen.has(id)) return false;
     visiting.add(id);
     for (const childId of layer.scopeLayerIds) if (!visit(childId, id)) return false;
+    if (layer.type !== 'canvas' && layer.scopeLayerIds.length) return false;
     visiting.delete(id);
     seen.add(id);
     return true;

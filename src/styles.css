@@ -201,7 +201,7 @@
   border-radius: 3px; background: #4f8cff; opacity: .7;
 }
 .layer-flat-row.stack-collapsed { box-shadow: -3px 3px 0 #182330, -6px 6px 0 #111922; }
-.bin-editor-frame { background: transparent !important; box-shadow: none !important; outline: 1px dashed var(--border); }
+.bin-editor-frame { background: transparent !important; box-shadow: none !important; outline: none; }
 .primary-badge {
   flex: none;
   min-width: 22px;

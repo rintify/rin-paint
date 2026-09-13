@@ -136,8 +136,9 @@ export class ShapeEditController {
   }
 
   private collectMoveSnapLines(editingId: string): SnapLines {
+  const editing = this.engine.layerService.byId(editingId);
     const others = this.engine.layerService.layers.flatMap(layer => {
-      if (layer.id === editingId || !layer.visible) return [];
+      if (layer.id === editingId || !layer.visible || layer.scopeId !== editing?.scopeId) return [];
       if (layer.type === 'shape') return [shapeBounds(layer.state.shape)];
       if (layer.type === 'image') return [shapeBounds(imageFrameShape(layer.state.placement))];
       return [];
@@ -148,6 +149,7 @@ export class ShapeEditController {
   private collectVertexSnapPoints(editingId: string, selectedIndex: number): ShapePoint[] {
     return this.engine.layerService.layers.flatMap(layer => {
       if (layer.type !== 'shape' || !layer.visible || layer.state.shape.kind !== 'polygon') return [];
+      if (layer.scopeId !== this.engine.layerService.byId(editingId)?.scopeId) return [];
       return shapePoints(layer.state.shape).filter((_, index) => layer.id !== editingId || index !== selectedIndex);
     });
   }

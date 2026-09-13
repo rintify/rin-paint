@@ -161,6 +161,14 @@ export async function saveSharedLayerEntity(entity: SavedSharedLayerEntity): Pro
 export async function loadSharedLayerEntities(): Promise<SavedSharedLayerEntity[]> {
   return await (await db()).getAll('entities') as SavedSharedLayerEntity[];
 }
+export async function replaceSharedLayerEntities(entities: readonly SavedSharedLayerEntity[]): Promise<void> {
+  const d = await db();
+  const tx = d.transaction('entities', 'readwrite');
+  await tx.store.clear();
+  for (const entity of entities) void tx.store.put(entity);
+  await tx.done;
+  void refreshProjectBytes();
+}
 
 /** Replace all project data with the given meta and pages. */
 export async function replaceProject(

@@ -5,7 +5,8 @@ import { remapRecordIds, restoreLayerFrom, savedLayerFrom } from '../layer-types
 import { canvasToBlob } from '../layers';
 import { deleteBinItem, loadBinItem, loadBinItems, loadPage, loadProjectMeta, saveBinItem, savePage, type SavedBinItem, type SavedLayer } from '../persistence/db';
 import type { PaintEngine } from '../PaintEngine';
-import { hydrateLinkedRecords, savedCanvasScopePath, synchronizeCanvasLinkedRecords } from '../entities/linkedRecords';
+import { scopedAddressKey } from '../../model/document';
+import { hydrateDocumentRecords, savedCanvasScopePath } from '../entities/linkedRecords';
 
 /** Owns modeless-bin assets and switches the active document/history. */
 export class BinService {
@@ -64,6 +65,22 @@ export class BinService {
       });
     }
     if (ops.length) this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, 'ビンへ移動');
+    for (const id of ids) {
+      const sourceAddress: ScopedLayerAddress = { document: { kind: 'bin', id: item.id }, scopePath: this.scopePath(id), nodeId: id };
+      const pageAddress = this.engine.entities.addressFor(id);
+      try {
+        if (!this.engine.entities.repo.occurrences.has(scopedAddressKey(sourceAddress))) {
+          const record = layers.find(layer => layer.id === id);
+          if (record) this.engine.entities.repo.createOwned(sourceAddress, record);
+        }
+        const pageId = scopedAddressKey(pageAddress);
+        if (this.engine.entities.repo.occurrences.has(pageId)) {
+          this.engine.entities.repo.adoptAsLink(pageId, scopedAddressKey(sourceAddress));
+        } else {
+          this.engine.entities.repo.createLink(pageAddress, scopedAddressKey(sourceAddress));
+        }
+      } catch { /* Persistence rebuilds the shared index from saved documents. */ }
+    }
     this.engine.committed(false);
     this.syncStore();
   }
@@ -119,7 +136,7 @@ export class BinService {
     try {
       const service = this.engine.layerService;
       service.layers = [];
-      const hydrated = hydrateLinkedRecords(item.layers, this.items);
+      const hydrated = hydrateDocumentRecords(item.layers, this.items);
       for (const record of hydrated) {
         const layer = await restoreLayerFrom(record, { pageFrame: this.engine.pageFrame, ppi: this.engine.getPageSpec().ppi });
         if (layer) service.layers.push(layer);
@@ -160,7 +177,7 @@ export class BinService {
     };
     this.items[index] = item;
     await saveBinItem(item);
-    await this.propagateBinData(item);
+    await this.engine.entities.persist();
     this.syncStore();
   }
 
@@ -187,8 +204,19 @@ export class BinService {
   async remove(id: string): Promise<void> {
     if (this.activeBinId === id) await this.returnToPage();
     await this.materializeLinksFromDeletedBin(id);
+    if (!this.activeBinId) {
+      for (const layer of this.engine.layerService.layers) {
+        const address = layer.dataLink ?? layer.canvasStructureSource;
+        if (address?.document.kind !== 'bin' || address.document.id !== id) continue;
+        delete layer.dataLink;
+        delete layer.dataLinkInstanceId;
+        delete layer.canvasStructureSource;
+      }
+      this.engine.syncStore();
+    }
     this.items = this.items.filter(item => item.id !== id);
     await deleteBinItem(id);
+    await this.engine.entities.persist();
     this.syncStore();
   }
 
@@ -238,21 +266,6 @@ export class BinService {
         ? [{ ...item, id: `stack-${crypto.randomUUID()}`, layerIds }]
         : layerIds.map(layerId => layerItem(layerId));
     });
-  }
-
-  /** Refresh unloaded page occurrences without duplicating ownership semantics. */
-  private async propagateBinData(item: SavedBinItem): Promise<void> {
-    const meta = await loadProjectMeta();
-    if (!meta) return;
-    for (const pageId of meta.pageOrder) {
-      const page = await loadPage(pageId);
-      if (!page) continue;
-      const synchronized = synchronizeCanvasLinkedRecords(page.layers, item);
-      if (synchronized.changed) {
-        page.layers = synchronized.records;
-        await savePage(page);
-      }
-    }
   }
 
   private async materializeLinksFromDeletedBin(binId: string): Promise<void> {

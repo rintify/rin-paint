@@ -1,4 +1,4 @@
-import { canvasToBlob, createRasterLayer, ensureRasterSurface, makeCanvas, markRasterContent, type Layer, type RasterLayer } from '../layers';
+import { canvasToBlob, createRasterLayer, ensureRasterSurface, makeCanvas, markRasterContent, type RasterLayer } from '../layers';
 import { emptyCatalog } from '../parameters/catalog';
 import type { LayerDefinition } from './definition';
 import type { LayerDrawEnv } from './types';
@@ -53,9 +53,6 @@ export const rasterLayerType: LayerDefinition<'raster'> = {
   renderer: {
     draw(ctx, layer, env) {
       if (layer.runtime.deferred) return;
-      const erasers = layer.scopeLayerIds
-        .map(id => env.layerById(id))
-        .filter((child): child is Layer => !!child && child.visible && !!env.handlerFor(child).renderer.eraser?.applies(child as never));
       let source: HTMLCanvasElement = layer.runtime.canvas;
       let sourceOrigin = { x: 0, y: 0 };
       const borrowed: ReturnType<LayerDrawEnv['borrowCanvas']>[] = [];
@@ -67,17 +64,6 @@ export const rasterLayerType: LayerDefinition<'raster'> = {
         }, env.ppi);
         borrowed.push(region);
         source = region.canvas;
-        sourceOrigin = { x: env.originX, y: env.originY };
-      }
-      if (erasers.length) {
-        const erased = env.borrowCanvas();
-        borrowed.push(erased);
-        erased.ctx.save();
-        erased.ctx.setTransform(1, 0, 0, 1, -env.originX, -env.originY);
-        erased.ctx.drawImage(source, sourceOrigin.x, sourceOrigin.y);
-        for (const eraser of erasers) env.handlerFor(eraser).renderer.eraser!.draw(erased.ctx, eraser as never, env);
-        erased.ctx.restore();
-        source = erased.canvas;
         sourceOrigin = { x: env.originX, y: env.originY };
       }
       ctx.globalAlpha = layer.opacity;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SavedBinItem, SavedLayer } from '../persistence/db';
-import { hydrateLinkedRecords, synchronizeCanvasLinkedRecords } from './linkedRecords';
+import { hydrateDocumentRecords, hydrateLinkedRecords, synchronizeCanvasLinkedRecords } from './linkedRecords';
 
 const common = { name: 'source', opacity: 1, blend: 'source-over' as const, visible: true };
 const source: SavedLayer = {
@@ -62,5 +62,30 @@ describe('hydrateLinkedRecords', () => {
     expect(resultA.common.name).toBe('edited locally');
     expect(resultA.dataLink).toBeUndefined();
     expect(resultB.dataLink?.nodeId).toBe('child-b');
+  });
+
+  it('follows Canvas structure then hydrates payloads for a document', () => {
+    const canvas: SavedLayer = {
+      id: 'canvas-source', type: 'canvas', common,
+      state: { hierarchy: [
+        { kind: 'layer', id: 'n1', layerId: 'child-a' },
+        { kind: 'layer', id: 'n2', layerId: 'child-b' },
+      ], propagateTransform: true },
+    };
+    const childA = { ...structuredClone(source), id: 'child-a' };
+    const childB = { ...structuredClone(source), id: 'child-b', common: { ...common, name: 'new child' } };
+    const canvasBin = { ...bin, id: 'canvas-bin', layers: [canvas, childA, childB], hierarchy: [{ kind: 'layer' as const, id: 'root', layerId: canvas.id }] };
+    const rootAddress = { document: { kind: 'bin' as const, id: canvasBin.id }, scopePath: [], nodeId: canvas.id };
+    const targetCanvas: SavedLayer = {
+      ...structuredClone(canvas), id: 'target-canvas', dataLink: rootAddress, dataLinkInstanceId: 'instance',
+      state: { hierarchy: [], propagateTransform: true },
+    };
+    const result = hydrateDocumentRecords([targetCanvas], [canvasBin]);
+    const resultCanvas = result.find(record => record.id === 'target-canvas')!;
+    const hierarchyIds = (resultCanvas.state as { hierarchy: Array<{ layerId: string }> }).hierarchy.map(item => item.layerId);
+    expect(hierarchyIds).toHaveLength(2);
+    const linkedChild = result.find(record => record.dataLink?.nodeId === 'child-b');
+    expect(linkedChild?.common.name).toBe('new child');
+    expect(linkedChild?.state).toEqual(childB.state);
   });
 });

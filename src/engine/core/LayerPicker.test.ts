@@ -4,6 +4,7 @@ import { createCanvas, type Canvas } from '@napi-rs/canvas';
 import type { PaintEngine } from '../PaintEngine';
 import {
   createAdjustLayer,
+  createCanvasLayer,
   createClipLayer,
   createImageLayer,
   createOutlineLayer,
@@ -54,13 +55,14 @@ function raster(id: string, paint: (ctx: CanvasRenderingContext2D) => void) {
   return layer;
 }
 
-function pickerFor(layers: Layer[], roots?: string[]) {
+function pickerFor(layers: Layer[], roots?: string[], activeId = '') {
   const byId = new Map(layers.map(layer => [layer.id, layer]));
   const engine = {
-    pageFrame: { w: 16, h: 16 },
+    pageFrame: { w: 16, h: 16, originX: 0, originY: 0 },
     allLayers: () => layers,
     layerById: (id: string) => byId.get(id) ?? null,
     getRootLayerIds: () => roots ?? layers.filter(layer => layer.scopeId === null).map(layer => layer.id),
+    getActiveLayerId: () => activeId,
     getPageSpec: () => ({ widthMm: 16, heightMm: 16, ppi: 25.4 }),
     getRenderRevision: () => 0,
     getMaskRevision: () => 0,
@@ -114,20 +116,38 @@ describe('layer picking from visible pixels', () => {
     expect(pickId(picker, 16, 4)).toBeNull();
   });
 
-  it('does not treat a shape interior or child pixels as the parent layer', () => {
+  it('does not treat a shape interior as the parent layer', () => {
     const parent = raster('parent', ctx => { ctx.fillStyle = '#00f'; ctx.fillRect(0, 0, 16, 16); });
-    const child = raster('child', ctx => { ctx.fillStyle = '#f00'; ctx.fillRect(0, 0, 6, 6); });
-    child.scopeId = parent.id;
-    parent.scopeLayerIds = [child.id];
     const frame = createShapeLayer('枠', {
       kind: 'rect', x: 2, y: 2, width: 10, height: 10, color: '#0f0',
       strokeWidth: 2, paintMode: 'stroke',
     }, 'stroke');
-    const { picker } = pickerFor([parent, child, frame], [parent.id, frame.id]);
-    expect(pickId(picker, 4, 4)).toBe(child.id);
+    const { picker } = pickerFor([parent, frame], [parent.id, frame.id]);
     expect(pickId(picker, 10, 10)).toBe(parent.id);
     expect(pickId(picker, 7, 7)).toBe(parent.id);
     expect(pickId(picker, 2, 7)).toBe(frame.id);
+  });
+
+  it('picks a canvas as a sealed surface from the outer scope', () => {
+    const canvas = createCanvasLayer('キャンバス', [], 'canvas');
+    const child = raster('child', ctx => { ctx.fillStyle = '#f00'; ctx.fillRect(0, 0, 6, 6); });
+    child.scopeId = canvas.id;
+    canvas.scopeLayerIds = [child.id];
+    canvas.state.hierarchy = [{ kind: 'layer', id: 'node-child', layerId: child.id }];
+    const { picker } = pickerFor([canvas, child], [canvas.id]);
+    expect(pickId(picker, 4, 4)).toBe(canvas.id);
+    expect(pickId(picker, 10, 10)).toBeNull();
+  });
+
+  it('picks inner layers only while editing that canvas', () => {
+    const canvas = createCanvasLayer('キャンバス', [], 'canvas');
+    const child = raster('child', ctx => { ctx.fillStyle = '#f00'; ctx.fillRect(0, 0, 6, 6); });
+    child.scopeId = canvas.id;
+    canvas.scopeLayerIds = [child.id];
+    canvas.state.hierarchy = [{ kind: 'layer', id: 'node-child', layerId: child.id }];
+    const { picker } = pickerFor([canvas, child], [canvas.id], child.id);
+    expect(pickId(picker, 4, 4)).toBe(child.id);
+    expect(pickId(picker, 10, 10)).toBeNull();
   });
 
   it('keeps the current selection on a completely empty click', () => {

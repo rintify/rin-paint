@@ -39,7 +39,7 @@ import { loadFonts } from '../text/render';
 import { pagePixels, validatePageSpec, pngWithPpi } from '../pageSpec';
 import type { PaintEngine } from '../PaintEngine';
 import { SparseRasterSurface } from '../raster/SparseRasterSurface';
-import { hydrateLinkedRecords } from '../entities/linkedRecords';
+import { hydrateDocumentRecords } from '../entities/linkedRecords';
 
 /** Project lifecycle: init, import/export, resize, fonts. */
 export class ProjectService {
@@ -59,7 +59,7 @@ export class ProjectService {
     eng.pageFrame.resize(pixels.width, pixels.height);
     eng.pageFrame.setOrigin(0, 0);
     eng.compositor.syncWorkCanvases();
-    const hydrated = hydrateLinkedRecords(page.layers, await loadBinItems());
+    const hydrated = hydrateDocumentRecords(page.layers, await loadBinItems());
     for (const sl of hydrated) {
       const layer = await restoreLayerFrom(sl, { pageFrame: eng.pageFrame, ppi: this.pageSpec.ppi });
       if (layer) ls.layers.push(layer);
@@ -266,6 +266,7 @@ export class ProjectService {
       };
       await replaceProject(meta, [page]);
       eng.bins.reset();
+      eng.entities.reset();
       pages.activePageId = pageId; pages.pageOrder = [pageId]; pages.thumbnailVersion = 0;
       await eng.links.refreshCatalog();
       setPersistencePageId(pageId);
@@ -321,8 +322,13 @@ export class ProjectService {
     if (!meta) throw new Error('プロジェクトを保存できませんでした');
     const pages = (await Promise.all(meta.pageOrder.map(loadPage))).filter((page): page is SavedPage => !!page);
     if (pages.length !== meta.pageOrder.length) throw new Error('一部のページを読み込めませんでした');
-    const [bins, entities] = await Promise.all([loadBinItems(), loadSharedLayerEntities()]);
-    downloadBlob(await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages, bins, entities }), `rin-paint-${new Date().toISOString().slice(0, 10)}.rinpaint`);
+    const [bins, storedEntities] = await Promise.all([loadBinItems(), loadSharedLayerEntities()]);
+    const packedPages = pages.map(page => ({
+      ...page,
+      layers: hydrateDocumentRecords(page.layers, bins),
+    }));
+    const entities = storedEntities.length ? storedEntities : this.engine.entities.exportedEntities();
+    downloadBlob(await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages: packedPages, bins, entities }), `rin-paint-${new Date().toISOString().slice(0, 10)}.rinpaint`);
   }
 
   async importProject(file: File): Promise<void> {
@@ -351,6 +357,7 @@ export class ProjectService {
       };
       await replaceProject(meta, archive.pages, archive.bins, archive.entities);
       await eng.bins.init();
+      await eng.entities.persist();
       pages.pageOrder = [...meta.pageOrder]; pages.activePageId = meta.activePageId; setPersistencePageId(pages.activePageId);
       await eng.links.refreshCatalog();
       this.pageSpec = { ...proj.pageSpec };
@@ -362,7 +369,7 @@ export class ProjectService {
       eng.compositor.syncWorkCanvases();
       const layers: Layer[] = [];
       const counters = new Map<LayerType, number>();
-      const hydratedProjectLayers = hydrateLinkedRecords(proj.layers, archive.bins);
+      const hydratedProjectLayers = hydrateDocumentRecords(proj.layers, archive.bins);
       for (const pl of hydratedProjectLayers) {
         const index = (counters.get(pl.type) ?? 0) + 1;
         counters.set(pl.type, index);

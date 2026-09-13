@@ -4,6 +4,7 @@ import { createCanvas, type Canvas } from '@napi-rs/canvas';
 import { Compositor } from './Compositor';
 import {
   createAdjustLayer,
+  createCanvasLayer,
   createClipLayer,
   createOutlineLayer,
   createRasterLayer,
@@ -11,7 +12,8 @@ import {
   type Layer,
   type RasterLayer,
 } from '../layers';
-import { composeHomography } from '../../model';
+import { composeHomography, IDENTITY_HOMOGRAPHY } from '../../model';
+import { warpCanvas2DMesh } from '../transform/projectiveWarp';
 import type { PaintEngine } from '../PaintEngine';
 
 const native = new WeakMap<HTMLCanvasElement, Canvas>();
@@ -57,11 +59,12 @@ function createRenderer(layers: Layer[], roots: string[], ppi = 25.4, size = 16)
   const byId = new Map(layers.map(layer => [layer.id, layer]));
   const revisions = new Map<string, number>();
   const engine = {
-    pageFrame: { w: size, h: size },
+    pageFrame: { w: size, h: size, originX: 0, originY: 0 },
     allLayers: () => layers,
     layerById: (id: string) => byId.get(id) ?? null,
     getRootLayerIds: () => roots,
     getPageSpec: () => ({ widthMm: size, heightMm: size, ppi }),
+    isEditingBin: () => false,
     getRenderRevision: (id: string) => revisions.get(id) ?? 0,
     getMaskRevision: (id: string) => revisions.get(id) ?? 0,
     activeTool: () => ({}),
@@ -122,41 +125,53 @@ describe('effect scopes', () => {
     expect(pixel.slice(1)).toEqual([0, 0, 255]);
   });
 
-  it('clips only the parent scope, ignores hidden mask visibility, and leaves later children above the effect', () => {
+  it('clips preceding siblings in the same scope and leaves later siblings above the effect', () => {
     const lower = raster('lower', ctx => { ctx.fillStyle = '#0000ff'; ctx.fillRect(0, 0, 16, 16); });
+    const canvas = createCanvasLayer('キャンバス', [], 'canvas');
     const parent = raster('parent', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 16, 16); });
     const mask = raster('mask', ctx => { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 8, 16); });
     mask.visible = false;
-    mask.scopeId = parent.id;
     const clip = createClipLayer('クリップ', 'clip');
-    clip.scopeId = parent.id;
     clip.state.maskLayerIds = [mask.id];
     const later = raster('later', ctx => { ctx.fillStyle = '#00ff00'; ctx.fillRect(10, 0, 1, 1); });
-    later.scopeId = parent.id;
-    parent.scopeLayerIds = [mask.id, clip.id, later.id];
+    for (const layer of [parent, mask, clip, later]) layer.scopeId = canvas.id;
+    canvas.scopeLayerIds = [parent.id, mask.id, clip.id, later.id];
+    canvas.state.hierarchy = canvas.scopeLayerIds.map(layerId => ({ kind: 'layer' as const, id: `node-${layerId}`, layerId }));
 
-    const result = render([lower, parent, mask, clip, later], [lower.id, parent.id]);
+    const result = render([lower, canvas, parent, mask, clip, later], [lower.id, canvas.id]);
     expect(rgba(result, 2, 2)).toEqual([255, 0, 0, 255]);
     expect(rgba(result, 12, 2)).toEqual([0, 0, 255, 255]);
     expect(rgba(result, 10, 0)).toEqual([0, 255, 0, 255]);
   });
 
-  it('keeps a nested child effect scoped to the parent even when its effect parent is hidden', () => {
-    const lower = raster('lower', ctx => { ctx.fillStyle = '#0000ff'; ctx.fillRect(0, 0, 16, 16); });
-    const parent = raster('parent', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 16, 16); });
+  it('keeps canvas effects from clipping outer siblings', () => {
+    const outer = raster('outer', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 16, 16); });
+    const canvas = createCanvasLayer('キャンバス', [], 'canvas');
+    const inner = raster('inner', ctx => { ctx.fillStyle = '#0000ff'; ctx.fillRect(0, 0, 16, 16); });
     const mask = raster('mask', ctx => { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 8, 16); });
     mask.visible = false;
-    const skipped = createClipLayer('非表示クリップ', 'skipped');
-    skipped.visible = false;
-    skipped.scopeId = parent.id;
-    const nested = createClipLayer('子クリップ', 'nested');
-    nested.scopeId = skipped.id;
-    nested.state.maskLayerIds = [mask.id];
-    skipped.scopeLayerIds = [nested.id];
-    parent.scopeLayerIds = [skipped.id];
-    const result = render([lower, parent, mask, skipped, nested], [lower.id, parent.id, mask.id]);
+    const clip = createClipLayer('クリップ', 'clip');
+    clip.state.maskLayerIds = [mask.id];
+    for (const layer of [inner, mask, clip]) layer.scopeId = canvas.id;
+    canvas.scopeLayerIds = [inner.id, mask.id, clip.id];
+    canvas.state.hierarchy = canvas.scopeLayerIds.map(layerId => ({ kind: 'layer' as const, id: `node-${layerId}`, layerId }));
+    const result = render([outer, canvas, inner, mask, clip], [outer.id, canvas.id]);
+    expect(rgba(result, 2, 2)).toEqual([0, 0, 255, 255]);
+    expect(rgba(result, 12, 2)).toEqual([255, 0, 0, 255]);
+  });
+
+  it('lets a later effect act on every preceding sibling', () => {
+    const lower = raster('lower', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 8, 16); });
+    const upper = raster('upper', ctx => { ctx.fillStyle = '#0000ff'; ctx.fillRect(8, 0, 8, 16); });
+    const mask = raster('mask', ctx => { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 16, 8); });
+    mask.visible = false;
+    const clip = createClipLayer('クリップ', 'clip');
+    clip.state.maskLayerIds = [mask.id];
+    const result = render([lower, upper, mask, clip], [lower.id, upper.id, mask.id, clip.id]);
     expect(rgba(result, 2, 2)).toEqual([255, 0, 0, 255]);
     expect(rgba(result, 12, 2)).toEqual([0, 0, 255, 255]);
+    expect(rgba(result, 2, 12)).toEqual([255, 255, 255, 255]);
+    expect(rgba(result, 12, 12)).toEqual([255, 255, 255, 255]);
   });
 
   it('uses layer opacity as clip strength and treats no mask as a complete no-op', () => {
@@ -420,15 +435,17 @@ describe('effect scopes', () => {
     expect(compositor.lastCompositedPixels).toBeLessThan(16 * 16);
   });
 
-  it('does not expand damage for an outline isolated in another child scope', () => {
+  it('does not expand damage for an outline isolated in another canvas scope', () => {
     const source = raster('source', ctx => { ctx.fillStyle = '#f00'; ctx.fillRect(0, 0, 16, 16); });
+    const canvas = createCanvasLayer('キャンバス', [], 'canvas');
     const parent = raster('parent', ctx => { ctx.fillStyle = '#fff'; ctx.fillRect(12, 12, 1, 1); });
     const outline = createOutlineLayer('縁どり', 'outline');
-    outline.scopeId = parent.id;
-    parent.scopeLayerIds = [outline.id];
+    for (const layer of [parent, outline]) layer.scopeId = canvas.id;
+    canvas.scopeLayerIds = [parent.id, outline.id];
+    canvas.state.hierarchy = canvas.scopeLayerIds.map(layerId => ({ kind: 'layer' as const, id: `node-${layerId}`, layerId }));
     const { main, compositor, revisions } = createRenderer(
-      [source, parent, outline],
-      [source.id, parent.id],
+      [source, canvas, parent, outline],
+      [source.id, canvas.id],
     );
     source.runtime.ctx.fillStyle = '#00f';
     source.runtime.ctx.fillRect(3, 4, 1, 1);
@@ -468,7 +485,7 @@ describe('effect scopes', () => {
       let transformA = Number.NaN;
       let transformD = Number.NaN;
       const engine = {
-        pageFrame: { w: 16, h: 16 },
+        pageFrame: { w: 16, h: 16, originX: 0, originY: 0 },
         view: { x: 5, y: 6, rot: 0, displayScale: () => 2 },
         activeTool: () => ({ drawOverlay: (ctx: CanvasRenderingContext2D) => {
           const value = ctx.getTransform();
@@ -495,5 +512,37 @@ describe('effect scopes', () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('projective warp fallback', () => {
+  it('rejects a singular matrix instead of drawing a mesh', () => {
+    const source = document.createElement('canvas');
+    source.width = source.height = 4;
+    const target = document.createElement('canvas');
+    target.width = target.height = 4;
+    expect(warpCanvas2DMesh(
+      source,
+      target.getContext('2d')!,
+      [1, 0, 0, 0, 1, 0, 0, 0, 0],
+      { interpolation: 'linear', meshDivisions: 2 },
+    )).toBe(false);
+  });
+
+  it('keeps identity content through a 2D mesh', () => {
+    const source = raster('source', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 4, 4); }, 4);
+    const target = document.createElement('canvas');
+    target.width = target.height = 4;
+    expect(warpCanvas2DMesh(
+      source.runtime.canvas,
+      target.getContext('2d')!,
+      [...IDENTITY_HOMOGRAPHY],
+      { interpolation: 'nearest', meshDivisions: 2 },
+    )).toBe(true);
+    const pixel = rgba(target, 1, 1);
+    expect(pixel[0]).toBe(255);
+    expect(pixel[1]).toBe(0);
+    expect(pixel[2]).toBe(0);
+    expect(pixel[3]).toBeGreaterThan(0);
   });
 });

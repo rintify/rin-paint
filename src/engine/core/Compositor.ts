@@ -361,25 +361,27 @@ export class Compositor {
       const layer = this.engine.layerById(id);
       if (!layer) continue;
       const effect = layerHandler(layer).renderer.effect;
-      if (effect) {
-        if (layer.visible && current) {
-          const padding = Math.max(0, effect.paddingPx?.(layer as never, env) ?? 0);
-          if (padding) current = { x: current.x - padding, y: current.y - padding, w: current.w + padding * 2, h: current.h + padding * 2 };
-          if (layer.type === 'clip' && layer.opacity >= 1 && layer.state.maskLayerIds.length) {
-            let masks: RenderRect | null = null;
-            for (const maskId of layer.state.maskLayerIds) {
-              const maskLayer = this.engine.layerById(maskId);
-              if (maskLayer) masks = unionBounds(masks, this.ownVisibleBounds(maskLayer));
+        if (layer.type === 'canvas') {
+          current = this.sequenceVisibleBounds(
+            layer.state.hierarchy.length ? flattenHierarchy(layer.state.hierarchy) : layer.scopeLayerIds,
+            current,
+          );
+        } else if (effect) {
+          if (layer.visible && current) {
+            const padding = Math.max(0, effect.paddingPx?.(layer as never, env) ?? 0);
+            if (padding) current = { x: current.x - padding, y: current.y - padding, w: current.w + padding * 2, h: current.h + padding * 2 };
+            if (layer.type === 'clip' && layer.opacity >= 1 && layer.state.maskLayerIds.length) {
+              let masks: RenderRect | null = null;
+              for (const maskId of layer.state.maskLayerIds) {
+                const maskLayer = this.engine.layerById(maskId);
+                if (maskLayer) masks = unionBounds(masks, this.ownVisibleBounds(maskLayer));
+              }
+              if (masks) current = intersectBounds(current, masks);
             }
-            if (masks) current = intersectBounds(current, masks);
           }
+        } else {
+          current = unionBounds(current, this.ownVisibleBounds(layer));
         }
-        current = this.sequenceVisibleBounds(layer.scopeLayerIds, current);
-      } else {
-        let subtree = this.ownVisibleBounds(layer);
-        subtree = this.sequenceVisibleBounds(layer.scopeLayerIds, subtree);
-        current = unionBounds(current, subtree);
-      }
     }
     return current;
   }
@@ -408,14 +410,9 @@ export class Compositor {
     const participates = (layer: Layer) => layer.visible
       && !(layer.type === 'text' && layer.id === editingTextId)
       && (included === null || included.has(layer.id));
-    const activeEffectInChain = (layer: Layer): boolean => {
-      if (!layerHandler(layer).renderer.effect) return false;
-      if (participates(layer) || capture?.effectId === layer.id || hit?.layerId === layer.id) return true;
-      return layer.scopeLayerIds.some(id => {
-        const child = eng.layerById(id);
-        return !!child && activeEffectInChain(child);
-      });
-    };
+    const canvasChildren = (layer: Layer) => layer.type === 'canvas'
+      ? (layer.state.hierarchy.length ? flattenHierarchy(layer.state.hierarchy) : layer.scopeLayerIds)
+      : [];
     const resetTarget = (target: CanvasRenderingContext2D) => {
       target.setTransform(1, 0, 0, 1, 0, 0);
       target.globalAlpha = 1;
@@ -484,8 +481,7 @@ export class Compositor {
           if (!layer.visible || (included !== null && !included.has(layer.id))) continue;
           const scope = this.borrowCanvas(activeRegion.w, activeRegion.h);
           const localState = { revision: mixRevision(2166136261, layer.id) };
-          const children = layer.state.hierarchy.length ? flattenHierarchy(layer.state.hierarchy) : layer.scopeLayerIds;
-          renderSequence(children, scope.ctx, scope.canvas, localState, activeRegion, activeEnv);
+          renderSequence(canvasChildren(layer), scope.ctx, scope.canvas, localState, activeRegion, activeEnv);
           if (hit?.layerId === layer.id && !hit.contribution) {
             const contribution = this.borrowCanvas(activeRegion.w, activeRegion.h);
             contribution.ctx.drawImage(scope.canvas, 0, 0);
@@ -544,60 +540,14 @@ export class Compositor {
               retainHitCoverage(targetCanvas);
             }
           }
-          if (renderSequence(layer.scopeLayerIds, target, targetCanvas, state, activeRegion, activeEnv)) return true;
           continue;
         }
 
-        const hasActiveDirectEffect = layer.scopeLayerIds.some(childId => {
-          const child = eng.layerById(childId);
-          return !!child && activeEffectInChain(child);
-        });
-        if (hasActiveDirectEffect) {
-          const measured = !capture && !hit ? this.sequenceVisibleBounds([layer.id]) : null;
-          const clipped = measured ? intersectBounds(measured, activeRegion) : activeRegion;
-          if (!clipped) continue;
-          const localRegion = {
-            x: Math.max(0, Math.floor(clipped.x)),
-            y: Math.max(0, Math.floor(clipped.y)),
-            w: Math.max(1, Math.ceil(clipped.x + clipped.w) - Math.max(0, Math.floor(clipped.x))),
-            h: Math.max(1, Math.ceil(clipped.y + clipped.h) - Math.max(0, Math.floor(clipped.y))),
-          };
-          const localEnv = localRegion.x === activeRegion.x && localRegion.y === activeRegion.y && localRegion.w === activeRegion.w && localRegion.h === activeRegion.h
-            ? activeEnv
-            : this.drawEnv(drawToolOverlay, localRegion.w, localRegion.h, localRegion.x, localRegion.y);
-          const localState = {
-            revision: mixRevision(2166136261, `${layer.id}:${eng.getRenderRevision?.(layer.id) ?? 0}`),
-          };
-          const scope = this.borrowCanvas(localRegion.w, localRegion.h);
-          const local = scope.ctx;
-          local.save();
-          local.setTransform(1, 0, 0, 1, 0, 0);
-          resetTarget(local);
-          if (participates(layer)) {
-            captureContent(scope.canvas, layer);
-            drawLayer(local, layer, localRegion, localEnv);
-          }
-          const stopped = renderSequence(layer.scopeLayerIds, local, scope.canvas, localState, localRegion, localEnv);
-          local.restore();
-          if (stopped) {
-            scope.release();
-            return true;
-          }
-          target.save();
-          resetTarget(target);
-          target.drawImage(local.canvas, localRegion.x - activeRegion.x, localRegion.y - activeRegion.y);
-          target.restore();
-          if (hit?.target === scope.canvas) hit.target = targetCanvas;
-          scope.release();
-          state.revision = mixRevision(state.revision, localState.revision);
-          continue;
-        }
         if (participates(layer)) {
           captureContent(targetCanvas, layer);
           drawLayer(target, layer, activeRegion, activeEnv);
           state.revision = mixRevision(state.revision, `${layer.id}:${eng.getRenderRevision?.(layer.id) ?? 0}`);
         }
-        if (renderSequence(layer.scopeLayerIds, target, targetCanvas, state, activeRegion, activeEnv)) return true;
       }
       return false;
     };
@@ -616,7 +566,9 @@ export class Compositor {
   }
 
   private compositeFull(ctx: CanvasRenderingContext2D, drawToolOverlay: boolean): void {
-    const { w, h, originX: x, originY: y } = this.engine.pageFrame;
+    const { w, h } = this.engine.pageFrame;
+    const x = this.engine.pageFrame.originX ?? 0;
+    const y = this.engine.pageFrame.originY ?? 0;
     const region = { x, y, w, h };
     const art = this.renderArt(region, null, drawToolOverlay);
     this.artCacheCtx.clearRect(0, 0, w, h);
@@ -628,14 +580,6 @@ export class Compositor {
 
   private effectPaddingByLayer(env: LayerDrawEnv): Map<string, number> {
     const eng = this.engine;
-    const activeEffectInChain = (layer: Layer): boolean => {
-      const effect = layerHandler(layer).renderer.effect;
-      if (effect && layer.visible) return true;
-      return layer.scopeLayerIds.some(id => {
-        const child = eng.layerById(id);
-        return !!child && activeEffectInChain(child);
-      });
-    };
     const merge = (target: Map<string, number>, source: Map<string, number>) => {
       for (const [id, padding] of source) target.set(id, Math.max(target.get(id) ?? 0, padding));
     };
@@ -643,6 +587,12 @@ export class Compositor {
       for (const id of ids) {
         const layer = eng.layerById(id);
         if (!layer) continue;
+        if (layer.type === 'canvas') {
+          const local = new Map<string, number>();
+          visit(layer.state.hierarchy.length ? flattenHierarchy(layer.state.hierarchy) : layer.scopeLayerIds, local);
+          merge(state, local);
+          continue;
+        }
         const effect = layerHandler(layer).renderer.effect;
         if (effect) {
           if (layer.visible) {
@@ -652,21 +602,9 @@ export class Compositor {
               state.set(dependencyId, Math.max(state.get(dependencyId) ?? 0, padding));
             }
           }
-          visit(layer.scopeLayerIds, state);
           continue;
         }
-        if (layer.scopeLayerIds.some(childId => {
-          const child = eng.layerById(childId);
-          return !!child && activeEffectInChain(child);
-        })) {
-          const local = new Map<string, number>();
-          if (layer.visible) local.set(layer.id, 0);
-          visit(layer.scopeLayerIds, local);
-          merge(state, local);
-        } else {
-          if (layer.visible) state.set(layer.id, Math.max(state.get(layer.id) ?? 0, 0));
-          visit(layer.scopeLayerIds, state);
-        }
+        if (layer.visible) state.set(layer.id, Math.max(state.get(layer.id) ?? 0, 0));
       }
     };
     const result = new Map<string, number>();
@@ -720,7 +658,7 @@ export class Compositor {
     ctx.filter = 'none';
     if (clearAll) ctx.clearRect(0, 0, w, h);
     else ctx.clearRect(region.x, region.y, region.w, region.h);
-    if (!this.engine.isEditingBin()) {
+    if (!this.engine.isEditingBin?.()) {
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(region.x, region.y, region.w, region.h);
     }
@@ -772,9 +710,11 @@ export class Compositor {
       centerY - b * (eng.pageFrame.originX + eng.pageFrame.w / 2) - d * (eng.pageFrame.originY + eng.pageFrame.h / 2),
     );
     ctx.save();
-    ctx.beginPath();
-    ctx.rect(eng.pageFrame.originX, eng.pageFrame.originY, eng.pageFrame.w, eng.pageFrame.h);
-    ctx.clip();
+    if (!eng.isEditingBin?.()) {
+      ctx.beginPath();
+      ctx.rect(eng.pageFrame.originX, eng.pageFrame.originY, eng.pageFrame.w, eng.pageFrame.h);
+      ctx.clip();
+    }
     this.paintToolOverlays(eng, ctx);
     eng.drawActiveShapeHandles(ctx);
     eng.drawLoupeIfAny(ctx);

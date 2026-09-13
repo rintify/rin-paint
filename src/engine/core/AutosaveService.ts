@@ -34,32 +34,33 @@ export class AutosaveService {
   flushSave(): Promise<void> {
     const eng = this.engine;
     if (!this.initialized) return Promise.resolve();
-    if (eng.isBusy()) return this.saving ?? Promise.resolve();
     if (this.saveTimer !== null) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
-    if (eng.hasOpenSession()) return Promise.resolve();
-    if (this.saving) return this.saving;
-    let failed = false;
-    this.saving = (async () => {
-      while (this.persistedRevision < this.saveRevision) {
-        const targetRevision = this.saveRevision;
-        try {
-          await this.saveSnapshot();
-          this.persistedRevision = targetRevision;
-        } catch {
-          failed = true;
-          break;
+    const run = async (): Promise<void> => {
+      if (this.saving) await this.saving;
+      if (eng.isBusy() || eng.hasOpenSession()) return;
+      if (this.persistedRevision >= this.saveRevision) return;
+      let failed = false;
+      this.saving = (async () => {
+        while (this.persistedRevision < this.saveRevision) {
+          const targetRevision = this.saveRevision;
+          try {
+            await this.saveSnapshot();
+            this.persistedRevision = targetRevision;
+          } catch {
+            failed = true;
+            break;
+          }
         }
-      }
-    })().finally(() => {
-      this.saving = null;
-      if (!failed && this.persistedRevision < this.saveRevision) {
-        queueMicrotask(() => void this.flushSave());
-      }
-    });
-    return this.saving;
+      })().finally(() => {
+        this.saving = null;
+      });
+      await this.saving;
+      if (!failed && this.persistedRevision < this.saveRevision) await run();
+    };
+    return run();
   }
 
   async saveSnapshot(): Promise<void> {
@@ -112,6 +113,7 @@ export class AutosaveService {
     };
     await savePage(page);
     eng.links.noteSavedPage(page);
+    await eng.entities.persist();
     this.scheduleStorageRefresh();
   }
 

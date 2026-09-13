@@ -147,6 +147,11 @@ export const transformLayerType: LayerDefinition<'transform'> = {
         ...state,
         interpolation: value === 'nearest' || value === 'cubic' ? value : 'linear',
       }),
+    }, {
+      id: 'transform.reset', semanticId: 'transform.reset', groupId: 'transform', label: 'リセット',
+      editor: { kind: 'switch', trueLabel: 'リセット', falseLabel: 'リセット' }, surfaces: ['single', 'multi'] as const,
+      read: () => false,
+      write: (state: TransformState) => ({ ...state, matrix: [...IDENTITY_HOMOGRAPHY] as Homography }),
     }],
   ),
   capabilities: {
