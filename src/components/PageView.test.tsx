@@ -6,7 +6,7 @@ import { EngineProvider } from './EngineContext';
 import { useStore } from '../state/store';
 import type { PaintEngine } from '../engine/PaintEngine';
 vi.mock('./TextEditor', () => ({ TextEditor: () => null }));
-import { CanvasView } from './CanvasView';
+import { PageView } from './PageView';
 
 const setConstrained = vi.hoisted(() => vi.fn());
 const mockEngine = vi.hoisted(() => ({
@@ -32,7 +32,7 @@ beforeEach(() => {
     shapeHandleCanDelete: true,
     shapeHandleIsVertex: true,
     shapeHandleEdgeConstrained: false,
-    canvasW: 160, canvasH: 120,
+    pageW: 160, pageH: 120,
   });
   container = document.body.appendChild(document.createElement('div'));
   root = createRoot(container);
@@ -45,7 +45,7 @@ afterEach(async () => {
 
 describe('polygon vertex edge constraint UI', () => {
   it('shows the follow-edge toggle only while a vertex is selected and resets with selection', async () => {
-    await act(async () => root.render(<EngineProvider engine={mockEngine}><CanvasView /></EngineProvider>));
+    await act(async () => root.render(<EngineProvider engine={mockEngine}><PageView /></EngineProvider>));
     const toggle = [...container.querySelectorAll('button')].find(button => button.textContent === '辺に沿う');
     expect(toggle).not.toBeNull();
     expect(toggle!.getAttribute('aria-pressed')).toBe('false');

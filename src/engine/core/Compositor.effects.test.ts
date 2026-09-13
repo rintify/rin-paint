@@ -59,7 +59,7 @@ function createRenderer(layers: Layer[], roots: string[], ppi = 25.4, size = 16)
     allLayers: () => layers,
     layerById: (id: string) => byId.get(id) ?? null,
     getRootLayerIds: () => roots,
-    getCanvasSpec: () => ({ widthMm: size, heightMm: size, ppi }),
+    getPageSpec: () => ({ widthMm: size, heightMm: size, ppi }),
     getRenderRevision: (id: string) => revisions.get(id) ?? 0,
     getMaskRevision: (id: string) => revisions.get(id) ?? 0,
     activeTool: () => ({}),

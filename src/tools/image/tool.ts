@@ -47,7 +47,7 @@ export class ImageTool implements Tool {
   }
 
   private boxPx(): { width: number; height: number } {
-    return imageToolBoxPx(this.eng.activeToolSettings()?.settings, this.eng.getCanvasSpec().ppi);
+    return imageToolBoxPx(this.eng.activeToolSettings()?.settings, this.eng.getPageSpec().ppi);
   }
 
   private async placeAt(point: StrokePoint): Promise<void> {

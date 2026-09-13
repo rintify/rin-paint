@@ -7,7 +7,7 @@ export const shortcutDefinitions = [
   { id: 'selection.rename', category: '選択', label: '選択中の名称を変更', defaultBinding: 'Mod+Enter' },
   { id: 'selection.delete', category: '選択', label: '選択中のレイヤー／ツールを削除・グループを解除', defaultBinding: 'Delete' },
   { id: 'view.reset', category: '表示', label: '表示位置をリセット', defaultBinding: 'Mod+Digit0' },
-  { id: 'view.pan', category: '表示', label: 'キャンバスを移動', defaultBinding: 'Space' },
+  { id: 'view.pan', category: '表示', label: 'ページを移動', defaultBinding: 'Space' },
   { id: 'operation.cancel', category: '操作', label: '現在の操作をキャンセル', defaultBinding: 'Escape' },
 ] as const;
 

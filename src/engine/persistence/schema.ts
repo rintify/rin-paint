@@ -116,7 +116,7 @@ function isAtomicOp(value: unknown): value is PersistedAtomicOp {
       };
       return side(op.before) && side(op.after);
     }
-    case 'canvasChange':
+    case 'pageChange':
       return !!op.before && !!op.after;
     case 'layerMerge':
       return (
@@ -187,7 +187,7 @@ export function isSavedPage(value: unknown): value is SavedPage {
   const p = value as Partial<SavedPage>;
   return (
     typeof p.id === 'string' &&
-    !!p.canvasSpec &&
+    !!p.pageSpec &&
     Array.isArray(p.rootLayerIds) &&
     Array.isArray(p.layers) && p.layers.every(isLayerSnapshot) &&
     typeof p.activeLayerId === 'string' &&

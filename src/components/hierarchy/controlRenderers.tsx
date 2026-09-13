@@ -2,7 +2,7 @@ import { FormControl, MenuItem, Select, Stack, Switch, Typography } from '@mui/m
 import type { ReactNode } from 'react';
 import { STANDARD_FONTS } from '../../engine/text/render';
 import { clampSizeMm, formatDeg, mmToPx, pxToMm, roundDeg, roundMm } from '../../engine/units';
-import { CanvasMmField } from '../CanvasMmField';
+import { PageMmField } from '../PageMmField';
 import { ColorField } from '../ColorField';
 import { NumericField } from '../NumericField';
 import { SliderField } from '../SliderField';
@@ -91,7 +91,7 @@ function numberRenderer({ parameter, value, mixed, labelColor, trailing, onCommi
       <LabeledControl label={parameter.label} color={labelColor}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
           {unit?.kind === 'canvas-mm' ? (
-            <CanvasMmField
+            <PageMmField
               size="small"
               valuePx={typeof value === 'number' ? value : null}
               minPx={parameter.editor.min}
@@ -121,7 +121,7 @@ function numberRenderer({ parameter, value, mixed, labelColor, trailing, onCommi
   }
   if (unit?.kind === 'canvas-mm') {
     return (
-      <CanvasMmField
+      <PageMmField
         size="small"
         label={parameter.label}
         valuePx={typeof value === 'number' ? value : null}

@@ -1,4 +1,4 @@
-import type { LayerAddress, LayerParameterLink, CanvasSpec } from '../../model';
+import type { LayerAddress, LayerParameterLink, PageSpec } from '../../model';
 import type { LayerProps, LayerSnapshot } from '../layer-types/definition';
 import { HISTORY_VERSION } from '../persistence/version';
 import { opBytes } from './bytes';
@@ -74,7 +74,7 @@ export interface LayerContentOp {
 }
 
 export type AtomicOp =
-  | { kind: 'canvasChange'; before: CanvasSnapshot; after: CanvasSnapshot }
+  | { kind: 'pageChange'; before: PageSnapshot; after: PageSnapshot }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
   | { kind: 'layerAdd'; location: LayerLocation; snapshot: LayerSnapshot }
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: LayerSnapshot[] }
@@ -104,13 +104,13 @@ export interface PersistedLayerSnapshot extends Omit<LayerSnapshot, 'canvas'> {
   content?: Blob;
 }
 
-export interface CanvasSnapshot {
-  spec: CanvasSpec;
+export interface PageSnapshot {
+  spec: PageSpec;
   layers: LayerSnapshot[];
   roots: string[];
   activeId: string;
 }
-export interface PersistedCanvasSnapshot extends Omit<CanvasSnapshot, 'layers'> {
+export interface PersistedPageSnapshot extends Omit<PageSnapshot, 'layers'> {
   layers: PersistedLayerSnapshot[];
 }
 
@@ -136,7 +136,7 @@ export interface PersistedLayerReplaceOp extends Omit<LayerReplaceOp, 'before' |
 }
 
 export type PersistedAtomicOp =
-  | { kind: 'canvasChange'; before: PersistedCanvasSnapshot; after: PersistedCanvasSnapshot }
+  | { kind: 'pageChange'; before: PersistedPageSnapshot; after: PersistedPageSnapshot }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
   | { kind: 'layerAdd'; location: LayerLocation; snapshot: PersistedLayerSnapshot }
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: PersistedLayerSnapshot[] }
@@ -215,7 +215,7 @@ export class HistoryTree {
     };
     const persistAtomic = async (op: AtomicOp): Promise<PersistedAtomicOp> => {
       switch (op.kind) {
-        case 'canvasChange':
+        case 'pageChange':
           return {
             ...op,
             before: { ...op.before, layers: await Promise.all(op.before.layers.map(snapshot)) },

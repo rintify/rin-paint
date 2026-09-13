@@ -35,7 +35,7 @@
 }
 
 .tool-settings-pane,
-.layers-pane {
+.hierarchy-pane {
   flex: 1 1 50%;
   min-height: 0;
   display: flex;
@@ -132,7 +132,7 @@
   border-top: 1px solid var(--border);
 }
 
-.layers-section {
+.hierarchy-section {
   flex: 1;
   display: flex;
   flex-direction: column;

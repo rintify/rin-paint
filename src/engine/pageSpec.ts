@@ -1,12 +1,12 @@
-import { MAX_ART_SIZE, MIN_ART_SIZE, type CanvasSpec, type ShapeParams } from '../types';
+import { MAX_ART_SIZE, MIN_ART_SIZE, type PageSpec, type ShapeParams } from '../types';
 import { scaleShapeBy } from './shapes';
 
-export function canvasPixels(spec: CanvasSpec): { width: number; height: number } {
+export function pagePixels(spec: PageSpec): { width: number; height: number } {
   return { width: Math.round(spec.widthMm * spec.ppi / 25.4), height: Math.round(spec.heightMm * spec.ppi / 25.4) };
 }
-export function validateCanvasSpec(spec: CanvasSpec): string | null {
+export function validatePageSpec(spec: PageSpec): string | null {
   if (![spec.widthMm, spec.heightMm, spec.ppi].every(v => Number.isFinite(v) && v > 0)) return '幅・高さ・ppiに正の数を入力してください';
-  const { width, height } = canvasPixels(spec);
+  const { width, height } = pagePixels(spec);
   return width < MIN_ART_SIZE || height < MIN_ART_SIZE || width > MAX_ART_SIZE || height > MAX_ART_SIZE
     ? `各辺が${MIN_ART_SIZE}〜${MAX_ART_SIZE}pxになるサイズ・ppiを指定してください` : null;
 }

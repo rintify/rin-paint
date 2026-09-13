@@ -1,6 +1,6 @@
 export * from './adjust';
 export * from './blend';
-export * from './canvas';
+export * from './page';
 export * from './image';
 export * from './layer';
 export * from './outline';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchingPaperTemplate, paperSizeDimensions, PAPER_SIZE_TEMPLATES } from './canvas';
+import { matchingPaperTemplate, paperSizeDimensions, PAPER_SIZE_TEMPLATES } from './page';
 
 describe('paper size templates', () => {
   it('matches portrait and landscape A4', () => {
@@ -7,7 +7,7 @@ describe('paper size templates', () => {
     expect(matchingPaperTemplate(297, 210)?.id).toBe('a4');
   });
 
-  it('does not match the default screen-like canvas', () => {
+  it('does not match the default screen-like page', () => {
     expect(matchingPaperTemplate((1600 * 25.4) / 300, (1200 * 25.4) / 300)).toBeNull();
   });
 

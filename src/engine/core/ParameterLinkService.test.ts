@@ -29,7 +29,7 @@ function setup(layers: Layer[]) {
         applyLayerProps(layer, props);
       },
     },
-    getCanvasSpec: () => ({ widthMm: 10, heightMm: 10, ppi: 254 }),
+    getPageSpec: () => ({ widthMm: 10, heightMm: 10, ppi: 254 }),
     history: { push: (op: unknown) => history.push(op) },
     committed: () => undefined,
   } as unknown as PaintEngine;

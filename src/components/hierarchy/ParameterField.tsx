@@ -17,7 +17,7 @@ export function ParameterField({
 }) {
   const engine = useEngine();
   const fonts = useStore(s => s.fonts);
-  const ppi = useStore(s => s.canvasSpec.ppi);
+  const ppi = useStore(s => s.pageSpec.ppi);
   const values = layers.map(layer => {
     const own = parameterById(hostFromLayer(layer), parameter.semanticId) ?? parameter;
     return own.read(layer, layer.state);

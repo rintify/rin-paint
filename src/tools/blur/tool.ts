@@ -32,7 +32,7 @@ export class BlurTool implements Tool {
     if (!layer) return;
     this.layer = layer;
     this.eng.captureBefore(layer);
-    const size = this.eng.activeToolSettings()?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getCanvasSpec().ppi);
+    const size = this.eng.activeToolSettings()?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getPageSpec().ppi);
     this.radius = Math.max(3, size * 0.5);
     this.blurPx = Math.max(1, size * 0.14);
     this.rect = emptyRect();

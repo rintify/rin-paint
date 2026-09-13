@@ -1,5 +1,5 @@
 import { TRANSPARENT, type ShapePaintMode, type ShapeParams, type ShapeState } from '../../model';
-import { scaleShape } from '../canvasSpec';
+import { scaleShape } from '../pageSpec';
 import { createShapeLayer } from '../layers';
 import {
   cloneShape,

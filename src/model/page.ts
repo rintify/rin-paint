@@ -1,10 +1,10 @@
-export interface CanvasSpec {
+export interface PageSpec {
   widthMm: number;
   heightMm: number;
   ppi: number;
 }
 
-export const DEFAULT_CANVAS: CanvasSpec = {
+export const DEFAULT_PAGE: PageSpec = {
   widthMm: (1600 * 25.4) / 300,
   heightMm: (1200 * 25.4) / 300,
   ppi: 300,

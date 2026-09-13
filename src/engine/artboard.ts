@@ -1,4 +1,4 @@
-import { MAX_ART_SIZE, MIN_ART_SIZE } from '../model/canvas';
+import { MAX_ART_SIZE, MIN_ART_SIZE } from '../model/page';
 
 /** アートボードのピクセルサイズ。エンジンが所有し、作業キャンバス・ツールが参照する。 */
 export class Artboard {

@@ -48,7 +48,7 @@ function compositorFor(layers: Layer[]): Compositor {
     allLayers: () => layers,
     layerById: (id: string) => byId.get(id) ?? null,
     getRootLayerIds: () => layers.filter((layer) => layer.parentId === null).map((layer) => layer.id),
-    getCanvasSpec: () => ({ widthMm: 16, heightMm: 16, ppi: 25.4 }),
+    getPageSpec: () => ({ widthMm: 16, heightMm: 16, ppi: 25.4 }),
     getRenderRevision: () => 0,
     getMaskRevision: () => 0,
     activeTool: () => ({}),

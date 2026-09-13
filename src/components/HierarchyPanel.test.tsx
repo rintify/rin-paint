@@ -6,7 +6,7 @@ import { useStore } from '../state/store';
 import type { LayerMeta } from '../types';
 import type { PaintEngine } from '../engine/PaintEngine';
 import { EngineProvider } from './EngineContext';
-import { LayerPanel, maskCandidateRows } from './LayerPanel';
+import { HierarchyPanel, maskCandidateRows } from './HierarchyPanel';
 
 const actions = vi.hoisted(() => ({
   remove: vi.fn(),
@@ -152,7 +152,7 @@ function renderPanel() {
   return act(async () =>
     root.render(
       <EngineProvider engine={mockEngine}>
-        <LayerPanel />
+        <HierarchyPanel />
       </EngineProvider>,
     ));
 }
@@ -389,7 +389,7 @@ describe('mask interactions', () => {
     });
     await renderPanel();
     animate.mockClear();
-    await click(container.querySelector('[aria-label="直線をレイヤー一覧で表示"]'));
+    await click(container.querySelector('[aria-label="直線をヒエラルキーで表示"]'));
     expect((animate.mock.calls as unknown as [Keyframe[]][]).some(([frames]) =>
       Array.isArray(frames) && frames.some(frame => frame.transform === 'scale(1.06)'),
     )).toBe(true);

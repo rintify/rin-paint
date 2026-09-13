@@ -280,11 +280,11 @@ describe('canvas history and new project', () => {
     engine.commitRasterEdit(engine.activeRaster()!, { minX: 1200, minY: 900, maxX: 1220, maxY: 920 }, '描画');
     engine.commitLayerProps(id, { opacity: 1 }, { opacity: .6 }, 'opacity');
     const smaller = { widthMm: 800 * 25.4 / 300, heightMm: 600 * 25.4 / 300, ppi: 300 };
-    await engine.resizeCanvas(smaller);
+    await engine.resizePage(smaller);
     expect(engine.getLayerCanvas(id)!.width).toBe(800);
     await (engine as unknown as { flushSave(): Promise<void> }).flushSave();
     const { page: persisted } = await loadActivePersisted();
-    expect(persisted?.history?.nodes.some(n => n.op?.kind === 'canvasChange')).toBe(true);
+    expect(persisted?.history?.nodes.some(n => n.op?.kind === 'pageChange')).toBe(true);
     const { HistoryTree } = await import('./history/historyTree');
     const restored = new HistoryTree();
     expect(restored.restore(persisted?.history)).toBe(true);
@@ -309,7 +309,7 @@ describe('canvas history and new project', () => {
     const text: TextParams = { ...newText(30, 40, '#000000', 200, 100), content: '文字' };
     engine.addTextLayer(text);
     const textId = useStore.getState().activeLayerId;
-    await engine.resizeCanvas({ ...useStore.getState().canvasSpec, ppi: 600 });
+    await engine.resizePage({ ...useStore.getState().pageSpec, ppi: 600 });
     expect(engine.getLayerCanvas(raster)!.width).toBe(1600);
     expect([...engine.getLayerCanvas(raster)!.getContext('2d')!.getImageData(30, 30, 1, 1).data]).toEqual([0, 255, 0, 255]);
     expect(engine.getShape(shapeId)).toMatchObject({ x1: 20, y1: 40, strokeWidth: 6 });
@@ -317,14 +317,14 @@ describe('canvas history and new project', () => {
     await engine.undo();
     expect(engine.getText(textId)).toEqual(text);
     await engine.redo();
-    expect(useStore.getState().canvasSpec.ppi).toBe(600);
+    expect(useStore.getState().pageSpec.ppi).toBe(600);
   });
   it('new project clears project data atomically and rejects delayed reference writes', async () => {
     const oldEpoch = referenceEpoch();
     const reference = { blob: new Blob(['image']), name: 'reference', naturalWidth: 1, naturalHeight: 1, x: 0, y: 0, width: 100, rotation: 0, opacity: 1, locked: false };
     await saveReferenceImage(reference, oldEpoch);
     await addFrame({ t: 1, blob: new Blob(['frame']) });
-    const spec = useStore.getState().canvasSpec;
+    const spec = useStore.getState().pageSpec;
     const tools = structuredClone(useStore.getState().tools);
     await engine.newProject();
     await saveReferenceImage(reference, oldEpoch);
@@ -332,7 +332,7 @@ describe('canvas history and new project', () => {
     expect(page?.layers).toHaveLength(1);
     expect(page?.history?.nodes).toHaveLength(1);
     expect(meta?.fonts).toEqual([]);
-    expect(page?.canvasSpec).toEqual(spec);
+    expect(page?.pageSpec).toEqual(spec);
     expect(useStore.getState().tools).toEqual(tools);
     expect(await frameCount()).toBe(0);
     expect(await loadReferenceImage()).toBeUndefined();

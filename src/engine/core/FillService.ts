@@ -59,7 +59,7 @@ export class FillService {
         seedX: point.x,
         seedY: point.y,
         tolerance: settings.colorTolerance,
-        gapClosePx: gapCloseMmToPx(settings.gapCloseMm, useStore.getState().canvasSpec.ppi),
+        gapClosePx: gapCloseMmToPx(settings.gapCloseMm, useStore.getState().pageSpec.ppi),
       }, token);
       if (!result || token !== this.token || !result.bounds) return;
       const bounds = result.bounds;

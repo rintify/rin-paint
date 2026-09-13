@@ -21,7 +21,7 @@ import {
 } from '@mui/material';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { hasLayerControls } from './layerControls';
-import { liftListOriginIfTooLow } from './layerListLayout';
+import { liftListOriginIfTooLow } from './hierarchyListLayout';
 import { selectedLayerRows } from '../../engine/layerTree';
 import { useStore } from '../../state/store';
 import type { LayerMeta } from '../../model';
@@ -31,7 +31,7 @@ import { useLongPress } from '../hooks/useLongPress';
 import { NameEditor } from '../NameEditor';
 import { LayerControlsPalette } from './LayerControlsPalette';
 import { Thumb } from './Thumb';
-import { LAYER_FOCUS_EVENT } from './layerPanelEvents';
+import { HIERARCHY_FOCUS_EVENT } from './hierarchyEvents';
 
 interface VisibleRow { id: string; depth: number; index: number; exiting?: boolean }
 interface DropTarget {
@@ -44,7 +44,7 @@ interface DropTarget {
 const ROW_HEIGHT = 48;
 const MOTION_MS = 220;
 
-export function LayerPanel() {
+export function HierarchyPanel() {
   const engine = useEngine();
   const layers = useStore(s => s.layers);
   const rootLayerIds = useStore(s => s.rootLayerIds);
@@ -202,8 +202,8 @@ export function LayerPanel() {
       const id = (event as CustomEvent<string>).detail;
       setFocusRequest(current => ({ id, token: (current?.token ?? 0) + 1 }));
     };
-    window.addEventListener(LAYER_FOCUS_EVENT, focus);
-    return () => window.removeEventListener(LAYER_FOCUS_EVENT, focus);
+    window.addEventListener(HIERARCHY_FOCUS_EVENT, focus);
+    return () => window.removeEventListener(HIERARCHY_FOCUS_EVENT, focus);
   }, []);
   useLayoutEffect(() => {
     if (!focusRequest || rows.some(row => row.id === focusRequest.id && row.exiting)) return;
@@ -274,10 +274,10 @@ export function LayerPanel() {
   };
 
   return (
-    <Box className="section layers-section">
+    <Box className="section hierarchy-section">
       <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
         <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1 }}>
-          レイヤー
+          ヒエラルキー
         </Typography>
         <Stack direction="row" spacing={0.5}>
           {clipboard && (

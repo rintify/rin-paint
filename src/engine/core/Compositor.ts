@@ -164,7 +164,7 @@ export class Compositor {
   }
 
   measureEnv(): LayerMeasureEnv {
-    return { artboard: this.engine.artboard, textRenderer: this.textRenderer, ppi: this.engine.getCanvasSpec().ppi };
+    return { artboard: this.engine.artboard, textRenderer: this.textRenderer, ppi: this.engine.getPageSpec().ppi };
   }
 
   /** レイヤー種別ハンドラが描画に使う依存一式 */
@@ -187,7 +187,7 @@ export class Compositor {
       handlerFor: layerHandler,
       borrowCanvas: (w = width, h = height) => this.borrowCanvas(w, h),
       borrowReadbackCanvas: (w = width, h = height) => this.borrowReadbackCanvas(w, h),
-      ppi: eng.getCanvasSpec().ppi,
+      ppi: eng.getPageSpec().ppi,
       maskCanvas: (ids) => this.maskRenderer.render(
         ids,
         env,

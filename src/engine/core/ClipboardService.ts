@@ -37,7 +37,7 @@ export class ClipboardService {
       version: CLIPBOARD_VERSION,
       sourcePageId: eng.pages.activePageId,
       sourcePageIndex: Math.max(0, eng.pages.pageOrder.indexOf(eng.pages.activePageId)),
-      sourcePpi: eng.getCanvasSpec().ppi,
+      sourcePpi: eng.getPageSpec().ppi,
       rootIds: roots,
       layers,
     };
@@ -51,7 +51,7 @@ export class ClipboardService {
     if (eng.isBusy()) return;
     const clipboard = await loadClipboard();
     if (!clipboard?.layers.length) return;
-    const factor = eng.getCanvasSpec().ppi / clipboard.sourcePpi;
+    const factor = eng.getPageSpec().ppi / clipboard.sourcePpi;
     const ids = new Map<string, string>(clipboard.layers.map(layer => [layer.id, String(crypto.randomUUID())]));
     const snapshots: LayerSnapshot[] = [];
     for (const source of clipboard.layers) {

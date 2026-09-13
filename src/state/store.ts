@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { DEFAULT_CANVAS, type CanvasSpec } from '../model/canvas';
+import { DEFAULT_PAGE, type PageSpec } from '../model/page';
 import { type LayerMeta } from '../model/layer';
 import { type ProjectFont } from '../model/text';
 import {
@@ -121,9 +121,9 @@ export interface PaintState {
   activePageId: string;
   pageBusy: boolean;
 
-  canvasW: number;
-  canvasH: number;
-  canvasSpec: CanvasSpec;
+  pageW: number;
+  pageH: number;
+  pageSpec: PageSpec;
   fonts: ProjectFont[];
   textEditingId: string | null;
   projectGeneration: number;
@@ -202,9 +202,9 @@ export const useStore = create<PaintState>((set) => ({
   activePageId: '',
   pageBusy: false,
 
-  canvasW: 1600,
-  canvasH: 1200,
-  canvasSpec: { ...DEFAULT_CANVAS },
+  pageW: 1600,
+  pageH: 1200,
+  pageSpec: { ...DEFAULT_PAGE },
   fonts: [],
   textEditingId: null,
   projectGeneration: 0,

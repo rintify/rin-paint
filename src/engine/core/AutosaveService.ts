@@ -71,7 +71,7 @@ export class AutosaveService {
     const layerSources = ls.layers.map((l) => savedLayerFrom(l, { artboard: eng.artboard }));
     const activeLayerId = ls.activeLayerId;
     const view = eng.view.snapshot();
-    const canvasSpec = { ...eng.getCanvasSpec() };
+    const pageSpec = { ...eng.getPageSpec() };
     const fonts = structuredClone(st.fonts);
     const rootLayerIds = [...ls.rootLayerIds];
     const historyPromise = eng.history.serialize(canvasToBlob);
@@ -94,7 +94,7 @@ export class AutosaveService {
     });
     const page = {
       id: pages.activePageId,
-      canvasSpec,
+      pageSpec,
       rootLayerIds,
       layers,
       activeLayerId,

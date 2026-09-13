@@ -1,7 +1,7 @@
 import { openDB, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import type {
   ToolInstance,
-  CanvasSpec, ProjectFont, ToolLayoutItem, ToolStack,
+  PageSpec, ProjectFont, ToolLayoutItem, ToolStack,
 } from '../../model';
 import type { PersistedHistory } from '../history/historyTree';
 import type { LayerRecord } from '../layer-types/definition';
@@ -14,7 +14,7 @@ import type { ShortcutBindings } from '../../shortcuts';
 
 export type SavedLayer = LayerRecord;
 export interface SavedPage {
-  id: string; canvasSpec: CanvasSpec; rootLayerIds: string[]; layers: SavedLayer[];
+  id: string; pageSpec: PageSpec; rootLayerIds: string[]; layers: SavedLayer[];
   activeLayerId: string; history: PersistedHistory; view: ViewState;
   thumbnail?: Blob; thumbnailVersion: number;
 }

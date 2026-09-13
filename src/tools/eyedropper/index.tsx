@@ -14,7 +14,7 @@ export { DEFAULT_EYEDROPPER_TOOL_SETTINGS, normalizeEyedropperToolSettings };
 export const eyedropperTool: ToolDescriptor<EyedropperToolSettings> = {
   kind: 'eyedropper',
   label: 'スポイト',
-  description: 'キャンバスから色を取得',
+  description: 'ページから色を取得',
   icon: <ColorizeIcon sx={{ fontSize: 20 }} />,
   category: 'root',
   capabilities: { color: false, size: false, multiSelect: true },

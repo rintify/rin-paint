@@ -1,11 +1,11 @@
 import { useStore } from '../../state/store';
 import {
-  DEFAULT_CANVAS,
+  DEFAULT_PAGE,
   type LayerType,
-  type CanvasSpec,
+  type PageSpec,
   type ProjectFont,
 } from '../../model';
-import { HistoryTree, type CanvasSnapshot } from '../history/historyTree';
+import { HistoryTree, type PageSnapshot } from '../history/historyTree';
 import { isPersistedHistory } from '../persistence/schema';
 import { PROJECT_VERSION } from '../persistence/version';
 import { restoreLayerFrom, savedLayerFrom, scaleLayer } from '../layer-types/registry';
@@ -33,12 +33,12 @@ import {
 } from '../persistence/projectFile';
 import { downloadBlob } from '../timelapse/exporter';
 import { loadFonts } from '../text/render';
-import { canvasPixels, validateCanvasSpec, pngWithPpi } from '../canvasSpec';
+import { pagePixels, validatePageSpec, pngWithPpi } from '../pageSpec';
 import type { PaintEngine } from '../PaintEngine';
 
 /** Project lifecycle: init, import/export, resize, fonts. */
 export class ProjectService {
-  canvasSpec: CanvasSpec = { ...DEFAULT_CANVAS };
+  pageSpec: PageSpec = { ...DEFAULT_PAGE };
   projectGeneration = 0;
 
   constructor(private engine: PaintEngine) {}
@@ -48,8 +48,8 @@ export class ProjectService {
     const ls = eng.layerService;
     ls.layers = [];
     ls.rootLayerIds = [...page.rootLayerIds];
-    this.canvasSpec = { ...page.canvasSpec };
-    const pixels = canvasPixels(this.canvasSpec);
+    this.pageSpec = { ...page.pageSpec };
+    const pixels = pagePixels(this.pageSpec);
     eng.artboard.resize(pixels.width, pixels.height);
     eng.compositor.syncWorkCanvases();
     for (const sl of page.layers) {
@@ -83,7 +83,7 @@ export class ProjectService {
         const restoredPages = await Promise.all(meta.pageOrder.map(loadPage));
         if (restoredPages.some(page => !page)) throw new Error('一部のページを読み込めませんでした');
         const page = restoredPages.find(value => value?.id === meta.activePageId);
-        if (page && page.layers.length > 0 && !validateCanvasSpec(page.canvasSpec)) {
+        if (page && page.layers.length > 0 && !validatePageSpec(page.pageSpec)) {
           pages.pageOrder = [...meta.pageOrder];
           pages.activePageId = meta.activePageId;
           setPersistencePageId(pages.activePageId);
@@ -96,7 +96,7 @@ export class ProjectService {
             saveProjectMeta(meta),
             ...(restoredPages as SavedPage[]).map(saved => savePage(saved)),
           ]);
-          useStore.getState().set({ canvasW: eng.artboard.w, canvasH: eng.artboard.h, canvasSpec: { ...this.canvasSpec } });
+          useStore.getState().set({ pageW: eng.artboard.w, pageH: eng.artboard.h, pageSpec: { ...this.pageSpec } });
         }
       }
     } catch {
@@ -131,22 +131,22 @@ export class ProjectService {
     }
   }
 
-  canvasSnapshot(): CanvasSnapshot {
+  pageSnapshot(): PageSnapshot {
     const eng = this.engine;
     const ls = eng.layerService;
     return {
-      spec: { ...this.canvasSpec },
+      spec: { ...this.pageSpec },
       layers: ls.layers.map(l => ls.snapshotLayer(l, true, true)),
       roots: [...ls.rootLayerIds],
       activeId: ls.activeLayerId,
     };
   }
 
-  async restoreCanvasSnapshot(snapshot: CanvasSnapshot): Promise<void> {
+  async restorePageSnapshot(snapshot: PageSnapshot): Promise<void> {
     const eng = this.engine;
     const ls = eng.layerService;
-    this.canvasSpec = { ...snapshot.spec };
-    const pixels = canvasPixels(snapshot.spec);
+    this.pageSpec = { ...snapshot.spec };
+    const pixels = pagePixels(snapshot.spec);
     eng.artboard.resize(pixels.width, pixels.height);
     ls.layers = [];
     for (const layer of snapshot.layers) await ls.restoreLayer(layer);
@@ -155,42 +155,42 @@ export class ProjectService {
     eng.compositor.syncWorkCanvases();
     eng.compositor.textRenderer.clear();
     eng.compositor.syncTextRenders();
-    useStore.getState().set({ canvasW: eng.artboard.w, canvasH: eng.artboard.h, canvasSpec: { ...this.canvasSpec } });
+    useStore.getState().set({ pageW: eng.artboard.w, pageH: eng.artboard.h, pageSpec: { ...this.pageSpec } });
   }
 
-  async resizeCanvas(spec: CanvasSpec): Promise<void> {
+  async resizePage(spec: PageSpec): Promise<void> {
     const eng = this.engine;
     const ls = eng.layerService;
     if (eng.isBusy()) throw new Error('処理の完了後にサイズを変更してください');
-    const error = validateCanvasSpec(spec);
+    const error = validatePageSpec(spec);
     if (error) throw new Error(error);
-    if (JSON.stringify(spec) === JSON.stringify(this.canvasSpec)) return;
+    if (JSON.stringify(spec) === JSON.stringify(this.pageSpec)) return;
     ls.finishFloating();
     eng.cancelSessions();
     eng.setBusy(true);
-    const before = this.canvasSnapshot();
+    const before = this.pageSnapshot();
     try {
-      const { width, height } = canvasPixels(spec);
-      const factor = spec.ppi / this.canvasSpec.ppi;
+      const { width, height } = pagePixels(spec);
+      const factor = spec.ppi / this.pageSpec.ppi;
       for (const layer of ls.layers) {
         scaleLayer(layer, factor, { width, height });
         ls.bumpLayer(layer.id);
       }
-      this.canvasSpec = { ...spec };
+      this.pageSpec = { ...spec };
       eng.artboard.resize(width, height);
       eng.compositor.syncWorkCanvases();
-      const after = this.canvasSnapshot();
-      const node = eng.history.push({ kind: 'canvasChange', before, after }, 'キャンバスサイズ・解像度');
+      const after = this.pageSnapshot();
+      const node = eng.history.push({ kind: 'pageChange', before, after }, 'ページサイズ・解像度');
       node.ready = Promise.all([...before.layers, ...after.layers].map(async snapshot => {
         if (snapshot.canvas) {
           try { snapshot.content = await canvasToBlob(snapshot.canvas); snapshot.canvas = undefined; }
           catch { /* Keep the original canvas so undo remains lossless; persistence can retry. */ }
         }
       })).then(() => undefined);
-      useStore.getState().set({ canvasW: width, canvasH: height, canvasSpec: { ...spec } });
+      useStore.getState().set({ pageW: width, pageH: height, pageSpec: { ...spec } });
       eng.compositor.textRenderer.clear();
     } catch (error) {
-      await this.restoreCanvasSnapshot(before);
+      await this.restorePageSnapshot(before);
       throw error;
     } finally { eng.setBusy(false); }
     eng.committed();
@@ -224,7 +224,7 @@ export class ProjectService {
       };
       const page: SavedPage = {
         id: pageId,
-        canvasSpec: { ...this.canvasSpec },
+        pageSpec: { ...this.pageSpec },
         rootLayerIds: [layer.id],
         activeLayerId: layer.id,
         layers: [await savedLayerFrom(layer, { artboard: eng.artboard })],
@@ -275,7 +275,7 @@ export class ProjectService {
     if (!eng.compositor.main) return;
     eng.finishTextEditing();
     await eng.readyToRender();
-    downloadBlob(await pngWithPpi(await canvasToBlob(eng.compositor.main), this.canvasSpec.ppi), 'rin-paint.png');
+    downloadBlob(await pngWithPpi(await canvasToBlob(eng.compositor.main), this.pageSpec.ppi), 'rin-paint.png');
   }
 
   async exportProject(): Promise<void> {
@@ -301,7 +301,7 @@ export class ProjectService {
     if (eng.isBusy()) throw new Error('busy');
     ls.finishFloating();
     eng.cancelSessions();
-    const before = this.canvasSnapshot();
+    const before = this.pageSnapshot();
     const previousFonts = useStore.getState().fonts;
     const previousHistory = eng.history;
     eng.setBusy(true);
@@ -318,8 +318,8 @@ export class ProjectService {
       await replaceProject(meta, archive.pages);
       pages.pageOrder = [...meta.pageOrder]; pages.activePageId = meta.activePageId; setPersistencePageId(pages.activePageId);
       await eng.links.refreshCatalog();
-      this.canvasSpec = { ...proj.canvasSpec };
-      const pixels = canvasPixels(this.canvasSpec);
+      this.pageSpec = { ...proj.pageSpec };
+      const pixels = pagePixels(this.pageSpec);
       eng.artboard.resize(pixels.width, pixels.height);
       await loadFonts(archive.meta.fonts);
       useStore.getState().set({ fonts: archive.meta.fonts });
@@ -347,9 +347,9 @@ export class ProjectService {
       if (isPersistedHistory(proj.history)) eng.history.restore(proj.history);
       for (const l of layers) ls.bumpLayer(l.id);
       useStore.getState().set({
-        canvasW: eng.artboard.w,
-        canvasH: eng.artboard.h,
-        canvasSpec: { ...this.canvasSpec },
+        pageW: eng.artboard.w,
+        pageH: eng.artboard.h,
+        pageSpec: { ...this.pageSpec },
         clipboardAvailable: false,
         activePageId: pages.activePageId,
         pages: pages.pageOrder.map(id => ({ id, thumbnailVersion: archive.pages.find(page => page.id === id)?.thumbnailVersion ?? 0 })),
@@ -360,7 +360,7 @@ export class ProjectService {
     } catch (error) {
       await loadFonts(previousFonts);
       useStore.getState().set({ fonts: previousFonts });
-      await this.restoreCanvasSnapshot(before);
+      await this.restorePageSnapshot(before);
       eng.history = previousHistory;
       eng.syncStore();
       throw error;

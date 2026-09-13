@@ -28,7 +28,7 @@ describe('v10 project container', () => {
     };
     const page = {
       id: 'p1',
-      canvasSpec: { widthMm: 10, heightMm: 10, ppi: 300 },
+      pageSpec: { widthMm: 10, heightMm: 10, ppi: 300 },
       rootLayerIds: ['l1'],
       activeLayerId: 'l1',
       layers: [rasterLayer],
@@ -52,7 +52,7 @@ describe('v10 project container', () => {
   it('explicitly rejects a legacy v7 magic container', async () => {
     const history = { version: HISTORY_VERSION, rootId: 0, currentId: 0, nodes: [{ id: 0, parentId: null, label: '開始', op: null, childIds: [], lastChild: 0 }] };
     const page = {
-      id: 'p1', canvasSpec: { widthMm: 10, heightMm: 10, ppi: 300 }, rootLayerIds: ['l1'], activeLayerId: 'l1',
+      id: 'p1', pageSpec: { widthMm: 10, heightMm: 10, ppi: 300 }, rootLayerIds: ['l1'], activeLayerId: 'l1',
       layers: [{
         id: 'l1', type: 'shape' as const,
         common: { name: '直線', opacity: 1, blend: 'source-over' as const, visible: true, parentId: null, childIds: [] },

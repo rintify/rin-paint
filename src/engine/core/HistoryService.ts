@@ -80,8 +80,8 @@ export class HistoryService {
       return;
     }
     switch (op.kind) {
-      case 'canvasChange': {
-        await eng.restoreCanvasSnapshotPublic(dir === 'undo' ? op.before : op.after);
+      case 'pageChange': {
+        await eng.restorePageSnapshotPublic(dir === 'undo' ? op.before : op.after);
         break;
       }
       case 'raster': {

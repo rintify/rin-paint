@@ -81,10 +81,10 @@ export class PolygonTool implements Tool {
     const shapeSettings = normalizeShapeToolSettings(active?.settings);
     const shape = polygonFromWorldPoints(this.points, {
       color: active?.color ?? '#000000',
-      strokeWidth: active?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getCanvasSpec().ppi),
+      strokeWidth: active?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getPageSpec().ppi),
       paintMode: shapeSettings.paintMode,
       strokeJoin: shapeSettings.strokeJoin,
-      cornerRadius: mmToPx(shapeSettings.cornerRadiusMm, this.eng.getCanvasSpec().ppi),
+      cornerRadius: mmToPx(shapeSettings.cornerRadiusMm, this.eng.getPageSpec().ppi),
     });
     this.points = [];
     this.cursor = null;
@@ -133,10 +133,10 @@ export class PolygonTool implements Tool {
     if (candidate.length >= 3 && !invalid) {
       const preview = polygonFromWorldPoints(candidate, {
         color: active?.color === TRANSPARENT ? '#aaaaaa' : (active?.color ?? '#000'),
-        strokeWidth: active?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getCanvasSpec().ppi),
+        strokeWidth: active?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getPageSpec().ppi),
         paintMode: shapeSettings.paintMode,
         strokeJoin: shapeSettings.strokeJoin,
-        cornerRadius: mmToPx(shapeSettings.cornerRadiusMm, this.eng.getCanvasSpec().ppi),
+        cornerRadius: mmToPx(shapeSettings.cornerRadiusMm, this.eng.getPageSpec().ppi),
       });
       ctx.globalAlpha = 0.22;
       drawShape(ctx, preview, false, this.eng.artboard);

@@ -32,7 +32,7 @@ function ViewChip() {
   );
 }
 
-export function CanvasView() {
+export function PageView() {
   const engine = useEngine();
   const areaRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -43,8 +43,8 @@ export function CanvasView() {
   const selectionActive = useStore((s) => s.selectionActive);
   const freeTransform = useStore((s) => s.freeTransform);
   const objectSelected = useStore((s) => s.selectedLayerIds.some(id => { const layer = s.layers.find(item => item.id === id); return !!layer && canTransformObjectType(layer.type); }));
-  const canvasW = useStore((s) => s.canvasW);
-  const canvasH = useStore((s) => s.canvasH);
+  const pageW = useStore((s) => s.pageW);
+  const pageH = useStore((s) => s.pageH);
   const polygonDraftActive = useStore((s) => s.polygonDraftActive);
   const polygonDraftPointCount = useStore((s) => s.polygonDraftPointCount);
   const bubbleDraftActive = useStore((s) => s.bubbleDraftActive);
@@ -61,16 +61,16 @@ export function CanvasView() {
       const pad = 24;
       const bw = el.clientWidth - pad * 2;
       const bh = el.clientHeight - pad * 2;
-      const scale = Math.max(0.01, Math.min(bw / canvasW, bh / canvasH));
-      const w = Math.round(canvasW * scale);
-      setSize({ w, h: Math.round(canvasH * scale) });
+      const scale = Math.max(0.01, Math.min(bw / pageW, bh / pageH));
+      const w = Math.round(pageW * scale);
+      setSize({ w, h: Math.round(pageH * scale) });
       engine.setFitWidth(w);
     };
     const ro = new ResizeObserver(refit);
     ro.observe(el);
     refit();
     return () => ro.disconnect();
-  }, [canvasW, canvasH]);
+  }, [pageW, pageH]);
 
   useEffect(() => {
     engine.attach(mainRef.current!, overlayRef.current!, wrapRef.current!, areaRef.current!);
@@ -79,7 +79,7 @@ export function CanvasView() {
 
   useEffect(() => {
     engine.requestRender();
-  }, [canvasW, canvasH]);
+  }, [pageW, pageH]);
 
   useEffect(() => {
     engine.requestOverlayRender();
@@ -121,8 +121,8 @@ export function CanvasView() {
         ref={wrapRef}
         style={{ width: size.w, height: size.h }}
       >
-        <canvas ref={mainRef} width={canvasW} height={canvasH} />
-        <TextEditor fitScale={size.w / canvasW} />
+        <canvas ref={mainRef} width={pageW} height={pageH} />
+        <TextEditor fitScale={size.w / pageW} />
       </Box>
       <canvas ref={overlayRef} className="canvas-overlay" aria-hidden="true" />
       {selectionActive && (

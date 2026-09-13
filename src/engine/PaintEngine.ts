@@ -7,7 +7,7 @@ import {
   type ShapeParams,
   type StrokePoint,
   type TextParams,
-  type CanvasSpec,
+  type PageSpec,
   type ProjectFont,
 } from '../model';
 import {
@@ -29,7 +29,7 @@ import {
   type HistoryTree,
   type LayerLocation,
   type LayerProps,
-  type CanvasSnapshot,
+  type PageSnapshot,
 } from './history/historyTree';
 import type { SavedPage } from './persistence/db';
 import { TimelapseRecorder } from './timelapse/recorder';
@@ -155,12 +155,12 @@ export class PaintEngine {
 
   /** @internal */ isBusy(): boolean { return this.busy; }
   /** @internal */ setBusy(v: boolean): void { this.busy = v; }
-  /** @internal */ getCanvasSpec(): CanvasSpec { return this.project.canvasSpec; }
+  /** @internal */ getPageSpec(): PageSpec { return this.project.pageSpec; }
   /** @internal */ syncTextRendersPublic(): void { this.compositor.syncTextRenders(); }
   /** @internal */ scheduleStorageRefresh(): void { this.autosave.scheduleStorageRefresh(); }
   /** @internal */ flushSavePublic(): Promise<void> { return this.autosave.flushSave(); }
   /** @internal */ restoreSavedPagePublic(page: SavedPage): Promise<void> { return this.project.restoreSavedPage(page); }
-  /** @internal */ restoreCanvasSnapshotPublic(snapshot: CanvasSnapshot): Promise<void> { return this.project.restoreCanvasSnapshot(snapshot); }
+  /** @internal */ restorePageSnapshotPublic(snapshot: PageSnapshot): Promise<void> { return this.project.restorePageSnapshot(snapshot); }
   /** @internal */ recorderPublic(): TimelapseRecorder { return this.recorder; }
   /** @internal */ setLastViewState(view: ViewState): void { this.lastViewState = view; }
   /** @internal */ hasShapeEdit(): boolean { return this.shapeEdit.hasEdit(); }
@@ -283,7 +283,7 @@ export class PaintEngine {
       this.notify('画像ツールを追加してください');
       return true;
     }
-    const box = imageToolBoxPx(tool.settings, this.getCanvasSpec().ppi);
+    const box = imageToolBoxPx(tool.settings, this.getPageSpec().ppi);
     const point = this.view.clientToArt(clientX, clientY);
     this.addImageLayer(canvas, point.x, point.y, box.width, box.height);
     return true;
@@ -416,7 +416,7 @@ export class PaintEngine {
   async relinkAllLayerParameters(targetId: string): Promise<void> { return this.links.relink(targetId); }
   async focusLayerReference(address: LayerAddress): Promise<void> {
     if (address.pageId !== this.pages.activePageId) await this.pages.switchPage(address.pageId);
-    window.dispatchEvent(new CustomEvent<string>('rin-paint:focus-layer-row', { detail: address.layerId }));
+    window.dispatchEvent(new CustomEvent<string>('rin-paint:focus-hierarchy-row', { detail: address.layerId }));
   }
 
   beginShapeEdit(point: StrokePoint, event?: PointerEvent): boolean { return this.shapeEdit.beginShapeEdit(point, event); }
@@ -446,7 +446,7 @@ export class PaintEngine {
       kind: st.tool,
       color: st.penColor,
       sizeMm,
-      sizePx: mmToPx(sizeMm, st.canvasSpec.ppi),
+      sizePx: mmToPx(sizeMm, st.pageSpec.ppi),
       settings: inst?.settings,
     };
   }
@@ -606,7 +606,7 @@ export class PaintEngine {
   async reorderPages(from: number, to: number): Promise<void> { return this.pages.reorderPages(from, to); }
 
   setSelectionFreeTransform(on: boolean): void { this.activeFloat()?.setFreeTransform(on); }
-  async resizeCanvas(spec: CanvasSpec): Promise<void> { return this.project.resizeCanvas(spec); }
+  async resizePage(spec: PageSpec): Promise<void> { return this.project.resizePage(spec); }
   async newProject(): Promise<void> { return this.project.newProject(); }
 
   commitFloatSelection(): void { this.activeSession()?.commit(); this.syncStore(); }

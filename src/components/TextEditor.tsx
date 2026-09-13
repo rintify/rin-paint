@@ -12,7 +12,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   const layers = useStore(s => s.layers);
   const activeId = useStore(s => s.activeLayerId);
   const editingId = useStore(s => s.textEditingId);
-  const ppi = useStore(s => s.canvasSpec.ppi);
+  const ppi = useStore(s => s.pageSpec.ppi);
   const viewScale = useStore(s => s.viewScale);
   const found = layers.find(l => l.id === activeId);
   const layer = found?.type === 'text' ? found : undefined;

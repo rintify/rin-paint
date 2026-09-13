@@ -64,7 +64,7 @@ export class PenTool implements Tool {
     this.layer = layer;
     this.eng.captureBefore(layer);
     const settings = this.eng.activeToolSettings();
-    this.size = settings?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getCanvasSpec().ppi);
+    this.size = settings?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getPageSpec().ppi);
     this.color = settings?.color ?? '#000';
     this.settings = normalizePenDetailSettings(settings?.settings);
     this.erase = this.color === TRANSPARENT;

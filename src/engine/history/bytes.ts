@@ -18,7 +18,7 @@ export function atomicBytes(op: PersistedAtomicOp | Exclude<Op, { kind: 'batch' 
   if (op.kind === 'raster') return op.tiles.reduce((n, t) => n + tileBytes(t), 0);
   if (op.kind === 'layerAdd') return snapshotBytes(op.snapshot);
   if (op.kind === 'layerRemove') return op.snapshots.reduce((n, s) => n + snapshotBytes(s), 0);
-  if (op.kind === 'canvasChange') {
+  if (op.kind === 'pageChange') {
     return [...op.before.layers, ...op.after.layers].reduce((n, s) => n + snapshotBytes(s), 0);
   }
   if (op.kind === 'layerMerge') {

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Artboard } from './artboard';
 import { EngineEvents } from './events';
-import { MAX_ART_SIZE, MIN_ART_SIZE } from '../model/canvas';
+import { MAX_ART_SIZE, MIN_ART_SIZE } from '../model/page';
 
 describe('Artboard', () => {
   it('clamps resize to min/max', () => {

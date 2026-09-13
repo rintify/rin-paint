@@ -102,7 +102,7 @@ export class ParameterLinkService {
           result.push({
             address: { pageId, layerId: layer.id },
             host: layer,
-            ppi: this.engine.getCanvasSpec().ppi,
+            ppi: this.engine.getPageSpec().ppi,
             live: true,
             liveLayer: layer,
           });
@@ -114,7 +114,7 @@ export class ParameterLinkService {
           result.push({
             address: { pageId, layerId: layer.id },
             host: hostFromRecord(layer),
-            ppi: page.canvasSpec.ppi,
+            ppi: page.pageSpec.ppi,
             live: false,
             stored: layer,
           });
@@ -320,7 +320,7 @@ export class ParameterLinkService {
 
   detachChanged(layer: Layer, before: ParameterHost, after: ParameterHost, preserveIfSourceMatches = false): { before: LayerParameterLink; after: LayerParameterLink } | null {
     if (!layer.parameterLink) return null;
-    const ppi = this.engine.getCanvasSpec().ppi;
+    const ppi = this.engine.getPageSpec().ppi;
     const beforeMap = linkableParameterMap(before), afterMap = linkableParameterMap(after);
     const old = cloneLink(layer.parameterLink)!;
     const next = cloneLink(layer.parameterLink)!;

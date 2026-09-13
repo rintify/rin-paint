@@ -108,7 +108,7 @@ export class PolygonSplitService {
     if (length < .01) return;
     const activeTool = state.tools.find(tool => tool.id === state.activeToolId);
     const widthMm = Math.max(0, normalizePolygonSplitToolSettings(activeTool?.settings).widthMm);
-    const width = mmToPx(widthMm, useStore.getState().canvasSpec.ppi);
+    const width = mmToPx(widthMm, useStore.getState().pageSpec.ppi);
     eng.setBusy(true);
     try {
       const clipping = await import('polygon-clipping');

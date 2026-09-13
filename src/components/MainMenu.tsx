@@ -21,12 +21,12 @@ import {
 import { useState, type MouseEvent } from 'react';
 import { exportTimelapse } from '../engine/timelapse/exporter';
 import { useStore } from '../state/store';
-import { canvasPixels, validateCanvasSpec } from '../engine/canvasSpec';
+import { pagePixels, validatePageSpec } from '../engine/pageSpec';
 import {
   matchingPaperTemplate,
   PAPER_SIZE_TEMPLATES,
   paperSizeDimensions,
-} from '../model/canvas';
+} from '../model/page';
 import { appAlert, appConfirm } from './AppDialogs';
 import { useEngine } from './EngineContext';
 import { pickFile } from './hooks/pickFile';
@@ -50,9 +50,9 @@ function formatMm(value: number): string {
   return String(Number(value.toFixed(3)));
 }
 
-function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
+function PageSizeDialog({ onClose }: { onClose: () => void }) {
   const engine = useEngine();
-  const spec = useStore((s) => s.canvasSpec);
+  const spec = useStore((s) => s.pageSpec);
   const initialW = String(Number(spec.widthMm.toFixed(3)));
   const initialH = String(Number(spec.heightMm.toFixed(3)));
   const [w, setW] = useState(initialW);
@@ -60,8 +60,8 @@ function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
   const [ppi, setPpi] = useState(String(spec.ppi));
   const [applying, setApplying] = useState(false);
   const next = { widthMm: w === initialW ? spec.widthMm : Number(w), heightMm: h === initialH ? spec.heightMm : Number(h), ppi: Number(ppi) };
-  const error = validateCanvasSpec(next);
-  const pixels = canvasPixels(next);
+  const error = validatePageSpec(next);
+  const pixels = pagePixels(next);
   const matched = matchingPaperTemplate(next.widthMm, next.heightMm);
   const landscape = next.widthMm > next.heightMm;
 
@@ -76,14 +76,14 @@ function CanvasSizeDialog({ onClose }: { onClose: () => void }) {
   const apply = async () => {
     if (error || applying) return;
     setApplying(true);
-    try { await engine.resizeCanvas(next); onClose(); }
+    try { await engine.resizePage(next); onClose(); }
     catch (err) { await appAlert(err instanceof Error ? err.message : 'サイズを変更できませんでした'); }
     finally { setApplying(false); }
   };
 
   return (
     <Dialog open onClose={applying ? undefined : onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>キャンバスサイズ</DialogTitle>
+      <DialogTitle>ページサイズ</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
         <FormControl size="small" fullWidth>
           <InputLabel id="paper-template-label">用紙サイズ</InputLabel>
@@ -167,7 +167,7 @@ export function MainMenu() {
     const file = await pickFile('.rinpaint,application/json');
     if (!file) return;
     const ok = await appConfirm(
-      '現在のキャンバスを読み込んだプロジェクトで置き換えます。よろしいですか？',
+      '現在のページを読み込んだプロジェクトで置き換えます。よろしいですか？',
     );
     if (!ok) return;
     try {
@@ -222,7 +222,7 @@ export function MainMenu() {
             close();
           }}
         >
-          キャンバスサイズ…
+          ページサイズ…
         </MenuItem>
         <MenuItem
           onClick={() => {
@@ -306,13 +306,13 @@ export function MainMenu() {
           履歴を直近10件に整理…
         </MenuItem>
       </Menu>
-      {sizeOpen && <CanvasSizeDialog onClose={() => setSizeOpen(false)} />}
+      {sizeOpen && <PageSizeDialog onClose={() => setSizeOpen(false)} />}
       {shortcutsOpen && <ShortcutSettingsDialog onClose={() => setShortcutsOpen(false)} />}
       <Dialog open={newOpen} onClose={creating ? undefined : () => setNewOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>新規プロジェクトを作成しますか？</DialogTitle>
         <DialogContent>
           <Typography>現在の描画内容、すべての履歴、タイムラプス、追加フォントを消去します。この操作は取り消せません。</Typography>
-          <Typography color="text.secondary" sx={{ mt: 1.5 }}>キャンバスのサイズ・解像度と登録ツールは引き継ぎます。</Typography>
+          <Typography color="text.secondary" sx={{ mt: 1.5 }}>ページのサイズ・解像度と登録ツールは引き継ぎます。</Typography>
         </DialogContent>
         <DialogActions>
           <Button autoFocus disabled={creating} onClick={() => setNewOpen(false)}>キャンセル</Button>

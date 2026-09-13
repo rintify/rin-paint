@@ -48,7 +48,7 @@ export class PageService {
     const history = new HistoryTree();
     const page: SavedPage = {
       id,
-      canvasSpec: { ...eng.getCanvasSpec() },
+      pageSpec: { ...eng.getPageSpec() },
       rootLayerIds: [layer.id],
       activeLayerId: layer.id,
       layers: [{ ...eng.layerService.snapshotLayer(layer, false), content: await toBlobP(layer.runtime.canvas) }],

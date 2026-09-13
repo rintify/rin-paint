@@ -16,7 +16,7 @@ const common = {
 describe('v10 project load', () => {
   it('accepts a valid v10 page and keeps history version 8', () => {
     const page = migrateSavedPage({
-      id: 'p', canvasSpec: { widthMm: 10, heightMm: 10, ppi: 300 }, rootLayerIds: ['l'], activeLayerId: 'l',
+      id: 'p', pageSpec: { widthMm: 10, heightMm: 10, ppi: 300 }, rootLayerIds: ['l'], activeLayerId: 'l',
       layers: [{
         id: 'l', type: 'shape', common: { ...common },
         state: { shape: line(), snapEnabled: true },
