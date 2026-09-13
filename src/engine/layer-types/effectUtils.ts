@@ -50,7 +50,7 @@ function drawMask(
   ctx.globalAlpha = clampUnit(strength) * mask.opacity;
   ctx.drawImage(
     mask.canvas,
-    scope.x, scope.y, scope.width, scope.height,
+    scope.x - mask.x, scope.y - mask.y, scope.width, scope.height,
     0, 0, scope.width, scope.height,
   );
   ctx.restore();

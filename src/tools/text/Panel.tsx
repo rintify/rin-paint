@@ -1,9 +1,7 @@
 import FormatTextdirectionLToRIcon from '@mui/icons-material/FormatTextdirectionLToR';
 import FormatTextdirectionRToLIcon from '@mui/icons-material/FormatTextdirectionRToL';
-import UploadFileOutlinedIcon from '@mui/icons-material/UploadFileOutlined';
 import {
   Box,
-  Button,
   FormControl,
   MenuItem,
   Select,
@@ -12,36 +10,17 @@ import {
   ToggleButtonGroup,
   Typography,
 } from '@mui/material';
-import { STANDARD_FONTS } from '../../engine/text/render';
 import { useStore } from '../../state/store';
-import { appAlert } from '../../components/AppDialogs';
 import { useEngine } from '../../components/EngineContext';
-import { pickFile } from '../../components/hooks/pickFile';
 import { LabeledControl } from '../../components/inspectorLayout';
 import { NumericField } from '../../components/NumericField';
 import { normalizeTextToolSettings } from './settings';
+import { FontSelect } from './FontSelect';
 
 export function TextSettingsPanel() {
   const engine = useEngine();
   const active = useStore((state) => state.tools.find((tool) => tool.id === state.activeToolId));
-  const fonts = useStore((state) => state.fonts);
   const settings = normalizeTextToolSettings(active?.settings);
-
-  const addFont = () => {
-    void pickFile('.ttf,.otf,.woff,.woff2').then((chosen) => {
-      if (!chosen) return;
-      void engine
-        .addFont(chosen)
-        .then((font) => {
-          if (font && useStore.getState().tool === 'text') {
-            engine.updateActiveToolSettings({ fontId: font.id });
-          }
-        })
-        .catch((error) =>
-          appAlert(error instanceof Error ? error.message : 'フォントを読み込めませんでした'),
-        );
-    });
-  };
 
   return (
     <Box className="section text-tool-settings">
@@ -54,28 +33,7 @@ export function TextSettingsPanel() {
             新しく作る文字の初期設定
           </Typography>
         </Box>
-        <LabeledControl label="フォント">
-          <FormControl size="small" fullWidth>
-            <Select
-              value={settings.fontId}
-              inputProps={{ 'aria-label': 'フォント' }}
-              onChange={(event) => {
-                if (event.target.value === '__add') addFont();
-                else engine.updateActiveToolSettings({ fontId: event.target.value });
-              }}
-            >
-              {[...STANDARD_FONTS, ...fonts].map((font) => (
-                <MenuItem key={font.id} value={font.id}>
-                  {font.name}
-                </MenuItem>
-              ))}
-              <MenuItem value="__add">
-                <UploadFileOutlinedIcon sx={{ mr: 1, fontSize: 18 }} />
-                フォントを追加…
-              </MenuItem>
-            </Select>
-          </FormControl>
-        </LabeledControl>
+        <FontSelect value={settings.fontId} onChange={fontId => engine.updateActiveToolSettings({ fontId })} />
         <NumericField
           label="フォントサイズ"
           value={settings.sizePt}
@@ -138,9 +96,6 @@ export function TextSettingsPanel() {
             </Select>
           </FormControl>
         </LabeledControl>
-        <Button variant="outlined" startIcon={<UploadFileOutlinedIcon />} onClick={addFont}>
-          フォントファイルを追加
-        </Button>
       </Stack>
     </Box>
   );

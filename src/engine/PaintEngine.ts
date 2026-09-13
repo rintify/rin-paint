@@ -377,6 +377,12 @@ export class PaintEngine {
   addOutlineLayer(): void { this.layerService.addOutlineLayer(); }
   addClipLayer(): void { this.layerService.addClipLayer(); }
   addShapeLayer(shape: ShapeParams): void { this.layerService.addShapeLayer(shape); }
+  addPanelFrame(shape: ShapeParams, options: import('./core/LayerService').PanelFrameLayerOptions): void {
+    this.layerService.addPanelFrame(shape, options);
+  }
+  addSpeechBubble(body: ShapeParams, tail: ShapeParams | null, options: import('./core/LayerService').SpeechBubbleLayerOptions): void {
+    this.layerService.addSpeechBubble(body, tail, options);
+  }
   addImageLayer(canvas: HTMLCanvasElement, x: number, y: number, maxWidth: number, maxHeight: number): void {
     this.layerService.addImageLayer(canvas, x, y, maxWidth, maxHeight);
   }
@@ -472,6 +478,7 @@ export class PaintEngine {
   polygonUndoPoint(): void { this.polygon.undoPoint(); }
   cancelFill(): void { this.fill.cancel(); }
   notify(message: string): void { useStore.getState().set({ toolNotice: message }); }
+  setBubbleDraftActive(active: boolean): void { useStore.getState().set({ bubbleDraftActive: active }); }
 
   selectToolInstance(id: string): void {
     if (this.busy && useStore.getState().fillProgress !== null) this.fill.cancel();

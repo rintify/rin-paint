@@ -121,11 +121,12 @@ export class ShapeEditController {
         ? selected!.index !== undefined && selected!.index < vertices
         : layer.state.shape.kind === 'rect' || layer.state.shape.kind === 'ellipse');
     if (!valid) this.selectedHandle = null;
+    const showPolygonActions = valid && layer?.state.shape.kind !== 'bubble-tail';
     useStore.getState().set({
-      shapeHandleSelected: valid,
-      shapeHandleCanDelete: valid && selected?.mode === 'vertex' && vertices > 3,
-      shapeHandleIsVertex: valid && selected?.mode === 'vertex',
-      shapeHandleEdgeConstrained: valid ? useStore.getState().shapeHandleEdgeConstrained : false,
+      shapeHandleSelected: showPolygonActions,
+      shapeHandleCanDelete: showPolygonActions && selected?.mode === 'vertex' && vertices > 3,
+      shapeHandleIsVertex: showPolygonActions && selected?.mode === 'vertex',
+      shapeHandleEdgeConstrained: showPolygonActions ? useStore.getState().shapeHandleEdgeConstrained : false,
     });
   }
 
@@ -384,7 +385,7 @@ export class ShapeEditController {
         after: this.historyProps(layer, frameShapeOf(layer)),
       };
       const linkOp = this.engine.layerService.linkOpForUserChange(layer, propsOp.before, propsOp.after);
-      this.engine.history.push(linkOp ? { kind: 'batch', ops: [propsOp, linkOp] } : propsOp, edit.vertexIndex !== undefined ? '多角形の頂点を編集' : layer.type === 'image' ? '画像を編集' : '図形を編集');
+      this.engine.history.push(linkOp ? { kind: 'batch', ops: [propsOp, linkOp] } : propsOp, edit.vertexIndex !== undefined ? (layer.type === 'shape' && layer.state.shape.kind === 'bubble-tail' ? 'しっぽを編集' : '多角形の頂点を編集') : layer.type === 'image' ? '画像を編集' : '図形を編集');
       this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });
       this.engine.committed(false);
     } else {
@@ -469,6 +470,15 @@ export class ShapeEditController {
       ctx.stroke();
     }
     ctx.strokeStyle = invalid ? '#e53935' : '#4f8cff'; ctx.fillStyle = '#fff'; ctx.lineWidth = 1.5 * scale;
+    if (shape.kind === 'bubble-tail') {
+      ctx.setLineDash([4 * scale, 3 * scale]);
+      ctx.beginPath();
+      ctx.moveTo(shape.start.x, shape.start.y);
+      ctx.lineTo(shape.control.x, shape.control.y);
+      ctx.lineTo(shape.tip.x, shape.tip.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     if (invalid) {
       ctx.beginPath();
       ctx.moveTo(points[0].x, points[0].y);

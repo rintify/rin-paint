@@ -11,7 +11,7 @@ export function ToolSettingsHost() {
   return (
     <Box className="tool-settings-host">
       {Panel ? <Panel /> : null}
-      {descriptor?.capabilities.color ? <ColorControls /> : null}
+      {descriptor?.capabilities.color ? <ColorControls label={descriptor.colorLabel} allowTransparent={descriptor.allowTransparentColor !== false} /> : null}
     </Box>
   );
 }

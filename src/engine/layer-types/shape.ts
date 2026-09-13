@@ -60,6 +60,8 @@ function shapeCatalog(kind: ShapeParams['kind']): ParameterCatalog<ShapeState> {
       ? { kind: 'ellipse', cx: 0, cy: 0, rx: 1, ry: 1, color: '#000', strokeWidth: 1, paintMode: 'stroke' }
       : kind === 'polygon'
         ? { kind: 'polygon', cx: 0, cy: 0, points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }], color: '#000', strokeWidth: 1, paintMode: 'stroke' }
+        : kind === 'bubble-tail'
+          ? { kind: 'bubble-tail', style: 'pointed', start: { x: 0, y: 0 }, control: { x: 1, y: 0 }, tip: { x: 2, y: 0 }, width: 1, circleCount: 3, spacingDecay: .35, color: '#000', strokeWidth: 0 }
         : { kind: 'rect', x: 0, y: 0, width: 1, height: 1, color: '#000', strokeWidth: 1, paintMode: 'stroke' };
   const definitions: ParameterDefinition<ShapeState>[] = [
     {
@@ -128,6 +130,16 @@ function shapeCatalog(kind: ShapeParams['kind']): ParameterCatalog<ShapeState> {
       },
     });
   }
+  if (kind === 'bubble-tail') definitions.push({
+    id: 'tail.style', semanticId: 'tail.style', groupId: 'shape', label: 'しっぽの種類',
+    editor: { kind: 'select', options: { kind: 'static', options: [{ value: 'pointed', label: '普通' }, { value: 'rounds', label: '丸' }] } },
+    surfaces: SURFACES,
+    read: state => state.shape.kind === 'bubble-tail' ? state.shape.style : 'pointed',
+    write: (state, value) => {
+      const shape = cloneShape(state.shape);
+      return { ...cloneState(state), shape: shape.kind === 'bubble-tail' ? { ...shape, style: value === 'rounds' ? 'rounds' : 'pointed' } : shape };
+    },
+  });
   definitions.push(...shapeParameterFields(sample).map(field => ({
     id: field.key,
     semanticId: semanticForShapeKey(field.key),

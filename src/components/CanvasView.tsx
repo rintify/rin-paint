@@ -47,6 +47,7 @@ export function CanvasView() {
   const canvasH = useStore((s) => s.canvasH);
   const polygonDraftActive = useStore((s) => s.polygonDraftActive);
   const polygonDraftPointCount = useStore((s) => s.polygonDraftPointCount);
+  const bubbleDraftActive = useStore((s) => s.bubbleDraftActive);
   const shapeHandleSelected = useStore((s) => s.shapeHandleSelected);
   const shapeHandleCanDelete = useStore((s) => s.shapeHandleCanDelete);
   const shapeHandleIsVertex = useStore((s) => s.shapeHandleIsVertex);
@@ -162,6 +163,12 @@ export function CanvasView() {
           <Button disabled={polygonDraftPointCount === 0} onClick={() => engine.polygonUndoPoint()}>1点戻す</Button>
           <Button variant="contained" disabled={polygonDraftPointCount < 3} onClick={() => engine.polygonCommit()}>確定</Button>
           <Button onClick={() => engine.polygonCancel()}>キャンセル</Button>
+        </Paper>
+      )}
+      {bubbleDraftActive && (
+        <Paper elevation={6} data-canvas-ui sx={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', p: 1, display: 'flex', alignItems: 'center', gap: 1, zIndex: 6 }}>
+          <Typography variant="caption">しっぽの先端をクリック</Typography>
+          <Button onClick={() => engine.cancelSessions()}>キャンセル</Button>
         </Paper>
       )}
       {!polygonDraftActive && shapeHandleSelected && (

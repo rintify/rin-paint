@@ -36,6 +36,8 @@ import {
   createRasterLayer,
   createShapeLayer,
   createTextLayer,
+  ensureRasterSurface,
+  markRasterContent,
   makeCanvas,
   type ImageLayer,
   type Layer,
@@ -44,11 +46,25 @@ import {
 } from '../layers';
 import { canReparent, closestRasterOrRoot, structuralLowerId } from '../layerTree';
 import { placedImage } from '../image/frame';
-import { isEmptyText } from '../text/model';
+import { isEmptyText, newText } from '../text/model';
 import type { PaintEngine } from '../PaintEngine';
 import { cloneShape, polygonFromWorldPoints, shapeCorners } from '../shapes';
 import type { LayerParameterValue } from '../parameters/types';
 import type { DirtyRect } from '../brush';
+
+export interface PanelFrameLayerOptions {
+  outlineColor: string;
+  outlineWidthMm: number;
+}
+
+export interface SpeechBubbleLayerOptions {
+  outlineColor: string;
+  outlineWidthMm: number;
+  textColor: string;
+  fontId: string;
+  fontSizePt: number;
+  textFrame: { x: number; y: number; w: number; h: number };
+}
 
 /** Owns layer tree state and layer CRUD / tree mutation helpers. */
 export class LayerService {
@@ -130,6 +146,10 @@ export class LayerService {
   }
 
   bumpLayer(id: string, rect?: DirtyRect): void {
+    const raster = this.rasterById(id);
+    if (raster && rect) markRasterContent(raster, {
+      x: rect.minX, y: rect.minY, w: rect.maxX - rect.minX, h: rect.maxY - rect.minY,
+    });
     this.versions.set(id, (this.versions.get(id) ?? 0) + 1);
     this.bumpMaskVersion(id);
     if (rect) this.engine.compositor.invalidateLayer(id, rect);
@@ -276,13 +296,13 @@ export class LayerService {
 
   activeRaster(): RasterLayer | null {
     const l = this.byId(this.activeLayerId);
-    return l && l.type === 'raster' && l.visible ? l : null;
+    return l && l.type === 'raster' && l.visible ? ensureRasterSurface(l) : null;
   }
 
   selectedRasters(): RasterLayer[] {
     const state = useStore.getState();
     const ids = state.multiSelectMode ? new Set(state.selectedLayerIds) : new Set([this.activeLayerId]);
-    return this.layers.filter((layer): layer is RasterLayer => layer.type === 'raster' && layer.visible && ids.has(layer.id));
+    return this.layers.filter((layer): layer is RasterLayer => layer.type === 'raster' && layer.visible && ids.has(layer.id)).map(ensureRasterSurface);
   }
 
   hasSelectedObjects(): boolean {
@@ -303,6 +323,10 @@ export class LayerService {
     this.engine.requestRender();
     const layer = this.byId(id);
     if (layer?.type !== 'text' || layer.childIds.length > 0 || !isEmptyText(layer.state.text)) return false;
+    const parent = layer.parentId ? this.byId(layer.parentId) : null;
+    // A bubble owns an outline sibling; its empty text is an intentional editable placeholder.
+    const bubblePlaceholder = parent?.type === 'shape' && parent.childIds.some(childId => this.byId(childId)?.type === 'outline');
+    if (bubblePlaceholder) return false;
     const location = this.locationOf(id);
     if (!location) return false;
     const snapshots = this.descendantIds(id).map(layerId => this.snapshotLayer(this.byId(layerId)!, true));
@@ -475,6 +499,121 @@ export class LayerService {
     this.engine.history.push({ kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, false) }, '図形を追加');
     useStore.getState().pushColor(shape.color);
     this.engine.committed();
+  }
+
+  private generatedSelection() {
+    const state = useStore.getState();
+    return {
+      activeLayerId: this.activeLayerId,
+      selectedLayerIds: state.selectedLayerIds.length ? [...state.selectedLayerIds] : (this.activeLayerId ? [this.activeLayerId] : []),
+      multiSelectMode: state.multiSelectMode,
+    };
+  }
+
+  private addGeneratedTree(
+    root: Layer,
+    layers: Layer[],
+    selectedId: string,
+    label: string,
+    textEditingId: string | null = null,
+  ): void {
+    const before = this.generatedSelection();
+    const activeLocation = this.locationOf(this.activeLayerId);
+    const rootLocation: LayerLocation = activeLocation
+      ? { parentId: activeLocation.parentId, index: activeLocation.index + 1 }
+      : { parentId: null, index: this.rootLayerIds.length };
+    root.parentId = rootLocation.parentId;
+    this.layers.push(...layers);
+    this.insertAt(root.id, rootLocation);
+    for (const layer of layers) {
+      this.versions.set(layer.id, 0);
+      this.maskVersions.set(layer.id, 0);
+    }
+    this.activeLayerId = selectedId;
+    const after = {
+      activeLayerId: selectedId,
+      selectedLayerIds: [selectedId],
+      multiSelectMode: false,
+    };
+    const entries: LocatedLayerSnapshot[] = layers.map(layer => {
+      const location = layer.id === root.id
+        ? rootLocation
+        : { parentId: layer.parentId, index: this.byId(layer.parentId ?? '')?.childIds.indexOf(layer.id) ?? 0 };
+      return { location, snapshot: this.snapshotLayer(layer, false) };
+    });
+    useStore.getState().set({
+      selectedLayerIds: [selectedId],
+      multiSelectMode: false,
+      textEditingId,
+    });
+    this.engine.history.push({
+      kind: 'layerReplace',
+      before: { rootIds: [], entries: [], selection: before },
+      after: { rootIds: [root.id], entries, selection: after },
+    }, label);
+    this.engine.committed();
+  }
+
+  addPanelFrame(shape: ShapeParams, options: PanelFrameLayerOptions): void {
+    if (this.engine.isBusy()) return;
+    this.finishFloating();
+    const root = createShapeLayer('コマ', shape);
+    const raster = createRasterLayer('コマ描画', this.engine.artboard.w, this.engine.artboard.h, undefined, true);
+    const clip = createClipLayer('コマ内クリップ');
+    const outline = createOutlineLayer('コマ枠');
+    root.childIds = [raster.id, clip.id];
+    raster.parentId = root.id;
+    clip.parentId = root.id;
+    clip.childIds = [outline.id];
+    clip.state.maskLayerIds = [root.id];
+    outline.parentId = clip.id;
+    outline.state.outline = {
+      ...outline.state.outline,
+      color: options.outlineColor,
+      widthMm: options.outlineWidthMm,
+      cornerStyle: 'sharp',
+    };
+    this.addGeneratedTree(root, [root, raster, clip, outline], raster.id, 'コマを追加');
+    useStore.getState().pushColor(shape.color);
+  }
+
+  addSpeechBubble(bodyShape: ShapeParams, tailShape: ShapeParams | null, options: SpeechBubbleLayerOptions): void {
+    if (this.engine.isBusy()) return;
+    this.finishFloating();
+    const body = createShapeLayer('吹き出し', bodyShape);
+    const tail = tailShape ? createShapeLayer('しっぽ', tailShape) : null;
+    const outline = createOutlineLayer('吹き出し枠');
+    const frame = options.textFrame;
+    const text = createTextLayer('文字', newText(frame.x, frame.y, options.textColor, frame.w, frame.h, {
+      fontId: options.fontId,
+      sizePt: options.fontSizePt,
+      direction: 'vertical',
+      horizontalAlign: 'left',
+      verticalAlign: 'top',
+      lineHeight: 1.5,
+    }));
+    body.childIds = [...(tail ? [tail.id] : []), outline.id, text.id];
+    if (tail) {
+      tail.parentId = body.id;
+      tail.parameterLink = {
+        source: { pageId: this.engine.pages.activePageId, layerId: body.id },
+        sourceNameHint: body.name,
+        sourcePageIndexHint: Math.max(0, this.engine.pages.pageOrder.indexOf(this.engine.pages.activePageId)),
+        linkedParameterIds: ['appearance.color'],
+        fallbackValues: { 'appearance.color': bodyShape.color },
+      };
+    }
+    outline.parentId = body.id;
+    outline.state.outline = {
+      ...outline.state.outline,
+      color: options.outlineColor,
+      widthMm: options.outlineWidthMm,
+      cornerStyle: bodyShape.kind === 'rect' ? 'sharp' : 'round',
+    };
+    text.parentId = body.id;
+    this.addGeneratedTree(body, [body, ...(tail ? [tail] : []), outline, text], text.id, '吹き出しを追加', text.id);
+    useStore.getState().pushColor(bodyShape.color);
+    useStore.getState().pushColor(options.textColor);
   }
 
   addImageLayer(canvas: HTMLCanvasElement, x: number, y: number, maxWidth: number, maxHeight: number): void {

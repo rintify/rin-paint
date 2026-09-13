@@ -1,4 +1,4 @@
-export type ShapeKind = 'line' | 'rect' | 'ellipse' | 'polygon';
+export type ShapeKind = 'line' | 'rect' | 'ellipse' | 'polygon' | 'bubble-tail';
 
 export type ShapePaintMode = 'stroke' | 'fill-inside' | 'fill-outside';
 export type ShapeStrokeJoin = 'round' | 'miter';
@@ -65,11 +65,31 @@ export interface PolygonShapeParams {
   rotation?: number;
 }
 
+export type BubbleTailStyle = 'pointed' | 'rounds';
+
+/** 吹き出し専用の、二次ベジェ中心線を持つ塗り図形。 */
+export interface BubbleTailShapeParams {
+  kind: 'bubble-tail';
+  style: BubbleTailStyle;
+  start: ShapePoint;
+  control: ShapePoint;
+  tip: ShapePoint;
+  /** 普通しっぽの根元幅／丸しっぽの最大直径 (canvas px) */
+  width: number;
+  circleCount: number;
+  /** 0 = edge gaps are equal, 1 = gaps strongly tighten toward the tip. */
+  spacingDecay: number;
+  color: string;
+  strokeWidth: number;
+  strokeJoin?: ShapeStrokeJoin;
+}
+
 export type ShapeParams =
   | LineShapeParams
   | RectShapeParams
   | EllipseShapeParams
-  | PolygonShapeParams;
+  | PolygonShapeParams
+  | BubbleTailShapeParams;
 
 export function normalizeShapePaintMode(value: unknown): ShapePaintMode {
   return value === 'fill-inside' || value === 'fill-outside' ? value : 'stroke';

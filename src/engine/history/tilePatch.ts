@@ -1,5 +1,6 @@
 import type { DirtyRect } from '../brush';
 import type { RasterLayer } from '../layers';
+import { ensureRasterSurface } from '../layers';
 
 export const TILE_SIZE = 256;
 
@@ -168,6 +169,7 @@ export async function applyTiles(
   tiles: TilePatch[],
   which: 'before' | 'after',
 ): Promise<void> {
+  ensureRasterSurface(layer);
   for (const t of tiles) {
     const bmp = await createImageBitmap(which === 'before' ? t.before : t.after);
     layer.runtime.ctx.clearRect(t.x, t.y, t.w, t.h);

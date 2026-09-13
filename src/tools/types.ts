@@ -54,6 +54,11 @@ export interface ToolDescriptor<S = unknown> {
   /** settings が無いツール用の設定パネル (例: ぼかし) */
   Panel?: ComponentType;
   sizeLabel?: string;
+  /** 新しくツールを追加するとき、現在のペン設定より優先する初期値。 */
+  initialColor?: string;
+  initialSizeMm?: number;
+  colorLabel?: string;
+  allowTransparentColor?: boolean;
   summary?(tool: ToolInstance): string;
   create(engine: PaintEngine): Tool;
 }

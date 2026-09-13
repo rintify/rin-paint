@@ -70,6 +70,8 @@ export interface CanvasLease {
 export interface MaskCanvas {
   canvas: HTMLCanvasElement;
   opacity: number;
+  x: number;
+  y: number;
   release(): void;
 }
 

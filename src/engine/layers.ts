@@ -78,13 +78,50 @@ export function createTextLayer(name: string, text: TextParams, id = newLayerId(
   };
 }
 
-export function createRasterLayer(name: string, w: number, h: number, id = newLayerId()): RasterLayer {
+export function createRasterLayer(name: string, w: number, h: number, id = newLayerId(), deferred = false): RasterLayer {
+  const runtime = canvasRuntime(makeCanvas(deferred ? 1 : w, deferred ? 1 : h));
+  if (deferred) Object.assign(runtime, { deferred: true, logicalWidth: w, logicalHeight: h, contentBounds: null });
   return {
     ...defaultLayerCommon(id, name),
     type: 'raster',
     state: {},
-    runtime: canvasRuntime(makeCanvas(w, h)),
+    runtime,
   };
+}
+
+export function ensureRasterSurface(layer: RasterLayer): RasterLayer {
+  if (!layer.runtime.deferred) return layer;
+  const canvas = makeCanvas(layer.runtime.logicalWidth ?? layer.runtime.canvas.width, layer.runtime.logicalHeight ?? layer.runtime.canvas.height);
+  layer.runtime = {
+    ...canvasRuntime(canvas),
+    deferred: false,
+    logicalWidth: canvas.width,
+    logicalHeight: canvas.height,
+    contentBounds: layer.runtime.contentBounds ?? null,
+  };
+  return layer;
+}
+
+export function markRasterContent(layer: RasterLayer, rect: { x: number; y: number; w: number; h: number }): void {
+  const limitWidth = layer.runtime.logicalWidth ?? layer.runtime.canvas.width;
+  const limitHeight = layer.runtime.logicalHeight ?? layer.runtime.canvas.height;
+  const x = Math.max(0, Math.floor(rect.x));
+  const y = Math.max(0, Math.floor(rect.y));
+  const clipped = {
+    x,
+    y,
+    w: Math.max(0, Math.min(limitWidth, Math.ceil(rect.x + rect.w)) - x),
+    h: Math.max(0, Math.min(limitHeight, Math.ceil(rect.y + rect.h)) - y),
+  };
+  const before = layer.runtime.contentBounds;
+  if (before === undefined || clipped.w <= 0 || clipped.h <= 0) return;
+  if (!before) layer.runtime.contentBounds = clipped;
+  else {
+    const right = Math.max(before.x + before.w, clipped.x + clipped.w);
+    const bottom = Math.max(before.y + before.h, clipped.y + clipped.h);
+    const x = Math.min(before.x, clipped.x), y = Math.min(before.y, clipped.y);
+    layer.runtime.contentBounds = { x, y, w: right - x, h: bottom - y };
+  }
 }
 
 export function createAdjustLayer(name: string, id = newLayerId()): AdjustLayer {

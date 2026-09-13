@@ -15,6 +15,8 @@ import { polygonSplitTool } from './polygonSplit';
 import { textTool } from './text';
 import { imageTool } from './image';
 import { eyedropperTool } from './eyedropper';
+import { panelFrameTool } from './panelFrame';
+import { speechBubbleTool } from './speechBubble';
 import type { Tool, ToolDescriptor } from './types';
 
 export const TOOL_REGISTRY = {
@@ -24,6 +26,8 @@ export const TOOL_REGISTRY = {
   rect: rectTool,
   ellipse: ellipseTool,
   polygon: polygonTool,
+  panelFrame: panelFrameTool,
+  speechBubble: speechBubbleTool,
   fill: fillTool,
   eyedropper: eyedropperTool,
   polygonSplit: polygonSplitTool,
@@ -148,3 +152,13 @@ export {
   normalizeImageToolSettings,
   type ImageToolSettings,
 } from './image/settings';
+export {
+  DEFAULT_PANEL_FRAME_TOOL_SETTINGS,
+  normalizePanelFrameToolSettings,
+  type PanelFrameToolSettings,
+} from './panelFrame/settings';
+export {
+  DEFAULT_SPEECH_BUBBLE_TOOL_SETTINGS,
+  normalizeSpeechBubbleToolSettings,
+  type SpeechBubbleToolSettings,
+} from './speechBubble/settings';

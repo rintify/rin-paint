@@ -3,6 +3,7 @@ import { ellipseShapeKind } from './ellipse';
 import { lineShapeKind } from './line';
 import { polygonShapeKind } from './polygon';
 import { rectShapeKind } from './rect';
+import { bubbleTailShapeKind } from './bubbleTail';
 import type { ShapeKindHandler } from './types';
 
 const HANDLERS: Record<ShapeKind, ShapeKindHandler> = {
@@ -10,6 +11,7 @@ const HANDLERS: Record<ShapeKind, ShapeKindHandler> = {
   rect: rectShapeKind,
   ellipse: ellipseShapeKind,
   polygon: polygonShapeKind,
+  'bubble-tail': bubbleTailShapeKind,
 };
 
 /** 図形実体から種類ハンドラを引く。幾何の分岐はすべてここを通る。 */

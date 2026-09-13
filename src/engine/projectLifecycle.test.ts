@@ -67,6 +67,53 @@ function pixel(layerId: string, x: number, y: number): number[] {
 }
 
 describe('canvas history and new project', () => {
+  it('creates a panel subtree with a deferred raster and restores it in one history step', async () => {
+    await engine.newProject();
+    const shape = {
+      kind: 'polygon' as const, cx: 80, cy: 60,
+      points: [{ x: -50, y: -30 }, { x: 50, y: -30 }, { x: 50, y: 30 }, { x: -50, y: 30 }],
+      rotation: 0, color: '#ffffff', strokeWidth: 0, paintMode: 'fill-inside' as const,
+      strokeJoin: 'miter' as const, cornerRadius: 0,
+    };
+    engine.addPanelFrame(shape, { outlineColor: '#112233', outlineWidthMm: 2 });
+    const panel = useStore.getState().layers.find(layer => layer.name === 'コマ')!;
+    const [rasterId, clipId] = panel.childIds;
+    const clip = useStore.getState().layers.find(layer => layer.id === clipId)!;
+    const outline = useStore.getState().layers.find(layer => layer.id === clip.childIds[0])!;
+    expect(useStore.getState().activeLayerId).toBe(rasterId);
+    expect(clip.state).toEqual({ maskLayerIds: [panel.id] });
+    expect(outline.state).toMatchObject({ outline: { color: '#112233', widthMm: 2, cornerStyle: 'sharp' } });
+    const internal = (engine as unknown as { layerById(id: string): { runtime?: { deferred?: boolean; canvas?: HTMLCanvasElement } } | null }).layerById(rasterId);
+    expect(internal?.runtime).toMatchObject({ deferred: true });
+    expect(internal?.runtime?.canvas).toMatchObject({ width: 1, height: 1 });
+    expect(internalHistory().current.op?.kind).toBe('layerReplace');
+    await engine.undo();
+    expect(useStore.getState().layers.some(layer => layer.id === panel.id)).toBe(false);
+    await engine.redo();
+    expect(useStore.getState().layers.some(layer => layer.id === panel.id)).toBe(true);
+  });
+
+  it('creates a bubble in body-tail-outline-text order with a linked tail', async () => {
+    await engine.newProject();
+    const body = { kind: 'ellipse' as const, cx: 100, cy: 100, rx: 60, ry: 40, rotation: 0, color: '#fffefe', strokeWidth: 0, paintMode: 'fill-inside' as const };
+    const tail = { kind: 'bubble-tail' as const, style: 'rounds' as const, start: { x: 60, y: 125 }, control: { x: 40, y: 150 }, tip: { x: 20, y: 180 }, width: 12, circleCount: 4, spacingDecay: .35, color: '#fffefe', strokeWidth: 0, strokeJoin: 'round' as const };
+    engine.addSpeechBubble(body, tail, {
+      outlineColor: '#000000', outlineWidthMm: 1, textColor: '#123456', fontId: 'serif', fontSizePt: 12,
+      textFrame: { x: 58, y: 72, w: 84, h: 56 },
+    });
+    const bubble = useStore.getState().layers.find(layer => layer.name === '吹き出し')!;
+    const children = bubble.childIds.map(id => useStore.getState().layers.find(layer => layer.id === id)!);
+    expect(children.map(layer => layer.name)).toEqual(['しっぽ', '吹き出し枠', '文字']);
+    expect(children[0].parameterLink).toMatchObject({ source: { layerId: bubble.id }, linkedParameterIds: ['appearance.color'] });
+    expect(children[1].state).toMatchObject({ outline: { cornerStyle: 'round' } });
+    expect(children[2].state).toMatchObject({ text: { direction: 'vertical', horizontalAlign: 'left', verticalAlign: 'top', lineHeight: 1.5, width: 84, height: 56 } });
+    expect(useStore.getState().textEditingId).toBe(children[2].id);
+    await engine.undo();
+    expect(useStore.getState().layers.some(layer => layer.id === bubble.id)).toBe(false);
+    await engine.redo();
+    expect(useStore.getState().layers.some(layer => layer.id === bubble.id)).toBe(true);
+  });
+
   it('converts a rotated rectangle to an editable polygon without changing its identity or children', async () => {
     await engine.newProject();
     engine.addShapeLayer({ kind: 'rect', x: 20, y: 30, width: 100, height: 60, rotation: Math.PI / 6, color: '#abcdef', strokeWidth: 7, paintMode: 'fill-outside' });
