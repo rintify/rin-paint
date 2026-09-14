@@ -46,7 +46,6 @@ function compositorFor(layers: Layer[]): Compositor {
   const engine = {
     artboard: { w: 16, h: 16 },
     allLayers: () => layers,
-    getActiveLayerId: () => layers.find(layer => layer.parentId === null)?.id ?? '',
     layerById: (id: string) => byId.get(id) ?? null,
     getRootLayerIds: () => layers.filter((layer) => layer.parentId === null).map((layer) => layer.id),
     getPageSpec: () => ({ widthMm: 16, heightMm: 16, ppi: 25.4 }),

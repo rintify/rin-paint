@@ -7,9 +7,6 @@ import { CanvasPool } from './CanvasPool';
 import { MaskRenderer } from './MaskRenderer';
 import { unionRect, type DirtyRect } from '../brush';
 import { EffectCache } from './EffectCache';
-import { SceneQuery } from './SceneQuery';
-import { inverse, multiply, scaling, transformBounds } from '../geometry/homography';
-import { warpCanvas } from '../geometry/warpCanvas';
 
 interface RenderRect { x: number; y: number; w: number; h: number }
 
@@ -118,10 +115,6 @@ export class Compositor {
   }
 
   invalidateLayer(layerId: string, rect: DirtyRect): void {
-    // A transformed source can damage pixels far from its local stroke rectangle.
-    if (this.engine.allLayers().some(layer => layer.visible && layer.type === 'transform')) {
-      this.requestRender(); return;
-    }
     const clipped = clampDirty(rect, this.engine.artboard.w, this.engine.artboard.h);
     if (!clipped) return;
     this.dirty = true;
@@ -185,17 +178,6 @@ export class Compositor {
     const eng = this.engine;
     const tool = withToolOverlay ? eng.activeTool() : null;
     const drawAboveLayer = tool?.drawAboveLayer?.bind(tool);
-    const maskRevision = (id: string): number => {
-      const layer = eng.layerById(id);
-      let revision = eng.getMaskRevision?.(id) ?? 0;
-      if (layer?.type === 'canvas') {
-        for (const childId of layer.childIds) {
-          const child = eng.layerById(childId);
-          revision = mixRevision(revision, `${childId}:${child?.visible}:${eng.getRenderRevision?.(childId) ?? 0}:${maskRevision(childId)}`);
-        }
-      }
-      return revision;
-    };
     const env: LayerDrawEnv = {
       artboard: eng.artboard,
       originX,
@@ -209,16 +191,9 @@ export class Compositor {
       maskCanvas: (ids) => this.maskRenderer.render(
         ids,
         env,
-        maskRevision,
+        id => eng.getMaskRevision?.(id) ?? 0,
         { x: originX, y: originY, w: width, h: height },
       ),
-      drawCanvasScope: (ctx, layerId) => {
-        const layer = eng.layerById(layerId);
-        if (layer?.type !== 'canvas') return;
-        const result = this.renderArt({ x: originX, y: originY, w: width, h: height }, null, false, undefined, undefined, layer.childIds);
-        ctx.drawImage(result.canvas, originX, originY);
-        result.release();
-      },
       drawEffectContribution: (ctx, layerId) => {
         const contribution = this.renderEffectContribution(layerId, { x: originX, y: originY, w: width, h: height });
         ctx.drawImage(contribution.canvas, originX, originY);
@@ -267,9 +242,7 @@ export class Compositor {
     const { w, h } = this.engine.artboard;
     const bounds = region ?? { x: 0, y: 0, w, h };
     const hit: LayerHitCapture = { layerId, contribution: null, target: null };
-    const source = this.engine.layerById(layerId);
-    const roots = new SceneQuery(this.engine.getRootLayerIds(), this.engine.allLayers()).members(source?.parentId ?? null).map(layer => layer.id);
-    const art = this.renderArt(bounds, null, false, undefined, hit, roots);
+    const art = this.renderArt(bounds, null, false, undefined, hit);
     art.release();
     return hit.contribution ?? this.borrowCanvas(bounds.w, bounds.h);
   }
@@ -277,12 +250,6 @@ export class Compositor {
   samplePixel(x: number, y: number, includedLayerId: string | null): Uint8ClampedArray {
     const cx = Math.max(0, Math.min(this.engine.artboard.w - 1, Math.round(x)));
     const cy = Math.max(0, Math.min(this.engine.artboard.h - 1, Math.round(y)));
-    if (includedLayerId === null && this.engine.layerById(this.engine.getActiveLayerId())?.parentId) {
-      const scopeId = this.engine.layerById(this.engine.getActiveLayerId())!.parentId;
-      const art = this.renderArt({ x: cx, y: cy, w: 1, h: 1 }, null, false, undefined, undefined, new SceneQuery(this.engine.getRootLayerIds(), this.engine.allLayers()).members(scopeId).map(layer => layer.id));
-      const data = art.ctx.getImageData(0,0,1,1).data;
-      art.release(); return data;
-    }
     if (includedLayerId === null) {
       this.ensureComposited();
       return this.artCacheCtx.getImageData(cx, cy, 1, 1).data;
@@ -299,7 +266,7 @@ export class Compositor {
     };
     const art = layer && layerHandler(layer).renderer.effect
       ? this.renderEffectContribution(includedLayerId, region)
-      : this.renderArt(region, new Set([includedLayerId]), false, undefined, undefined, new SceneQuery(this.engine.getRootLayerIds(), this.engine.allLayers()).members(layer?.parentId ?? null).map(item => item.id));
+      : this.renderArt(region, new Set([includedLayerId]), false);
     const data = art.ctx.getImageData(cx - region.x, cy - region.y, 1, 1).data;
     art.release();
     return data;
@@ -361,11 +328,7 @@ export class Compositor {
   compositeSelection(ids: Set<string>): HTMLCanvasElement {
     this.syncWorkCanvases();
     const { w, h } = this.engine.artboard;
-    const query = new SceneQuery(this.engine.getRootLayerIds(), this.engine.allLayers());
-    const scope = query.scopeOf(this.engine.getActiveLayerId());
-    const roots = query.members(scope).map(layer => layer.id);
-    const allowed = new Set(roots.filter(id => ids.has(id)));
-    const art = this.renderArt({ x: 0, y: 0, w, h }, allowed, false, undefined, undefined, roots);
+    const art = this.renderArt({ x: 0, y: 0, w, h }, ids, false);
     this.present(this.fillReferenceCtx, art.canvas, { x: 0, y: 0, w, h }, true);
     art.release();
     return this.fillReference;
@@ -391,18 +354,22 @@ export class Compositor {
       if (!layer) continue;
       const effect = layerHandler(layer).renderer.effect;
       if (effect) {
-        if (layer.type === 'transform' && layer.visible && current) {
-          const px = this.engine.getPageSpec().ppi / 25.4;
-          const matrix = multiply(scaling(px), multiply(layer.state.matrix, scaling(1/px)));
-          current = transformBounds(matrix, current);
-        }
         if (layer.visible && current) {
           const padding = Math.max(0, effect.paddingPx?.(layer as never, env) ?? 0);
           if (padding) current = { x: current.x - padding, y: current.y - padding, w: current.w + padding * 2, h: current.h + padding * 2 };
+          if (layer.type === 'clip' && layer.opacity >= 1 && layer.state.maskLayerIds.length) {
+            let masks: RenderRect | null = null;
+            for (const maskId of layer.state.maskLayerIds) {
+              const maskLayer = this.engine.layerById(maskId);
+              if (maskLayer) masks = unionBounds(masks, this.ownVisibleBounds(maskLayer));
+            }
+            if (masks) current = intersectBounds(current, masks);
+          }
         }
+        current = this.sequenceVisibleBounds(layer.childIds, current);
       } else {
         let subtree = this.ownVisibleBounds(layer);
-        if (layer.type === 'canvas' && layer.visible) subtree = this.sequenceVisibleBounds(layer.childIds);
+        subtree = this.sequenceVisibleBounds(layer.childIds, subtree);
         current = unionBounds(current, subtree);
       }
     }
@@ -415,7 +382,6 @@ export class Compositor {
     drawToolOverlay: boolean,
     capture?: { effectId: string; contribution: CanvasLease | null },
     hit?: LayerHitCapture,
-    roots = this.engine.getRootLayerIds(),
   ): CanvasLease {
     const eng = this.engine;
     // The contenteditable text is the synchronous on-canvas preview while typing.
@@ -434,19 +400,14 @@ export class Compositor {
     const participates = (layer: Layer) => layer.visible
       && !(layer.type === 'text' && layer.id === editingTextId)
       && (included === null || included.has(layer.id));
-    const query = new SceneQuery(eng.getRootLayerIds(), eng.allLayers());
-    if (included) {
-      included = new Set(included);
-      for (const id of [...included]) {
-        const expand = (canvasId: string): void => {
-          for (const child of query.members(canvasId)) {
-            included!.add(child.id);
-            if (child.type === 'canvas') expand(child.id);
-          }
-        };
-        if (eng.layerById(id)?.type === 'canvas') expand(id);
-      }
-    }
+    const activeEffectInChain = (layer: Layer): boolean => {
+      if (!layerHandler(layer).renderer.effect) return false;
+      if (participates(layer) || capture?.effectId === layer.id || hit?.layerId === layer.id) return true;
+      return layer.childIds.some(id => {
+        const child = eng.layerById(id);
+        return !!child && activeEffectInChain(child);
+      });
+    };
     const resetTarget = (target: CanvasRenderingContext2D) => {
       target.setTransform(1, 0, 0, 1, 0, 0);
       target.globalAlpha = 1;
@@ -501,33 +462,10 @@ export class Compositor {
       activeRegion: RenderRect,
       activeEnv: LayerDrawEnv,
     ): boolean => {
-      for (let layerIndex = 0; layerIndex < ids.length; layerIndex++) {
-        const id = ids[layerIndex];
+      for (const id of ids) {
         const layer = eng.layerById(id);
         if (!layer) continue;
         const handler = layerHandler(layer);
-        if (layer.type === 'transform') {
-          if (!participates(layer)) continue;
-          const px = eng.getPageSpec().ppi / 25.4;
-          const matrix = multiply(scaling(px), multiply(layer.state.matrix, scaling(1/px)));
-          const inv = inverse(matrix);
-          if (!inv) continue;
-          const prefix = ids.slice(0,layerIndex);
-          const sourceBounds = this.sequenceVisibleBounds(prefix);
-          const requested = transformBounds(inv, activeRegion);
-          const needed = sourceBounds && requested ? intersectBounds(sourceBounds, requested) : sourceBounds;
-          resetTarget(target); target.clearRect(0,0,targetCanvas.width,targetCanvas.height);
-          if (needed) {
-            const inputRegion = { x: Math.floor(needed.x), y: Math.floor(needed.y),
-              w: Math.max(1,Math.ceil(needed.x+needed.w)-Math.floor(needed.x)),
-              h: Math.max(1,Math.ceil(needed.y+needed.h)-Math.floor(needed.y)) };
-            const input = this.renderArt(inputRegion, included, drawToolOverlay, undefined, undefined, prefix);
-            warpCanvas(input.canvas,target,matrix,inputRegion,activeRegion,activeRegion.w,activeRegion.h);
-            input.release();
-          }
-          state.revision = mixRevision(state.revision, `${layer.id}:${eng.getRenderRevision?.(layer.id) ?? 0}`);
-          continue;
-        }
         if (handler.renderer.effect) {
           const capturingEyedropper = capture?.effectId === layer.id;
           const capturingHitEffect = !!hit && hit.layerId === layer.id && !!handler.renderer.effect.clickableAddedPixels;
@@ -535,8 +473,7 @@ export class Compositor {
             const capturingDifference = capturingEyedropper || capturingHitEffect;
             const before = capturingDifference ? this.borrowCanvas(region.w, region.h) : null;
             before?.ctx.drawImage(targetCanvas, 0, 0);
-            const effectEnv = { ...activeEnv, maskCanvas: (ids: string[]) => activeEnv.maskCanvas(query.masks(layer.id, ids).valid) };
-            handler.renderer.effect.apply(effectScope(targetCanvas, state.revision, activeRegion), layer, effectEnv);
+            handler.renderer.effect.apply(effectScope(targetCanvas, state.revision, activeRegion), layer, activeEnv);
             resetTarget(target);
             state.revision = mixRevision(state.revision, `${layer.id}:${eng.getRenderRevision?.(layer.id) ?? 0}`);
             if (capturingDifference && before) {
@@ -551,26 +488,48 @@ export class Compositor {
               retainHitCoverage(targetCanvas);
             }
           }
+          if (renderSequence(layer.childIds, target, targetCanvas, state, activeRegion, activeEnv)) return true;
           continue;
         }
 
-        if (layer.type === 'canvas') {
-          if (!layer.visible) continue;
-          const scope = this.borrowCanvas(activeRegion.w, activeRegion.h);
-          const localState = { revision: mixRevision(2166136261, layer.id) };
-          const stopped = renderSequence(layer.childIds, scope.ctx, scope.canvas, localState, activeRegion, activeEnv);
-          if (stopped) { scope.release(); return true; }
-          if (hit?.layerId === layer.id && !hit.contribution) {
-            const contribution = this.borrowCanvas(activeRegion.w, activeRegion.h);
-            contribution.ctx.globalAlpha = layer.opacity;
-            contribution.ctx.drawImage(scope.canvas,0,0);
-            hit.contribution = contribution;
-            hit.target = targetCanvas;
+        const hasActiveDirectEffect = layer.childIds.some(childId => {
+          const child = eng.layerById(childId);
+          return !!child && activeEffectInChain(child);
+        });
+        if (hasActiveDirectEffect) {
+          const measured = !capture && !hit ? this.sequenceVisibleBounds([layer.id]) : null;
+          const clipped = measured ? intersectBounds(measured, activeRegion) : activeRegion;
+          if (!clipped) continue;
+          const localRegion = {
+            x: Math.max(0, Math.floor(clipped.x)),
+            y: Math.max(0, Math.floor(clipped.y)),
+            w: Math.max(1, Math.ceil(clipped.x + clipped.w) - Math.max(0, Math.floor(clipped.x))),
+            h: Math.max(1, Math.ceil(clipped.y + clipped.h) - Math.max(0, Math.floor(clipped.y))),
+          };
+          const localEnv = localRegion.x === activeRegion.x && localRegion.y === activeRegion.y && localRegion.w === activeRegion.w && localRegion.h === activeRegion.h
+            ? activeEnv
+            : this.drawEnv(drawToolOverlay, localRegion.w, localRegion.h, localRegion.x, localRegion.y);
+          const localState = {
+            revision: mixRevision(2166136261, `${layer.id}:${eng.getRenderRevision?.(layer.id) ?? 0}`),
+          };
+          const scope = this.borrowCanvas(localRegion.w, localRegion.h);
+          const local = scope.ctx;
+          local.save();
+          local.setTransform(1, 0, 0, 1, 0, 0);
+          resetTarget(local);
+          if (participates(layer)) {
+            captureContent(scope.canvas, layer);
+            drawLayer(local, layer, localRegion, localEnv);
           }
-          target.save(); resetTarget(target);
-          target.globalAlpha = layer.opacity;
-          target.globalCompositeOperation = layer.blend;
-          target.drawImage(scope.canvas,0,0);
+          const stopped = renderSequence(layer.childIds, local, scope.canvas, localState, localRegion, localEnv);
+          local.restore();
+          if (stopped) {
+            scope.release();
+            return true;
+          }
+          target.save();
+          resetTarget(target);
+          target.drawImage(local.canvas, localRegion.x - activeRegion.x, localRegion.y - activeRegion.y);
           target.restore();
           if (hit?.target === scope.canvas) hit.target = targetCanvas;
           scope.release();
@@ -582,22 +541,20 @@ export class Compositor {
           drawLayer(target, layer, activeRegion, activeEnv);
           state.revision = mixRevision(state.revision, `${layer.id}:${eng.getRenderRevision?.(layer.id) ?? 0}`);
         }
-
+        if (renderSequence(layer.childIds, target, targetCanvas, state, activeRegion, activeEnv)) return true;
       }
       return false;
     };
     const inclusionKey = included ? [...included].sort().join(',') : 'all';
     const initialRevision = mixRevision(2166136261, `${inclusionKey}:${drawToolOverlay ? 'tool' : 'plain'}`);
-    renderSequence(roots, artCtx, art.canvas, { revision: initialRevision }, region, env);
+    renderSequence(eng.getRootLayerIds(), artCtx, art.canvas, { revision: initialRevision }, region, env);
 
     return art;
   }
 
   private renderEffectContribution(layerId: string, region: RenderRect): CanvasLease {
     const capture = { effectId: layerId, contribution: null as CanvasLease | null };
-    const layer = this.engine.layerById(layerId);
-    const roots = new SceneQuery(this.engine.getRootLayerIds(), this.engine.allLayers()).members(layer?.parentId ?? null).map(item => item.id);
-    const art = this.renderArt(region, null, false, capture, undefined, roots);
+    const art = this.renderArt(region, null, false, capture);
     art.release();
     return capture.contribution ?? this.borrowCanvas(region.w, region.h);
   }
@@ -615,6 +572,14 @@ export class Compositor {
 
   private effectPaddingByLayer(env: LayerDrawEnv): Map<string, number> {
     const eng = this.engine;
+    const activeEffectInChain = (layer: Layer): boolean => {
+      const effect = layerHandler(layer).renderer.effect;
+      if (effect && layer.visible) return true;
+      return layer.childIds.some(id => {
+        const child = eng.layerById(id);
+        return !!child && activeEffectInChain(child);
+      });
+    };
     const merge = (target: Map<string, number>, source: Map<string, number>) => {
       for (const [id, padding] of source) target.set(id, Math.max(target.get(id) ?? 0, padding));
     };
@@ -631,16 +596,20 @@ export class Compositor {
               state.set(dependencyId, Math.max(state.get(dependencyId) ?? 0, padding));
             }
           }
+          visit(layer.childIds, state);
           continue;
         }
-        if (layer.type === 'canvas') {
-          if (!layer.visible) continue;
+        if (layer.childIds.some(childId => {
+          const child = eng.layerById(childId);
+          return !!child && activeEffectInChain(child);
+        })) {
           const local = new Map<string, number>();
           if (layer.visible) local.set(layer.id, 0);
           visit(layer.childIds, local);
           merge(state, local);
         } else {
           if (layer.visible) state.set(layer.id, Math.max(state.get(layer.id) ?? 0, 0));
+          visit(layer.childIds, state);
         }
       }
     };

@@ -51,7 +51,6 @@ export interface LayerDrawEnv extends LayerMeasureEnv {
   ppi: number;
   maskCanvas(ids: string[]): MaskCanvas | null;
   drawEffectContribution(ctx: CanvasRenderingContext2D, layerId: string): void;
-  drawCanvasScope(ctx: CanvasRenderingContext2D, layerId: string): void;
   effectCache: EffectCacheStore;
   stats: RenderStatsAccumulator;
   drawAboveLayer?(ctx: CanvasRenderingContext2D, layerId: string): void;

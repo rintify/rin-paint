@@ -1,4 +1,4 @@
-import { SceneQuery } from './SceneQuery';
+import { flattenRenderOrder } from '../layerTree';
 import { layerHandler } from '../layer-types/registry';
 import type { CanvasLease } from '../layer-types/types';
 import type { PaintEngine } from '../PaintEngine';
@@ -19,8 +19,7 @@ export class LayerPicker {
     const cy = Math.round(y);
     if (cx < 0 || cy < 0 || cx >= w || cy >= h) return null;
     const layers = this.engine.allLayers();
-    const query = new SceneQuery(this.engine.getRootLayerIds(), layers);
-    const order = query.members(query.scopeOf(this.engine.getActiveLayerId())).map(layer => layer.id);
+    const order = flattenRenderOrder(this.engine.getRootLayerIds(), layers);
     const compositor = this.engine.compositor;
     const env = compositor.drawEnv(false);
     for (let index = order.length - 1; index >= 0; index--) {

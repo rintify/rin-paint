@@ -1,4 +1,3 @@
-import { RasterTransferSection } from './RasterTransferSection';
 import { Button, Stack } from '@mui/material';
 import type { LayerMeta } from '../../model';
 import { useEngine } from '../EngineContext';
@@ -26,7 +25,7 @@ export function ImageActionSection({ meta }: { meta: LayerMeta }) {
       >
         画像を差し替え
       </Button>
-      <RasterTransferSection meta={meta} />
+      <Button fullWidth onClick={() => engine.transferShapeLayer()} disabled={!meta.canTransferShape}>親へ転写</Button>
     </Stack>
   );
 }

@@ -77,12 +77,11 @@ describe('canvas history and new project', () => {
     };
     engine.addPanelFrame(shape, { outlineColor: '#112233', outlineWidthMm: 2 });
     const panel = useStore.getState().layers.find(layer => layer.name === 'コマ')!;
-    const [maskId, rasterId, clipId, outlineId] = panel.childIds;
+    const [rasterId, clipId] = panel.childIds;
     const clip = useStore.getState().layers.find(layer => layer.id === clipId)!;
-    const outline = useStore.getState().layers.find(layer => layer.id === outlineId)!;
+    const outline = useStore.getState().layers.find(layer => layer.id === clip.childIds[0])!;
     expect(useStore.getState().activeLayerId).toBe(rasterId);
-    expect(panel.type).toBe('canvas');
-    expect(clip.state).toEqual({ maskLayerIds: [maskId] });
+    expect(clip.state).toEqual({ maskLayerIds: [panel.id] });
     expect(outline.state).toMatchObject({ outline: { color: '#112233', widthMm: 2, cornerStyle: 'sharp' } });
     const internal = (engine as unknown as { layerById(id: string): { runtime?: { deferred?: boolean; canvas?: HTMLCanvasElement } } | null }).layerById(rasterId);
     expect(internal?.runtime).toMatchObject({ deferred: true });
@@ -104,18 +103,18 @@ describe('canvas history and new project', () => {
     });
     const bubble = useStore.getState().layers.find(layer => layer.name === '吹き出し')!;
     const children = bubble.childIds.map(id => useStore.getState().layers.find(layer => layer.id === id)!);
-    expect(children.map(layer => layer.name)).toEqual(['本体', 'しっぽ', '吹き出し枠', '文字']);
-    expect(children[1].parameterLink).toMatchObject({ source: { layerId: children[0].id }, linkedParameterIds: ['appearance.color'] });
-    expect(children[2].state).toMatchObject({ outline: { cornerStyle: 'round' } });
-    expect(children[3].state).toMatchObject({ text: { direction: 'vertical', horizontalAlign: 'left', verticalAlign: 'top', lineHeight: 1.5, width: 84, height: 56 } });
-    expect(useStore.getState().textEditingId).toBe(children[3].id);
+    expect(children.map(layer => layer.name)).toEqual(['しっぽ', '吹き出し枠', '文字']);
+    expect(children[0].parameterLink).toMatchObject({ source: { layerId: bubble.id }, linkedParameterIds: ['appearance.color'] });
+    expect(children[1].state).toMatchObject({ outline: { cornerStyle: 'round' } });
+    expect(children[2].state).toMatchObject({ text: { direction: 'vertical', horizontalAlign: 'left', verticalAlign: 'top', lineHeight: 1.5, width: 84, height: 56 } });
+    expect(useStore.getState().textEditingId).toBe(children[2].id);
     await engine.undo();
     expect(useStore.getState().layers.some(layer => layer.id === bubble.id)).toBe(false);
     await engine.redo();
     expect(useStore.getState().layers.some(layer => layer.id === bubble.id)).toBe(true);
   });
 
-  it('converts a rotated rectangle to an editable polygon without changing its identity or sibling ownership', async () => {
+  it('converts a rotated rectangle to an editable polygon without changing its identity or children', async () => {
     await engine.newProject();
     engine.addShapeLayer({ kind: 'rect', x: 20, y: 30, width: 100, height: 60, rotation: Math.PI / 6, color: '#abcdef', strokeWidth: 7, paintMode: 'fill-outside' });
     const id = useStore.getState().activeLayerId;
@@ -126,16 +125,16 @@ describe('canvas history and new project', () => {
     engine.convertRectToPolygon(id);
     const converted = engine.getShape(id);
     expect(converted).toMatchObject({ kind: 'polygon', color: '#abcdef', strokeWidth: 7, paintMode: 'fill-outside' });
-    expect(useStore.getState().layers.find(layer => layer.id === id)).toMatchObject({ name: '多角形', childIds: [] });
+    expect(useStore.getState().layers.find(layer => layer.id === id)).toMatchObject({ name: '多角形', childIds: [childId] });
     expect(converted?.kind === 'polygon' ? converted.points : []).toHaveLength(4);
     await engine.undo();
     expect(engine.getShape(id)).toMatchObject({ kind: 'rect', rotation: Math.PI / 6 });
-    expect(useStore.getState().layers.find(layer => layer.id === id)).toMatchObject({ name: '四角形', childIds: [] });
+    expect(useStore.getState().layers.find(layer => layer.id === id)).toMatchObject({ name: '四角形', childIds: [childId] });
     await engine.redo();
     expect(engine.getShape(id)?.kind).toBe('polygon');
   });
 
-  it('splits a rectangle as one persistent action without duplicating siblings', async () => {
+  it('splits a rectangle and its child tree as one persistent structural history action', async () => {
     await engine.newProject();
     engine.addShapeLayer({ kind: 'rect', x: 0, y: 0, width: 100, height: 100, rotation: 0, color: '#123456', strokeWidth: 3, paintMode: 'fill-inside' });
     const sourceId = useStore.getState().activeLayerId;
@@ -150,7 +149,7 @@ describe('canvas history and new project', () => {
     const shapes = useStore.getState().layers.filter(layer => layer.type === 'shape');
     const rasters = useStore.getState().layers.filter(layer => layer.type === 'raster');
     expect(shapes).toHaveLength(2);
-    expect(rasters).toHaveLength(2);
+    expect(rasters).toHaveLength(3);
     expect(shapes.map(layer => layer.type === 'shape' && layer.state.shape)).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'polygon', paintMode: 'fill-inside', color: '#123456' }),
       expect.objectContaining({ kind: 'polygon', paintMode: 'fill-inside', color: '#123456' }),
@@ -163,22 +162,28 @@ describe('canvas history and new project', () => {
     expect(engine.getShape(sourceId)?.kind).toBe('rect');
     await engine.redo();
     expect(useStore.getState().layers.filter(layer => layer.type === 'shape')).toHaveLength(2);
-    expect(useStore.getState().layers.filter(layer => layer.type === 'raster')).toHaveLength(2);
+    expect(useStore.getState().layers.filter(layer => layer.type === 'raster')).toHaveLength(3);
     await (engine as unknown as { flushSave(): Promise<void> }).flushSave();
     const { page } = await loadActivePersisted();
     expect(page?.history.nodes.some(node => node.op?.kind === 'layerReplace')).toBe(true);
   });
 
-  it('rejects reparenting a shape under another ordinary layer', async () => {
+  it('aborts the whole split when selected target polygons have an ancestor relationship', async () => {
     await engine.newProject();
     engine.addShapeLayer({ kind: 'rect', x: 0, y: 0, width: 100, height: 100, color: '#000', strokeWidth: 2, paintMode: 'stroke' });
     const parentId = useStore.getState().activeLayerId;
     engine.addShapeLayer({ kind: 'rect', x: 20, y: 20, width: 40, height: 40, color: '#000', strokeWidth: 2, paintMode: 'stroke' });
     const childId = useStore.getState().activeLayerId;
-    const historyBefore = useStore.getState().historyCount;
     engine.moveLayerAsTopChild(childId, parentId);
-    expect(useStore.getState().layers.find(layer => layer.id === childId)?.parentId).toBeNull();
+    engine.beginMultiSelect(parentId);
+    const historyBefore = useStore.getState().historyCount;
+    await (engine as unknown as { polygonSplit: { split(a: { x: number; y: number; pressure: number }, b: { x: number; y: number; pressure: number }): Promise<void> } }).polygonSplit.split(
+      { x: 50, y: -20, pressure: 1 },
+      { x: 50, y: 120, pressure: 1 },
+    );
+    expect(useStore.getState().layers.filter(layer => layer.type === 'shape')).toHaveLength(2);
     expect(useStore.getState().historyCount).toBe(historyBefore);
+    expect(useStore.getState().toolNotice).toContain('親子関係');
   });
 
   it('fills only the primary raster using mixed selected layers as the visible boundary', async () => {
@@ -370,17 +375,31 @@ describe('canvas history and new project', () => {
     expect(useStore.getState().selectedLayerIds).toEqual([id]);
   });
 
-  it('selects a canvas without selecting descendants and confines multi-selection to one scope', async () => {
+  it('selects then clears descendants from a long-pressed parent', async () => {
     await engine.newProject();
-    engine.addCanvasLayer();
-    const canvasId = useStore.getState().activeLayerId;
+    const parentId = useStore.getState().activeLayerId;
     engine.addRasterLayer();
     const childId = useStore.getState().activeLayerId;
-    expect(useStore.getState().layers.find(layer => layer.id === childId)?.parentId).toBe(canvasId);
-    engine.setActiveLayer(canvasId);
-    expect(useStore.getState().selectedLayerIds).toEqual([canvasId]);
-    engine.beginMultiSelect(childId);
-    expect(useStore.getState().selectedLayerIds).toEqual([childId]);
+    engine.addRasterLayer();
+    const grandChildId = useStore.getState().activeLayerId;
+    engine.moveLayerAsTopChild(grandChildId, childId);
+    engine.moveLayerAsTopChild(childId, parentId);
+    engine.setActiveLayer(parentId);
+    engine.toggleDescendantSelection(parentId);
+    expect(useStore.getState().multiSelectMode).toBe(true);
+    expect(useStore.getState().selectedLayerIds).toEqual([parentId, childId, grandChildId]);
+    engine.toggleDescendantSelection(parentId);
+    expect(useStore.getState().selectedLayerIds).toEqual([parentId]);
+    expect(useStore.getState().activeLayerId).toBe(parentId);
+    expect(useStore.getState().multiSelectMode).toBe(false);
+    engine.addRasterLayer();
+    const otherId = useStore.getState().activeLayerId;
+    engine.setActiveLayer(parentId);
+    engine.beginMultiSelect(otherId);
+    engine.toggleDescendantSelection(parentId);
+    engine.toggleDescendantSelection(parentId);
+    expect(useStore.getState().selectedLayerIds).toEqual([otherId]);
+    expect(useStore.getState().multiSelectMode).toBe(true);
   });
 
   it('stores raster merges as tiles-v1 across undo, redo and reload', async () => {
@@ -504,21 +523,23 @@ describe('canvas history and new project', () => {
     expect(useStore.getState().layers.find(layer => layer.id === targetId)?.opacity).toBe(1);
   });
 
-  it('allows effect merge only when one raster precedes it in the same scope', async () => {
+  it('enables effect merge only for the two exact single-raster structures', async () => {
     await engine.newProject();
-    engine.addCanvasLayer();
-    engine.addRasterLayer();
+    const rasterId = useStore.getState().activeLayerId;
     engine.addClipLayer();
     const effectId = useStore.getState().activeLayerId;
     expect(useStore.getState().layers.find(layer => layer.id === effectId)?.canMergeDown).toBe(true);
+    engine.moveLayerAsTopChild(effectId, rasterId);
+    expect(useStore.getState().layers.find(layer => layer.id === effectId)?.canMergeDown).toBe(true);
     engine.addRasterLayer();
     const extraId = useStore.getState().activeLayerId;
-    const effect = useStore.getState().layers.find(layer => layer.id === effectId)!;
-    engine.moveLayer(extraId, {parentId: effect.parentId, index: 0});
+    engine.moveLayerAsTopChild(extraId, rasterId);
+    expect(useStore.getState().layers.find(layer => layer.id === effectId)?.canMergeDown).toBe(false);
+    engine.moveLayerAsTopChild(extraId, effectId);
     expect(useStore.getState().layers.find(layer => layer.id === effectId)?.canMergeDown).toBe(false);
   });
 
-  it('retains authored mask references through deletion, undo and redo', async () => {
+  it('detaches clip mask references on source deletion and restores both through history', async () => {
     await engine.newProject();
     const maskId = useStore.getState().activeLayerId;
     engine.addClipLayer();
@@ -526,12 +547,12 @@ describe('canvas history and new project', () => {
     engine.commitLayerProps(clipId, { state: { maskLayerIds: [] } }, { state: { maskLayerIds: [maskId] } }, 'マスク');
     engine.addRasterLayer();
     engine.removeLayer(maskId);
-    expect(layerMaskIds(useStore.getState().layers.find(layer => layer.id === clipId)?.state)).toEqual([maskId]);
+    expect(layerMaskIds(useStore.getState().layers.find(layer => layer.id === clipId)?.state)).toEqual([]);
     await engine.undo();
     expect(useStore.getState().layers.some(layer => layer.id === maskId)).toBe(true);
     expect(layerMaskIds(useStore.getState().layers.find(layer => layer.id === clipId)?.state)).toEqual([maskId]);
     await engine.redo();
-    expect(layerMaskIds(useStore.getState().layers.find(layer => layer.id === clipId)?.state)).toEqual([maskId]);
+    expect(layerMaskIds(useStore.getState().layers.find(layer => layer.id === clipId)?.state)).toEqual([]);
   });
 });
 

@@ -137,17 +137,17 @@ export class ShapeEditController {
 
   private collectMoveSnapLines(editingId: string): SnapLines {
     const others = this.engine.layerService.layers.flatMap(layer => {
-      if (layer.parentId !== this.engine.layerService.byId(editingId)?.parentId || layer.id === editingId || !layer.visible) return [];
+      if (layer.id === editingId || !layer.visible) return [];
       if (layer.type === 'shape') return [shapeBounds(layer.state.shape)];
       if (layer.type === 'image') return [shapeBounds(imageFrameShape(layer.state.placement))];
       return [];
     });
-    return collectSnapLines(this.engine.artboard, others, this.engine.layerService.byId(editingId)?.parentId === null);
+    return collectSnapLines(this.engine.artboard, others);
   }
 
   private collectVertexSnapPoints(editingId: string, selectedIndex: number): ShapePoint[] {
     return this.engine.layerService.layers.flatMap(layer => {
-      if (layer.parentId !== this.engine.layerService.byId(editingId)?.parentId || layer.type !== 'shape' || !layer.visible || layer.state.shape.kind !== 'polygon') return [];
+      if (layer.type !== 'shape' || !layer.visible || layer.state.shape.kind !== 'polygon') return [];
       return shapePoints(layer.state.shape).filter((_, index) => layer.id !== editingId || index !== selectedIndex);
     });
   }

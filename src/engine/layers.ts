@@ -11,7 +11,6 @@ import {
 } from '../model';
 import { DEFAULT_ADJUST } from '../model/adjust';
 import { DEFAULT_OUTLINE } from '../model/outline';
-import { IDENTITY } from './geometry/homography';
 
 export type LayerOf<K extends LayerType = LayerType> = LayerCommon & {
   type: K;
@@ -26,8 +25,6 @@ export type ClipLayer = LayerOf<'clip'>;
 export type ShapeLayer = LayerOf<'shape'>;
 export type TextLayer = LayerOf<'text'>;
 export type ImageLayer = LayerOf<'image'>;
-export type CanvasLayer = LayerOf<'canvas'>;
-export type TransformLayer = LayerOf<'transform'>;
 export type Layer = { [K in LayerType]: LayerOf<K> }[LayerType];
 
 let idCounter = 0;
@@ -152,14 +149,6 @@ export function createClipLayer(name: string, id = newLayerId()): ClipLayer {
     state: { maskLayerIds: [] },
     runtime: undefined,
   };
-}
-
-export function createCanvasLayer(name: string, id = newLayerId()): CanvasLayer {
-  return { ...defaultLayerCommon(id, name), type: 'canvas', state: { propagateTransforms: true }, runtime: undefined };
-}
-
-export function createTransformLayer(name: string, id = newLayerId()): TransformLayer {
-  return { ...defaultLayerCommon(id, name), type: 'transform', state: { matrix: [...IDENTITY] }, runtime: undefined };
 }
 
 export function createShapeLayer(name: string, shape: ShapeParams, id = newLayerId(), snapEnabled = true): ShapeLayer {
