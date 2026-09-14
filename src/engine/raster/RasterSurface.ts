@@ -7,6 +7,7 @@ import {
   type RasterAsset,
   type StoredRasterContent,
 } from './RasterAssetRepository';
+import { drawTransformedRegion } from './drawTransformedRegion';
 import {
   intersect,
   rasterCanvas,
@@ -106,10 +107,29 @@ export class RasterSurface {
     validateRect(rect);
     ctx.save();
     try {
-      ctx.translate(rect.x, rect.y);
       ctx.beginPath();
-      ctx.rect(0, 0, rect.w, rect.h);
+      ctx.rect(rect.x, rect.y, rect.w, rect.h);
       ctx.clip();
+      const m = ctx.getTransform();
+      if (
+        m.a === 1 && m.b === 0 && m.c === 0 && m.d === 1 &&
+        Number.isInteger(m.e) && Number.isInteger(m.f)
+      )
+        this.drawTiles(ctx, rect);
+      else
+        drawTransformedRegion(ctx, rect, (target, input) =>
+          this.drawTiles(target, input),
+        );
+    } finally {
+      ctx.restore();
+    }
+  }
+
+  private drawTiles(ctx: CanvasRenderingContext2D, rect: PixelRect): void {
+    ctx.save();
+    try {
+      // Keep bitmap coordinates local for content far from the world origin.
+      ctx.translate(rect.x, rect.y);
       for (const { tx, ty, asset } of this.queryTiles(rect)) {
         if (!asset.canvas)
           throw new Error('画像タイルの読込が完了していません');

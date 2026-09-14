@@ -104,6 +104,54 @@ const rectCorners = (x: number, y: number, w: number, h: number) => [
   { x, y: y + h },
 ];
 describe('sparse raster storage and transactions', () => {
+  it.each([
+    [0.73, 0, 1],
+    [1.37, 0, 1],
+    [2.1, 0.23, 0.6],
+    [0.31, -0.4, 0.6],
+    [1, 0, 0.6],
+  ])('draws continuous tile boundaries at scale %s and angle %s', (scale, angle, opacity) => {
+    const source = new RasterSurface();
+    const edit = new RasterEditSession(source);
+    const region = { x: -512, y: -512, w: 1024, h: 1024 };
+    const paint = (ctx: CanvasRenderingContext2D) => {
+      ctx.fillStyle = 'rgba(230,40,20,0.5)';
+      ctx.fillRect(-400, -400, 800, 800);
+      ctx.fillStyle = '#222222';
+      ctx.fillRect(-300, -30, 600, 60);
+      ctx.strokeStyle = '#ee493c';
+      ctx.lineWidth = 47;
+      ctx.beginPath();
+      ctx.moveTo(-350, -300);
+      ctx.lineTo(300, 350);
+      ctx.stroke();
+    };
+    edit.mutateRegion(region, paint);
+    edit.commit();
+    const whole = document.createElement('canvas');
+    whole.width = whole.height = 1024;
+    whole.getContext('2d')!.putImageData(source.readRegion(region), 0, 0);
+    const render = (draw: (ctx: CanvasRenderingContext2D) => void) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 900;
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = '#9fb7cf';
+      ctx.fillRect(0, 0, 900, 900);
+      ctx.translate(450.3, 449.7);
+      ctx.rotate(angle);
+      ctx.scale(scale, scale);
+      ctx.globalAlpha = opacity;
+      draw(ctx);
+      return ctx.getImageData(0, 0, 900, 900).data;
+    };
+    const actual = render(ctx => source.drawRegion(ctx, region));
+    const expected = render(ctx => ctx.drawImage(whole, -512, -512));
+    let maxError = 0;
+    for (let i = 0; i < actual.length; i++)
+      maxError = Math.max(maxError, Math.abs(actual[i] - expected[i]));
+    expect(maxError).toBeLessThanOrEqual(1);
+  });
+
   it('shares fully selected tiles without copying pixels and cancels exactly', () => {
     const source = new RasterSurface();
     dot(source, -257, -1);
