@@ -1,15 +1,21 @@
-import { Button, Dialog, DialogActions, DialogContent, DialogTitle } from '@mui/material';
+import { Button, Dialog, DialogActions, DialogContent, DialogTitle, Popover } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../state/store';
 import { useEngine } from './EngineContext';
 import { NameEditor } from './NameEditor';
+import { originTowardCenter } from './popoverPosition';
 
 type Target = { type: 'layer' | 'tool' | 'stack'; id: string };
+
+function layerAnchor(id: string) {
+  return [...document.querySelectorAll<HTMLElement>('[data-layer-id]')]
+    .find(element => element.dataset.layerId === id) ?? null;
+}
 
 /** キーボード対象の種類に依存する名称変更・削除をUI側で実行する。 */
 export function ShortcutActions() {
   const engine = useEngine();
-  const [rename, setRename] = useState<{ target: Target; name: string } | null>(null);
+  const [rename, setRename] = useState<{ target: Target; name: string; anchor: HTMLElement | null } | null>(null);
   const submit = useRef<(() => boolean) | null>(null);
 
   useEffect(() => {
@@ -32,7 +38,9 @@ export function ShortcutActions() {
       if (!target) return;
       if (command === 'rename-selection') {
         const name = nameOf(target);
-        if (name !== null) setRename({ target, name });
+        if (name !== null) {
+          setRename({ target, name, anchor: target.type === 'layer' ? layerAnchor(target.id) : null });
+        }
         return;
       }
       if (target.type === 'layer') {
@@ -54,9 +62,8 @@ export function ShortcutActions() {
     return engine.renameToolStack(rename.target.id, value);
   };
 
-  return (
-    <Dialog open={!!rename} onClose={() => setRename(null)} maxWidth="xs" fullWidth>
-      <DialogTitle>名称を変更</DialogTitle>
+  const content = <>
+      <DialogTitle id="selection-rename-title">名称を変更</DialogTitle>
       <DialogContent>
         {rename && (
           <NameEditor
@@ -75,6 +82,34 @@ export function ShortcutActions() {
         <Button onMouseDown={event => event.preventDefault()} onClick={() => setRename(null)}>キャンセル</Button>
         <Button variant="contained" onMouseDown={event => event.preventDefault()} onClick={() => submit.current?.()}>変更</Button>
       </DialogActions>
+    </>;
+
+  if (rename?.target.type === 'layer' && rename.anchor) {
+    const origin = originTowardCenter(rename.anchor);
+    return (
+      <Popover
+        open
+        anchorEl={rename.anchor}
+        onClose={() => setRename(null)}
+        anchorOrigin={origin.anchorOrigin}
+        transformOrigin={origin.transformOrigin}
+        marginThreshold={8}
+        slotProps={{
+          paper: {
+            role: 'dialog',
+            'aria-labelledby': 'selection-rename-title',
+            sx: { width: 320, maxWidth: 'calc(100vw - 16px)' },
+          },
+        }}
+      >
+        {content}
+      </Popover>
+    );
+  }
+
+  return (
+    <Dialog open={!!rename} onClose={() => setRename(null)} maxWidth="xs" fullWidth>
+      {content}
     </Dialog>
   );
 }

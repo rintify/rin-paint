@@ -4,34 +4,13 @@ import { TRANSPARENT } from '../model';
 import { ColorHistoryGrid } from './ColorHistoryGrid';
 import { LabeledControl } from './inspectorLayout';
 import { hexToHsv, hsvToHex, hueHex, parseHex, type Hsv } from './colorMath';
+import { originTowardCenter } from './popoverPosition';
 
 function fractionFromPointer(event: ReactPointerEvent<HTMLElement>, horizontal: boolean, vertical: boolean) {
   const rect = event.currentTarget.getBoundingClientRect();
   const x = horizontal ? Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)) : 0;
   const y = vertical ? Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) : 0;
   return { x, y };
-}
-
-function originTowardCenter(anchor: HTMLElement | null) {
-  if (!anchor) {
-    return {
-      anchorOrigin: { vertical: 'bottom' as const, horizontal: 'right' as const },
-      transformOrigin: { vertical: 'top' as const, horizontal: 'left' as const },
-    };
-  }
-  const rect = anchor.getBoundingClientRect();
-  const towardRight = rect.left + rect.width / 2 < window.innerWidth / 2;
-  const towardBottom = rect.top + rect.height / 2 < window.innerHeight / 2;
-  return {
-    anchorOrigin: {
-      vertical: towardBottom ? 'bottom' as const : 'top' as const,
-      horizontal: towardRight ? 'right' as const : 'left' as const,
-    },
-    transformOrigin: {
-      vertical: towardBottom ? 'top' as const : 'bottom' as const,
-      horizontal: towardRight ? 'left' as const : 'right' as const,
-    },
-  };
 }
 
 export function ColorPickerDialog({

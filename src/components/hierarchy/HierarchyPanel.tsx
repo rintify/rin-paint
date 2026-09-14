@@ -8,13 +8,13 @@ import {
   Badge,
   Box,
   Button,
-  Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   IconButton,
   Menu,
   MenuItem,
+  Popover,
   Stack,
   Tooltip,
   Typography,
@@ -33,6 +33,7 @@ import { NameEditor } from '../NameEditor';
 import { LayerControlsPalette } from './LayerControlsPalette';
 import { Thumb } from './Thumb';
 import { HIERARCHY_FOCUS_EVENT } from './hierarchyEvents';
+import { originTowardCenter } from '../popoverPosition';
 
 interface VisibleRow { id: string; depth: number; index: number; exiting?: boolean }
 interface DropTarget {
@@ -78,9 +79,9 @@ export function HierarchyPanel() {
     ),
     [rootLayerIds, layers, activeId, multi, selectedIds, focusRequest],
   );
-  const [rename, setRename] = useState<{ id: string; value: string } | null>(null);
+  const [rename, setRename] = useState<{ id: string; value: string; anchor: HTMLElement } | null>(null);
   const renameSubmit = useRef<(() => boolean) | null>(null);
-  const pendingRename = useRef<{ id: string; value: string } | null>(null);
+  const pendingRename = useRef<{ id: string; value: string; anchor: HTMLElement } | null>(null);
   const longPressTarget = useRef<string | null>(null);
   const ignoreClick = useRef(false);
   const longPress = useLongPress(() => {
@@ -396,6 +397,7 @@ export function HierarchyPanel() {
                   + (dragId === meta.id ? ' is-dragging' : '')
                   + (guide?.edge === 'inside' ? ' drop-inside' : '')
                 }
+                data-layer-id={meta.id}
                 aria-current={isPrimary ? 'true' : undefined}
                 style={{
                   top: spacing.top + row.index * ROW_HEIGHT,
@@ -596,7 +598,13 @@ export function HierarchyPanel() {
         </MenuItem>
         <MenuItem
           onClick={() => {
-            if (menu && menuMeta) pendingRename.current = { id: menu.id, value: menuMeta.name };
+            if (menu && menuMeta) {
+              pendingRename.current = {
+                id: menu.id,
+                value: menuMeta.name,
+                anchor: menu.anchor.closest<HTMLElement>('.layer-row') ?? menu.anchor,
+              };
+            }
             setMenu(null);
           }}
         >
@@ -632,8 +640,22 @@ export function HierarchyPanel() {
           削除
         </MenuItem>
       </Menu>
-      <Dialog open={!!rename} onClose={() => setRename(null)} maxWidth="xs" fullWidth>
-        <DialogTitle>レイヤー名を変更</DialogTitle>
+      <Popover
+        open={!!rename}
+        anchorEl={rename?.anchor}
+        onClose={() => setRename(null)}
+        anchorOrigin={originTowardCenter(rename?.anchor ?? null).anchorOrigin}
+        transformOrigin={originTowardCenter(rename?.anchor ?? null).transformOrigin}
+        marginThreshold={8}
+        slotProps={{
+          paper: {
+            role: 'dialog',
+            'aria-labelledby': 'layer-rename-title',
+            sx: { width: 320, maxWidth: 'calc(100vw - 16px)' },
+          },
+        }}
+      >
+        <DialogTitle id="layer-rename-title">レイヤー名を変更</DialogTitle>
         <DialogContent>
           {rename && (
             <NameEditor
@@ -660,7 +682,7 @@ export function HierarchyPanel() {
             変更
           </Button>
         </DialogActions>
-      </Dialog>
+      </Popover>
       {active && palette.id === active.id && palette.open && (
         <LayerControlsPalette
           meta={active}

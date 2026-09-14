@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EngineEvents } from '../engine/events';
 import type { PaintEngine } from '../engine/PaintEngine';
+import type { LayerMeta } from '../model';
 import { useStore } from '../state/store';
 import { EngineProvider } from './EngineContext';
 import { ShortcutActions } from './ShortcutActions';
@@ -39,6 +40,17 @@ afterEach(async () => {
 });
 
 describe('ShortcutActions', () => {
+  it('opens a layer rename beside its hierarchy row', async () => {
+    const layer = { id: 'layer', name: 'レイヤー' } as LayerMeta;
+    useStore.getState().set({ layers: [layer], activeLayerId: layer.id });
+    const row = document.body.appendChild(document.createElement('div'));
+    row.dataset.layerId = layer.id;
+    useStore.getState().set({ shortcutTarget: { type: 'layer', id: layer.id } });
+    await act(async () => engine.events.emit('shortcutCommand', { command: 'rename-selection' }));
+    expect(document.querySelector('[role="dialog"]')?.closest('.MuiPopover-root')).not.toBeNull();
+    row.remove();
+  });
+
   it('renames the selected tool through the shared name dialog', async () => {
     const tool = useStore.getState().tools[0];
     useStore.getState().set({ shortcutTarget: { type: 'tool', id: tool.id } });
