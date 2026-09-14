@@ -15,10 +15,14 @@ interface SelectionGlow {
 
 export class CursorTool implements Tool {
   private glow: SelectionGlow | null = null;
+  private deactivateTimer: ReturnType<typeof setTimeout> | null = null;
+  private useStartedAt: number | null = null;
 
   constructor(private engine: PaintEngine) {}
 
   onDown(point: StrokePoint, _event: PointerEvent): void {
+    this.cancelPendingDeactivate();
+    this.useStartedAt = null;
     const hit = this.engine.pickLayerAt(point.x, point.y);
     if (!hit) return;
     this.engine.setActiveLayer(hit.layerId);
@@ -27,10 +31,18 @@ export class CursorTool implements Tool {
 
   onMove(_point: StrokePoint, _event: PointerEvent): void {}
   onUp(_point: StrokePoint, _event: PointerEvent): void {
-    if (this.glow) this.engine.notifyPaletteToolUsed();
+    if (this.useStartedAt === null) return;
+    const remaining = Math.max(0, this.useStartedAt + GLOW_MS - performance.now());
+    this.deactivateTimer = setTimeout(() => {
+      this.deactivateTimer = null;
+      this.useStartedAt = null;
+      this.engine.notifyPaletteToolUsed();
+    }, remaining);
   }
 
   cancel(): void {
+    this.cancelPendingDeactivate();
+    this.useStartedAt = null;
     this.clearGlow();
   }
 
@@ -69,7 +81,9 @@ export class CursorTool implements Tool {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, silhouette.width, silhouette.height);
     mask.release();
-    this.glow = { silhouette, startedAt: performance.now() };
+    const startedAt = performance.now();
+    this.glow = { silhouette, startedAt };
+    this.useStartedAt = startedAt;
     this.engine.requestOverlayRender();
   }
 
@@ -77,5 +91,11 @@ export class CursorTool implements Tool {
     if (!this.glow) return;
     this.glow = null;
     this.engine.requestOverlayRender();
+  }
+
+  private cancelPendingDeactivate(): void {
+    if (this.deactivateTimer === null) return;
+    clearTimeout(this.deactivateTimer);
+    this.deactivateTimer = null;
   }
 }

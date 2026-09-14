@@ -11,8 +11,6 @@ export interface ToolInstance {
   sizeMm: number;
   color: string;
   settings?: unknown;
-  /** パレットから使ったあと選択を外す。未指定はワンショットツールではオン。 */
-  autoDeactivateAfterUse?: boolean;
 }
 
 export interface ToolStack {

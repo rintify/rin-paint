@@ -19,7 +19,7 @@ import { DEFAULT_IMAGE_TOOL_SETTINGS } from '../tools/image/settings';
 import { DEFAULT_EYEDROPPER_TOOL_SETTINGS } from '../tools/eyedropper/settings';
 import { DEFAULT_PANEL_FRAME_TOOL_SETTINGS } from '../tools/panelFrame/settings';
 import { DEFAULT_SPEECH_BUBBLE_TOOL_SETTINGS } from '../tools/speechBubble/settings';
-import { getToolDescriptor, isToolKind, type ToolKind } from '../tools/registry';
+import { defaultToolSettings, getToolDescriptor, isToolKind, normalizeToolSettings, type ToolKind } from '../tools/registry';
 import { normalizeToolLayout } from './toolLayout';
 import { defaultShortcutBindings, type ShortcutBindings, type ShortcutId } from '../shortcuts';
 
@@ -45,32 +45,38 @@ export interface DefaultToolSetup {
 /** 初回起動用。全種類を1つずつ作り、図形系だけを1つのスタックへまとめる。 */
 export function defaultToolSetup(): DefaultToolSetup {
   // registry -> PaintEngine -> store の循環初期化を避けるため、初期値はデータだけで定義する。
-  const definitions: { kind: ToolKind; name: string; shape?: boolean; settings?: unknown; color?: string; sizeMm?: number }[] = [
-    { kind: 'cursor', name: 'カーソル' },
+  const definitions: { kind: ToolKind; name: string; shape?: boolean; settings?: unknown; color?: string; sizeMm?: number; autoDeactivateAfterUse?: boolean }[] = [
+    { kind: 'cursor', name: 'カーソル', autoDeactivateAfterUse: true },
     { kind: 'pen', name: 'ペン', settings: { ...DEFAULT_PEN_DETAIL_SETTINGS } },
     { kind: 'line', name: '直線', shape: true },
     { kind: 'rect', name: '四角', shape: true, settings: { ...DEFAULT_SHAPE_TOOL_SETTINGS } },
     { kind: 'ellipse', name: '楕円', shape: true, settings: { ...DEFAULT_SHAPE_TOOL_SETTINGS } },
     { kind: 'polygon', name: '多角形', shape: true, settings: { ...DEFAULT_SHAPE_TOOL_SETTINGS } },
-    { kind: 'panelFrame', name: 'コマ', shape: true, color: '#ffffff', sizeMm: 1, settings: { ...DEFAULT_PANEL_FRAME_TOOL_SETTINGS } },
-    { kind: 'speechBubble', name: '吹き出し', shape: true, color: '#ffffff', sizeMm: 1, settings: { ...DEFAULT_SPEECH_BUBBLE_TOOL_SETTINGS } },
+    { kind: 'panelFrame', name: 'コマ', shape: true, color: '#ffffff', sizeMm: 1, settings: { ...DEFAULT_PANEL_FRAME_TOOL_SETTINGS }, autoDeactivateAfterUse: true },
+    { kind: 'speechBubble', name: '吹き出し', shape: true, color: '#ffffff', sizeMm: 1, settings: { ...DEFAULT_SPEECH_BUBBLE_TOOL_SETTINGS }, autoDeactivateAfterUse: true },
     { kind: 'fill', name: '塗りつぶし', settings: { ...DEFAULT_FILL_TOOL_SETTINGS } },
     { kind: 'eyedropper', name: 'スポイト', settings: { ...DEFAULT_EYEDROPPER_TOOL_SETTINGS } },
-    { kind: 'polygonSplit', name: '多角形分断', settings: { ...DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS } },
+    { kind: 'polygonSplit', name: '多角形分断', settings: { ...DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS }, autoDeactivateAfterUse: true },
     { kind: 'lasso', name: '選択' },
     { kind: 'move', name: '移動変形' },
     { kind: 'blur', name: 'ぼかし' },
-    { kind: 'text', name: '文字', settings: { ...DEFAULT_TEXT_TOOL_SETTINGS } },
-    { kind: 'image', name: '画像', settings: { ...DEFAULT_IMAGE_TOOL_SETTINGS } },
+    { kind: 'text', name: '文字', settings: { ...DEFAULT_TEXT_TOOL_SETTINGS }, autoDeactivateAfterUse: true },
+    { kind: 'image', name: '画像', settings: { ...DEFAULT_IMAGE_TOOL_SETTINGS }, autoDeactivateAfterUse: true },
   ];
-  const tools = definitions.map(({ kind, name, settings, color, sizeMm }) => {
+  const tools = definitions.map(({ kind, name, settings, color, sizeMm, autoDeactivateAfterUse }) => {
+    const normalizedSettings = {
+      ...(settings && typeof settings === 'object' ? settings : {}),
+      ...(autoDeactivateAfterUse ? { autoDeactivateAfterUse: true } : {}),
+    };
     return {
       id: newToolInstanceId(),
       kind,
       name,
       sizeMm: sizeMm ?? DEFAULT_SIZE_MM,
       color: color ?? '#222222',
-      ...(settings !== undefined ? { settings } : {}),
+      ...(settings !== undefined || autoDeactivateAfterUse
+        ? { settings: normalizedSettings }
+        : {}),
     } satisfies ToolInstance;
   });
   const shapeKinds = new Set(definitions.filter(item => item.shape).map(item => item.kind));
@@ -135,6 +141,7 @@ export interface PaintState {
   historyPrunableCount: number;
 
   timelapseEnabled: boolean;
+  showEffectRangeGuides: boolean;
   storageUsage: StorageUsage;
 
   selectionActive: boolean;
@@ -159,7 +166,6 @@ export interface PaintState {
   setPenColor: (c: string) => void;
   /** アクティブツールの settings を部分更新 (descriptor.normalize でクランプ) */
   updateActiveToolSettings: (patch: Record<string, unknown>) => void;
-  setActiveToolAutoDeactivateAfterUse: (enabled: boolean) => void;
   activateTool: (id: string) => void;
   deactivateTool: () => void;
   addTool: (kind: ToolKind) => void;
@@ -217,6 +223,7 @@ export const useStore = create<PaintState>((set) => ({
   historyPrunableCount: 0,
 
   timelapseEnabled: true,
+  showEffectRangeGuides: true,
   storageUsage: { history: 0, project: 0, timelapse: 0, other: 0, total: 0 },
 
   selectionActive: false,
@@ -262,22 +269,12 @@ export const useStore = create<PaintState>((set) => ({
     set((s) => {
       if (!s.activeToolId || !s.tool) return s;
       const descriptor = getToolDescriptor(s.tool);
-      if (!descriptor?.settings) return s;
+      if (!descriptor?.settings && !descriptor?.autoDeactivateAfterUse) return s;
       const inst = s.tools.find((t) => t.id === s.activeToolId);
-      const current = descriptor.settings.normalize(inst?.settings) as Record<string, unknown>;
-      const next = descriptor.settings.normalize({ ...current, ...patch });
+      const current = normalizeToolSettings(s.tool, inst?.settings);
+      const next = normalizeToolSettings(s.tool, { ...current, ...patch });
       return {
         tools: s.tools.map((t) => (t.id === s.activeToolId ? { ...t, settings: next } : t)),
-      };
-    }),
-
-  setActiveToolAutoDeactivateAfterUse: (enabled) =>
-    set((s) => {
-      if (!s.activeToolId) return s;
-      return {
-        tools: s.tools.map((t) =>
-          t.id === s.activeToolId ? { ...t, autoDeactivateAfterUse: enabled } : t,
-        ),
       };
     }),
 
@@ -307,7 +304,9 @@ export const useStore = create<PaintState>((set) => ({
         name: count === 0 ? base : `${base} ${count + 1}`,
         sizeMm: descriptor.initialSizeMm ?? s.penSizeMm,
         color: descriptor.initialColor ?? s.penColor,
-        ...(descriptor.settings ? { settings: descriptor.settings.default() } : {}),
+        ...(descriptor.settings || descriptor.autoDeactivateAfterUse
+          ? { settings: defaultToolSettings(kind) }
+          : {}),
       };
       return {
         tools: [...s.tools, inst],

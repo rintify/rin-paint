@@ -19,6 +19,7 @@ import {
   isToolKind,
   toolSupportsLayerType,
   normalizeEyedropperToolSettings,
+  normalizeToolSettings,
   resolveCursorToolSettings,
   type EyedropperSource,
   type ToolKind,
@@ -293,6 +294,15 @@ export class PaintEngine {
     );
   }
   /** @internal */ drawToolOverlays(ctx: CanvasRenderingContext2D): void {
+    const state = useStore.getState();
+    if (state.showEffectRangeGuides) {
+      const ids = state.multiSelectMode ? state.selectedLayerIds : [this.layerService.activeLayerId];
+      for (const id of ids) {
+        const layer = this.layerService.byId(id);
+        if (layer?.visible && layer.opacity > 0 && (layer.type === 'adjust' || layer.type === 'clip' || layer.type === 'outline'))
+          this.compositor.drawEffectRangeGuide(ctx, layer, this.uiScale());
+      }
+    }
     const active = this.activeTool();
     active.drawOverlay?.(ctx);
     const cursor = this.toolCache.get('cursor');
@@ -536,10 +546,12 @@ export class PaintEngine {
     st.set({ timelapseEnabled: enabled });
     this.recorder.setEnabled(enabled);
   }
-  setActiveToolAutoDeactivateAfterUse(enabled: boolean): void {
-    useStore.getState().setActiveToolAutoDeactivateAfterUse(enabled);
+  setEffectRangeGuidesVisible(visible: boolean): void {
+    const state = useStore.getState();
+    if (state.showEffectRangeGuides === visible) return;
+    state.set({ showEffectRangeGuides: visible });
+    this.requestOverlayRender();
   }
-
   /** Palette-activated one-shot tools can drop selection after a completed use. */
   notifyPaletteToolUsed(): void {
     if (this.toolActivationOrigin !== 'palette') return;
@@ -549,7 +561,7 @@ export class PaintEngine {
     const inst = st.activeToolId
       ? st.tools.find((tool) => tool.id === st.activeToolId)
       : undefined;
-    if (inst?.autoDeactivateAfterUse === false) return;
+    if (inst && normalizeToolSettings(kind, inst.settings).autoDeactivateAfterUse === false) return;
     this.clearActiveToolSelection();
     this.requestRender();
     this.syncStore();

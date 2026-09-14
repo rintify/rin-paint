@@ -46,6 +46,7 @@ import {
 import {
   canReparent,
   closestRasterOrRoot,
+  flattenRenderOrder,
   structuralLowerId,
 } from '../layerTree';
 import { placedImage } from '../image/frame';
@@ -834,28 +835,50 @@ export class LayerService {
   removeLayer(id: string): void {
     if (this.engine.isBusy()) return;
     this.finishFloating();
-    const location = this.locationOf(id);
-    if (!location) return;
+    const state = useStore.getState();
+    const requested = state.multiSelectMode && state.selectedLayerIds.includes(id)
+      ? state.selectedLayerIds
+      : [id];
+    const selected = new Set(requested.filter((layerId) => !!this.byId(layerId)));
+    // 親子を同時選択していても、親の削除履歴に子を一度だけ含める。
+    const roots = [...selected].filter((layerId) => {
+      let parentId = this.byId(layerId)?.parentId ?? null;
+      while (parentId) {
+        if (selected.has(parentId)) return false;
+        parentId = this.byId(parentId)?.parentId ?? null;
+      }
+      return true;
+    });
+    if (!roots.length) return;
+    const renderIndex = new Map(
+      flattenRenderOrder(this.rootLayerIds, this.layers).map((layerId, index) => [layerId, index]),
+    );
+    const entries = roots.flatMap((rootId) => {
+      const location = this.locationOf(rootId);
+      if (!location) return [];
+      const snapshots = this.descendantIds(rootId).map((layerId) =>
+        this.snapshotLayer(this.byId(layerId)!, true),
+      );
+      return [{ rootId, location, snapshots }];
+    }).sort((a, b) => (renderIndex.get(b.rootId) ?? 0) - (renderIndex.get(a.rootId) ?? 0));
+    if (!entries.length) return;
     const removed = this.byId(id);
     const targetActive = removed ? structuralLowerId(removed, this.rootLayerIds, this.layers) : null;
-    const ids = this.descendantIds(id);
-    const removeIds = new Set(ids);
-    const snapshots = ids.map((layerId) =>
-      this.snapshotLayer(this.byId(layerId)!, true),
-    );
+    const removeIds = new Set(entries.flatMap((entry) => entry.snapshots.map((snapshot) => snapshot.id)));
     const maskOps = this.detachMaskReferences(removeIds).map((change) => ({
       kind: 'layerProps' as const,
       layerId: change.layerId,
       before: { state: { maskLayerIds: change.before } },
       after: { state: { maskLayerIds: change.after } },
     }));
-    this.removeLayerInternal(id);
-    const removeOp = { kind: 'layerRemove' as const, location, snapshots };
+    const removeOps = entries.map(({ rootId, location, snapshots }) => {
+      this.removeLayerInternal(rootId);
+      return { kind: 'layerRemove' as const, location, snapshots };
+    });
+    const ops = [...removeOps, ...maskOps];
     this.engine.history.push(
-      maskOps.length
-      ? { kind: 'batch', ops: [removeOp, ...maskOps] }
-      : removeOp,
-      'レイヤー削除',
+      ops.length === 1 ? ops[0] : { kind: 'batch', ops },
+      removeOps.length > 1 ? '複数レイヤー削除' : 'レイヤー削除',
     );
     this.activeLayerId = targetActive && this.byId(targetActive) ? targetActive : '';
     if (!this.byId(this.activeLayerId)) this.fixActive();

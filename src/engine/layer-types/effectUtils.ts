@@ -302,7 +302,7 @@ function sharpenRasterCaps(
  * threshold crossing avoids the axis-aligned stair steps produced by tracing
  * whole pixel boxes.
  */
-function traceAlphaContours(
+export function traceAlphaContours(
   pixels: Uint8ClampedArray,
   width: number,
   height: number,

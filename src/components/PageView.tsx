@@ -1,5 +1,5 @@
 import { TransformLayerControls } from './TransformLayerControls';
-import { Box, Button, Chip, LinearProgress, Paper, Snackbar, Typography } from '@mui/material';
+import { Box, Button, Chip, FormControlLabel, LinearProgress, Paper, Snackbar, Switch, Typography } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import { useEngine } from './EngineContext';
 import { canTransformObjectType } from '../engine/layer-types/registry';
@@ -56,6 +56,11 @@ export function PageView() {
   const toolSelected = useStore((s) => !!s.tool);
   const fillProgress = useStore((s) => s.fillProgress);
   const toolNotice = useStore((s) => s.toolNotice);
+  const effectRangeSelection = useStore((s) => s.selectedLayerIds.some(id => {
+    const type = s.layers.find(layer => layer.id === id)?.type;
+    return type === 'adjust' || type === 'clip' || type === 'outline';
+  }));
+  const showEffectRangeGuides = useStore((s) => s.showEffectRangeGuides);
 
   useEffect(() => {
     const el = areaRef.current!;
@@ -127,6 +132,27 @@ export function PageView() {
       </Box>
       <canvas ref={mainRef} className="canvas-main" aria-hidden="true" />
       <canvas ref={overlayRef} className="canvas-overlay" aria-hidden="true" />
+      {effectRangeSelection && (
+        <Paper
+          elevation={6}
+          data-canvas-ui
+          sx={{ position: 'absolute', top: 14, right: 14, px: 1.25, py: .25, zIndex: 6 }}
+        >
+          <FormControlLabel
+            label="効果範囲"
+            labelPlacement="start"
+            sx={{ m: 0, gap: .5, '& .MuiFormControlLabel-label': { fontSize: 12 } }}
+            control={(
+              <Switch
+                size="small"
+                checked={showEffectRangeGuides}
+                onChange={(event) => engine.setEffectRangeGuidesVisible(event.target.checked)}
+                slotProps={{ input: { 'aria-label': '効果範囲を表示' } }}
+              />
+            )}
+          />
+        </Paper>
+      )}
       {selectionActive && (
         <Paper
           elevation={6}

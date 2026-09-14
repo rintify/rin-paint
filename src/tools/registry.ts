@@ -87,6 +87,35 @@ function legacySettings(kind: ToolKind, raw: Record<string, unknown>): unknown {
   }
 }
 
+export interface CommonToolSettings {
+  autoDeactivateAfterUse?: boolean;
+}
+
+/** 種類固有値と全ツール共通値を、同じ settings オブジェクトとして正規化する。 */
+export function normalizeToolSettings(
+  kind: ToolKind,
+  value: unknown,
+): Record<string, unknown> {
+  const descriptor = TOOL_REGISTRY[kind];
+  const raw = value && typeof value === 'object'
+    ? value as Record<string, unknown>
+    : {};
+  const specific = descriptor.settings?.normalize(value);
+  const normalized = specific && typeof specific === 'object'
+    ? { ...specific as Record<string, unknown> }
+    : {};
+  if (descriptor.autoDeactivateAfterUse) {
+    const candidate = raw.autoDeactivateAfterUse;
+    normalized.autoDeactivateAfterUse = typeof candidate === 'boolean' ? candidate : true;
+  }
+  return normalized;
+}
+
+export function defaultToolSettings(kind: ToolKind): Record<string, unknown> {
+  const descriptor = TOOL_REGISTRY[kind];
+  return normalizeToolSettings(kind, descriptor.settings?.default());
+}
+
 export function normalizeToolInstance(raw: unknown): ToolInstance | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
@@ -104,14 +133,10 @@ export function normalizeToolInstance(raw: unknown): ToolInstance | null {
     sizeMm: roundMm(clampSizeMm(o.sizeMm)),
     color: o.color,
   };
-  if (typeof o.autoDeactivateAfterUse === 'boolean') {
-    base.autoDeactivateAfterUse = o.autoDeactivateAfterUse;
-  }
-
-  if (descriptor.settings) {
+  if (descriptor.settings || descriptor.autoDeactivateAfterUse) {
     return {
       ...base,
-      settings: descriptor.settings.normalize(legacySettings(o.kind, o)),
+      settings: normalizeToolSettings(o.kind, legacySettings(o.kind, o)),
     };
   }
   return base;

@@ -6,7 +6,7 @@ import { EngineProvider } from '../components/EngineContext';
 import { ToolSettingsHost } from '../components/ToolSettingsHost';
 import { defaultTools, useStore } from '../state/store';
 import type { PaintEngine } from '../engine/PaintEngine';
-import type { ToolKind } from '../registry';
+import type { ToolKind } from './registry';
 
 const setAuto = vi.hoisted(() => vi.fn());
 const mockEngine = {

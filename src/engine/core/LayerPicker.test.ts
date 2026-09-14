@@ -308,6 +308,37 @@ describe('cursor tool selection', () => {
     expect(tool.overlayAnimated()).toBe(true);
   });
 
+  it('keeps the glow visible until its animation finishes before auto-deactivating', () => {
+    vi.useFakeTimers();
+    const maskCanvas = document.createElement('canvas');
+    maskCanvas.width = maskCanvas.height = 16;
+    const notifyPaletteToolUsed = vi.fn();
+    const tool = new CursorTool({
+      pickLayerAt: () => ({
+        layerId: 'front',
+        mask: {
+          canvas: maskCanvas,
+          ctx: maskCanvas.getContext('2d')!,
+          release() {},
+        },
+      }),
+      setActiveLayer() {},
+      notifyPaletteToolUsed,
+      requestOverlayRender() {},
+      uiScale: () => 1,
+      artboard: { w: 16, h: 16 },
+    } as unknown as PaintEngine);
+
+    tool.onDown({ x: 3, y: 3, pressure: 1 }, {} as PointerEvent);
+    tool.onUp({ x: 3, y: 3, pressure: 1 }, {} as PointerEvent);
+    expect(tool.overlayAnimated()).toBe(true);
+    expect(notifyPaletteToolUsed).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(301);
+    expect(notifyPaletteToolUsed).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
   it('does not change selection when the click misses every layer', () => {
     const setActiveLayer = vi.fn();
     const tool = new CursorTool({

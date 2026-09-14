@@ -113,10 +113,10 @@ describe('palette one-shot auto deselect', () => {
     });
     const engine = new PaintEngine();
     engine.selectToolInstance(cursor.id);
-    engine.setActiveToolAutoDeactivateAfterUse(false);
+    engine.updateActiveToolSettings({ autoDeactivateAfterUse: false });
     engine.notifyPaletteToolUsed();
     expect(useStore.getState().tool).toBe('cursor');
-    expect(useStore.getState().tools.find(tool => tool.id === cursor.id)?.autoDeactivateAfterUse).toBe(false);
+    expect(useStore.getState().tools.find(tool => tool.id === cursor.id)?.settings).toMatchObject({ autoDeactivateAfterUse: false });
   });
 });
 

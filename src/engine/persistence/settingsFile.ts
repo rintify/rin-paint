@@ -96,7 +96,8 @@ export function validateAppSettings(value: unknown): SavedAppSettings {
     || !Number.isFinite(raw.penSizeMm) || raw.penSizeMm < SIZE_MM_MIN || raw.penSizeMm > SIZE_MM_MAX
     || !Array.isArray(raw.colorHistory) || raw.colorHistory.length > 24
     || raw.colorHistory.some(color => !isColor(color))
-    || typeof raw.timelapseEnabled !== 'boolean') {
+    || typeof raw.timelapseEnabled !== 'boolean'
+    || (raw.showEffectRangeGuides !== undefined && typeof raw.showEffectRangeGuides !== 'boolean')) {
     throw new Error('設定値の形式が不正です');
   }
   if (raw.autoDeselectPaletteTools !== undefined && typeof raw.autoDeselectPaletteTools !== 'boolean') {
@@ -111,12 +112,14 @@ export function validateAppSettings(value: unknown): SavedAppSettings {
     penSizeMm: raw.penSizeMm,
     colorHistory: [...raw.colorHistory] as string[],
     timelapseEnabled: raw.timelapseEnabled,
+    showEffectRangeGuides: raw.showEffectRangeGuides === undefined ? true : raw.showEffectRangeGuides,
     shortcuts: raw.shortcuts === undefined ? defaultShortcutBindings() : validateShortcutBindings(raw.shortcuts),
   };
   const assigned = Object.values(normalized.shortcuts).filter(Boolean);
   if (new Set(assigned).size !== assigned.length) throw new Error('ショートカットの割り当てが重複しています');
   const comparable = { ...normalized } as Record<string, unknown>;
   if (raw.shortcuts === undefined) delete comparable.shortcuts;
+  if (raw.showEffectRangeGuides === undefined) delete comparable.showEffectRangeGuides;
   const rawComparable = { ...raw };
   delete rawComparable.autoDeselectPaletteTools;
   if (!sameValue(comparable, rawComparable)) throw new Error('設定ファイルに未対応の項目があります');
@@ -134,6 +137,7 @@ export function parseAppSettingsFile(value: unknown): SavedAppSettings {
   if (!rawSettings) throw new Error('設定ファイルの形式が不正です');
   const expectedSettings = { ...expected.settings } as Record<string, unknown>;
   if (rawSettings.shortcuts === undefined) delete expectedSettings.shortcuts;
+  if (rawSettings.showEffectRangeGuides === undefined) delete expectedSettings.showEffectRangeGuides;
   const fileSettings = { ...rawSettings };
   delete fileSettings.autoDeselectPaletteTools;
   if (!sameValue(

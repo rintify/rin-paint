@@ -42,6 +42,7 @@ describe('tool management', () => {
     const id = useStore.getState().activeToolId;
     useStore.getState().updateActiveToolSettings({ fontId: 'serif', sizePt: 32, direction: 'vertical', horizontalAlign: 'right', verticalAlign: 'bottom', lineHeight: 2 });
     expect(useStore.getState().tools.find(tool => tool.id === id)?.settings).toEqual({
+      autoDeactivateAfterUse: true,
       fontId: 'serif', sizePt: 32, direction: 'vertical', horizontalAlign: 'right', verticalAlign: 'bottom', lineHeight: 2,
     });
   });

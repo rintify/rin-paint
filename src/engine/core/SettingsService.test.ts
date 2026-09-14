@@ -18,6 +18,7 @@ function saved(color = '#123456'): SavedAppSettings {
     penSizeMm: 10,
     colorHistory: [color, '#abcdef'],
     timelapseEnabled: false,
+    showEffectRangeGuides: true,
     shortcuts: defaultShortcutBindings(),
   };
 }

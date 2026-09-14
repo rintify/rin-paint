@@ -3,7 +3,7 @@ import type { EffectPreview } from '../layer-types/types';
 import { shapeVisualPadding } from '../shapes';
 import { SparseAlphaTiles } from '../raster/SparseAlphaTiles';
 import { tileCoordinates, tileKey, tileRect } from '../raster/geometry';
-import { traceAlphaTileContours } from '../layer-types/effectUtils';
+import { traceAlphaContours, traceAlphaTileContours } from '../layer-types/effectUtils';
 import { RegionRenderer, type LayerHitCapture } from './RegionRenderer';
 import { layerHandler } from '../layer-types/registry';
 import type {
@@ -108,6 +108,11 @@ export class Compositor {
   );
   private readonly effectCache = new EffectCache();
   private readonly maskRenderer = new MaskRenderer(this.effectCache);
+  private readonly effectGuideCache = new Map<string, {
+    canvas: HTMLCanvasElement;
+    contours: Array<Array<{ x: number; y: number }>>;
+    tinted: boolean;
+  }>();
 
   textRenderer = new TextRenderer();
   dirty = true;
@@ -253,12 +258,14 @@ export class Compositor {
     this.fullDirty = true;
     this.damageByLayer.clear();
     this.overlayDirty = true;
+    this.effectGuideCache.clear();
     this.scheduleFrame();
   }
 
   invalidateLayer(layerId: string, rect: DirtyRect): void {
     const clipped = rect;
     this.dirty = true;
+    this.effectGuideCache.clear();
     if (!this.fullDirty) {
       const previous = this.damageByLayer.get(layerId);
       this.damageByLayer.set(
@@ -443,6 +450,79 @@ export class Compositor {
       hit.contribution.release();
     }
     return result;
+  }
+
+  /** 選択中の効果が実際に参照するアルファ範囲を、表示専用ギズモとして描く。 */
+  drawEffectRangeGuide(
+    ctx: CanvasRenderingContext2D,
+    layer: Layer,
+    uiScale: number,
+  ): void {
+    let guide = this.effectGuideCache.get(layer.id);
+    if (!guide) {
+      const { w, h } = this.engine.artboard;
+      let source: CanvasLease | null = null;
+      if (layer.type === 'outline') {
+        source = this.renderLayerHitMask(layer.id);
+      } else if (layer.type === 'adjust' || layer.type === 'clip') {
+        const capture = { effectId: layer.id, result: null as CanvasLease | null };
+        const art = this.renderArt({ x: 0, y: 0, w, h }, null, false, undefined, undefined, capture);
+        art.release();
+        source = capture.result;
+        if (source && layer.state.maskLayerIds.length) {
+          const mask = this.maskRenderer.render(
+            layer.state.maskLayerIds,
+            this.drawEnv(false),
+            (id) => this.engine.getMaskRevision(id),
+            { x: 0, y: 0, w, h },
+          );
+          if (mask) {
+            source.ctx.save();
+            source.ctx.globalCompositeOperation = 'destination-in';
+            source.ctx.globalAlpha = layer.opacity;
+            source.ctx.drawImage(mask.canvas, 0, 0);
+            source.ctx.restore();
+            mask.release();
+          }
+        }
+      }
+      if (!source) return;
+      const pixels = source.ctx.getImageData(0, 0, w, h).data;
+      const canvas = makeCanvas(w, h);
+      canvas.getContext('2d')!.drawImage(source.canvas, 0, 0);
+      source.release();
+      const tinted = layer.type !== 'outline';
+      if (tinted) {
+        const tint = canvas.getContext('2d')!;
+        tint.globalCompositeOperation = 'source-in';
+        tint.fillStyle = '#00a6ff';
+        tint.fillRect(0, 0, w, h);
+      }
+      guide = { canvas, contours: traceAlphaContours(pixels, w, h, 1), tinted };
+      this.effectGuideCache.set(layer.id, guide);
+    }
+    ctx.save();
+    if (guide.tinted) {
+      ctx.globalAlpha = 0.14;
+      ctx.drawImage(guide.canvas, 0, 0);
+      ctx.globalAlpha = 1;
+    }
+    ctx.beginPath();
+    for (const contour of guide.contours) {
+      if (!contour.length) continue;
+      ctx.moveTo(contour[0].x, contour[0].y);
+      for (let index = 1; index < contour.length; index++)
+        ctx.lineTo(contour[index].x, contour[index].y);
+      ctx.closePath();
+    }
+    ctx.setLineDash([6 * uiScale, 4 * uiScale]);
+    ctx.lineWidth = 3 * uiScale;
+    ctx.strokeStyle = 'rgba(0, 0, 0, .7)';
+    ctx.stroke();
+    ctx.lineWidth = 1.5 * uiScale;
+    ctx.strokeStyle = '#54c7ff';
+    ctx.stroke();
+    ctx.restore();
   }
 
   samplePixel(

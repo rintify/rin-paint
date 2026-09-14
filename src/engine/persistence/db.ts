@@ -53,6 +53,7 @@ export interface SavedAppSettings {
   penSizeMm: number;
   colorHistory: string[];
   timelapseEnabled: boolean;
+  showEffectRangeGuides: boolean;
   shortcuts: ShortcutBindings;
 }
 export interface SavedAppSettingsFile {

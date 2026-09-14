@@ -16,6 +16,7 @@ function settings(): SavedAppSettings {
     penSizeMm: 1,
     colorHistory: ['#112233', '#abcdef'],
     timelapseEnabled: false,
+    showEffectRangeGuides: true,
     shortcuts: defaultShortcutBindings(),
   };
 }
@@ -41,17 +42,17 @@ describe('app settings file', () => {
     const value = settings();
     value.tools.push({
       id: 'cursor', kind: 'cursor', name: 'カーソル', sizeMm: 1, color: '#112233',
-      autoDeactivateAfterUse: false,
+      settings: { autoDeactivateAfterUse: false },
     });
     value.toolLayout = [...value.toolLayout, { type: 'tool', toolId: 'cursor' }];
     expect(validateAppSettings(value).tools.at(-1)).toMatchObject({
-      kind: 'cursor', autoDeactivateAfterUse: false,
+      kind: 'cursor', settings: { autoDeactivateAfterUse: false },
     });
   });
 
   it('accepts a cursor tool instance without extra settings', () => {
     const value = settings();
-    value.tools.push({ id: 'cursor', kind: 'cursor', name: 'カーソル', sizeMm: 1, color: '#112233' });
+    value.tools.push({ id: 'cursor', kind: 'cursor', name: 'カーソル', sizeMm: 1, color: '#112233', settings: { autoDeactivateAfterUse: true } });
     value.toolLayout = [...value.toolLayout, { type: 'tool', toolId: 'cursor' }];
     expect(validateAppSettings(value).tools.map(tool => tool.kind)).toEqual(['lasso', 'blur', 'cursor']);
   });
