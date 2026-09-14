@@ -6,7 +6,7 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
 export function fillMissing<T>(loadDefaults: T, raw: unknown): T {
   if (raw === undefined) return structuredClone(loadDefaults);
   if (isPlainObject(loadDefaults) && isPlainObject(raw)) {
-    const result = {} as T;
+    const result = structuredClone(raw) as T;
     for (const key of Object.keys(loadDefaults) as (keyof T & string)[]) {
       if (Object.prototype.hasOwnProperty.call(raw, key)) {
         (result as Record<string, unknown>)[key] = fillMissing(

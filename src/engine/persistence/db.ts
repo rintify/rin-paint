@@ -244,6 +244,7 @@ export async function loadPage(
 }
 export function collectUnusedRasterAssets(): Promise<void> {
   return queued(async () => {
+    if (await loadOriginalProject()) return;
     const candidates = rasterAssetCollectionCandidates();
     const d = await db(),
       tx = d.transaction(['pages', 'clipboard', 'rasterAssets'], 'readwrite');
@@ -264,9 +265,14 @@ export async function loadPageThumbnail(id: string): Promise<Blob | undefined> {
 }
 
 /** Replace all project data with the given meta and pages. */
+export async function loadOriginalProject(): Promise<ArrayBuffer | undefined> {
+  return (await db()).get('kv', 'project-original');
+}
+
 export function replaceProject(
   meta: SavedProjectMeta,
   pages: SavedPage[],
+  originalBytes?: ArrayBuffer,
 ): Promise<void> {
   return queued(async () => {
     const blobs = await assetBlobs(pages);
@@ -295,6 +301,8 @@ export function replaceProject(
     for (const [id, blob] of Object.entries(blobs))
       void tx.objectStore('rasterAssets').put(blob, id);
     void tx.objectStore('kv').put(meta, 'project-meta');
+    if (originalBytes) void tx.objectStore('kv').put(originalBytes, 'project-original');
+    else void tx.objectStore('kv').delete('project-original');
     for (const page of pages) {
       void tx.objectStore('pages').put(page);
       if (page.thumbnail)

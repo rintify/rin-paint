@@ -183,6 +183,8 @@ export interface LayerCapabilities<K extends LayerType> {
 export interface LayerSchema<K extends LayerType> {
   loadDefaults: LayerOf<K>['state'];
   createDefaults: LayerOf<K>['state'];
+  /** Convert older owned state to this module revision before validation. */
+  migrate?(raw: unknown, fromRevision: number): LoadResult<unknown>;
   load(raw: unknown): LoadResult<LayerOf<K>['state']>;
 }
 

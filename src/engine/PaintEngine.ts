@@ -191,6 +191,7 @@ export class PaintEngine {
   }
   hasOpenSession(): boolean {
     return (
+      this.parameters.active ||
       this.historyService.hasRasterEdits() ||
       this.shapeEdit.hasEdit() ||
       this.transformEdit.hasEdit() ||

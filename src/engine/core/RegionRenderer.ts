@@ -1,12 +1,10 @@
+import { renderLayerById, renderView } from '../references/renderView';
 import { layerHandler } from '../layer-types/registry';
 import type { CanvasLease, LayerDrawEnv } from '../layer-types/types';
 import type { Layer } from '../layers';
 import type { PaintEngine } from '../PaintEngine';
 import type { PixelRect as RenderRect } from '../raster/geometry';
 
-function resolvedLayer(engine: PaintEngine, layer: Layer): Layer {
-  return engine.links?.resolvedView(layer) ?? layer;
-}
 export interface LayerHitCapture {
   layerId: string;
   contribution: CanvasLease | null;
@@ -52,7 +50,7 @@ export class RegionRenderer {
     active: (layer: Layer) => boolean,
   ): boolean {
     const inChain = (id: string): boolean => {
-      const child = this.host.engine.layerById(id);
+      const child = renderLayerById(this.host.engine, id);
       return (
         !!child && !!layerHandler(child).renderer.effect &&
         (active(child) || child.childIds.some(inChain))
@@ -71,7 +69,7 @@ export class RegionRenderer {
     let result: Layer[] = [];
     const visit = (ids: string[], scope: Layer[]): boolean => {
       for (const id of ids) {
-        const layer = eng.layerById(id);
+        const layer = renderLayerById(eng, id);
         if (!layer) continue;
         if (id === effectId) {
           result = scope;
@@ -105,7 +103,7 @@ export class RegionRenderer {
     target.save();
     try {
       target.setTransform(1, 0, 0, 1, -originX, -originY);
-      layerHandler(layer).renderer.draw(target, resolvedLayer(this.host.engine, layer) as never, env);
+      layerHandler(layer).renderer.draw(target, layer as never, env);
     } finally {
       target.restore();
     }
@@ -118,7 +116,7 @@ export class RegionRenderer {
     const editingTextId = eng.getTextEditingId?.() ?? null;
     const visit = (ids: string[]) => {
       for (const id of ids) {
-        const layer = eng.layerById(id);
+        const layer = renderLayerById(eng, id);
         if (!layer) continue;
         if (
           layer.visible &&
@@ -160,7 +158,7 @@ export class RegionRenderer {
     const editingTextId = eng.getTextEditingId?.() ?? null;
     const visit = (ids: string[]) => {
       for (const id of ids) {
-        const layer = eng.layerById(id);
+        const layer = renderLayerById(eng, id);
         if (!layer) continue;
         if (
           layer.visible &&
@@ -168,7 +166,7 @@ export class RegionRenderer {
         ) {
           target.save();
           try {
-            layerHandler(layer).renderer.draw(target, resolvedLayer(this.host.engine, layer) as never, env);
+            layerHandler(layer).renderer.draw(target, layer as never, env);
           } finally {
             target.restore();
           }
@@ -293,7 +291,7 @@ export class RegionRenderer {
         );
       }
       for (const id of resumeIndex >= 0 ? ids.slice(resumeIndex) : ids) {
-        const layer = eng.layerById(id);
+        const layer = renderLayerById(eng, id);
         if (!layer) continue;
         const handler = layerHandler(layer);
         if (handler.renderer.effect) {
@@ -396,7 +394,7 @@ export class RegionRenderer {
                         }
                       : {}),
                 },
-                resolvedLayer(this.host.engine, layer) as never,
+                layer as never,
                 activeEnv,
               );
             } finally {
@@ -444,6 +442,7 @@ export class RegionRenderer {
             !inputCapture &&
             !eng
               .allLayers()
+              .map(layer => renderView(eng, layer))
               .some(
                 (item) =>
                   item.visible &&

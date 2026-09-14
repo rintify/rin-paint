@@ -51,23 +51,44 @@ export class ParameterService {
     if (!this.session.active) this.session.begin(this.selectedLayers());
   }
 
-  preview(parameterId: string, value: ParameterValue): void {
-    if (this.engine.isBusy()) return;
+  get active(): boolean {
+    return this.session.active;
+  }
+
+  private sessionLayers(): Layer[] {
+    return this.hosts(this.session.targetIds()).map(item => item.layer);
+  }
+
+  private applyEdit(parameterId: string, value: ParameterValue): Layer[] {
     this.beginIfNeeded();
-    for (const { layer } of this.hosts(this.selectedIds())) {
-      const start = this.session.startProps(layer.id);
+    const layers = this.sessionLayers();
+    for (const layer of layers) {
+      const start = this.session.startProps(layer.id)!;
+      applyLayerProps(layer, structuredClone(start));
       this.writeState(layer, parameterId, value);
-      const linkOp = start
-        ? this.engine.layerService.linkOpForUserChange(layer, start, {
-            opacity: layer.opacity,
-            visible: layer.visible,
-            blend: layer.blend,
-            ...layerTypeProps(layer),
-          })
-        : null;
-      if (linkOp) applyLayerProps(layer, { parameterLink: linkOp.after });
+      this.engine.layerService.linkOpForUserChange(layer, start, {
+        opacity: layer.opacity,
+        visible: layer.visible,
+        blend: layer.blend,
+        ...layerTypeProps(layer),
+      });
+      // An explicit override also detaches when the entered value equals the
+      // dormant owned value. Coupled fields are detached by the comparison above.
+      const semanticId = parameterById(layer, parameterId)?.semanticId;
+      if (layer.parameterLink && semanticId) {
+        const link = structuredClone(layer.parameterLink);
+        link.linkedParameterIds = link.linkedParameterIds.filter(id => id !== semanticId);
+        applyLayerProps(layer, { parameterLink: link.linkedParameterIds.length ? link : null });
+      }
+      this.engine.layerService.bumpLayer(layer.id);
       this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id }, true);
     }
+    return layers;
+  }
+
+  preview(parameterId: string, value: ParameterValue): void {
+    if (!this.engine.canMutate()) return;
+    this.applyEdit(parameterId, value);
     this.engine.requestRender();
     this.engine.syncStore();
   }
@@ -77,24 +98,21 @@ export class ParameterService {
   }
 
   commitRange(parameterId: string, _beforeValue: ParameterValue | undefined, value: ParameterValue, label = 'パラメータを変更'): void {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     this.engine.events.emit('textCommitRequest');
-    this.beginIfNeeded();
-    for (const { layer } of this.hosts(this.selectedIds())) {
-      this.writeState(layer, parameterId, value);
-      this.engine.layerService.bumpLayer(layer.id);
-    }
-    const layers = this.selectedLayers();
+    const layers = this.applyEdit(parameterId, value);
     this.session.commit(layers, this.engine.history, label);
-    for (const layer of layers) {
-      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });
-    }
     this.engine.committed();
   }
 
   cancelPreview(): void {
     if (!this.session.active) return;
-    this.session.cancel(this.selectedLayers());
+    const layers = this.sessionLayers();
+    this.session.cancel(layers);
+    for (const layer of layers) {
+      this.engine.layerService.bumpLayer(layer.id);
+      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });
+    }
     this.engine.requestRender();
     this.engine.syncStore();
   }

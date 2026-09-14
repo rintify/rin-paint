@@ -207,6 +207,18 @@ export function inspectLayerRecord(source: LayerRecord | LayerSnapshot): LoadRes
       raw: source,
     };
   }
+  const revision = source.revision ?? 1;
+  if (!Number.isSafeInteger(revision) || revision < 1)
+    return { status: 'invalid', reason: 'レイヤーの revision が不正です', raw: source };
+  if (revision > mod.revision)
+    return { status: 'unsupported', reason: `未対応のレイヤー revision です: ${mod.kindId} (${revision})`, raw: source };
+  if (revision < mod.revision) {
+    const migrated = mod.definition.schema.migrate?.(structuredClone(source.state), revision);
+    if (!migrated)
+      return { status: 'unsupported', reason: `移行できないレイヤー revision です: ${mod.kindId} (${revision})`, raw: source };
+    if (migrated.status !== 'ok') return migrated;
+    return mod.loadState(migrated.value);
+  }
   return mod.loadState(source.state);
 }
 
@@ -218,7 +230,7 @@ export async function restoreLayerFrom(
   const mod = findLayerModule(source.kindId || source.type);
   if (!mod || !isLayerType(mod.type)) return null;
   const def = layerDefinition(mod.type);
-  const loaded = def.schema.load(source.state);
+  const loaded = inspectLayerRecord(source);
   if (loaded.status !== 'ok') return null;
   const content =
     'canvas' in source && source.canvas ? source.canvas : source.content;

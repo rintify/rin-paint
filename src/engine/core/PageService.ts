@@ -26,6 +26,7 @@ export class PageService {
   }
 
   async saveMeta(): Promise<void> {
+    if (this.engine.document.mode !== 'edit') return;
     const st = useStore.getState();
     await saveProjectMeta({
       version: PROJECT_VERSION,
@@ -37,6 +38,7 @@ export class PageService {
 
   async addPage(): Promise<void> {
     const eng = this.engine;
+    if (!eng.canMutate()) return;
     await eng.flushSavePublic();
     const id = this.newPageId();
     const layer = createRasterLayer(
@@ -101,6 +103,7 @@ export class PageService {
   }
 
   async deletePage(id: string): Promise<void> {
+    if (!this.engine.canMutate()) return;
     if (this.pageOrder.length <= 1 || !this.pageOrder.includes(id)) return;
     const index = this.pageOrder.indexOf(id);
     if (id === this.activePageId) {
@@ -116,6 +119,7 @@ export class PageService {
   }
 
   async reorderPages(from: number, to: number): Promise<void> {
+    if (!this.engine.canMutate()) return;
     if (
       from < 0 ||
       to < 0 ||

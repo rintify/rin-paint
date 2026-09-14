@@ -408,7 +408,7 @@ export const shapeLayerType: LayerDefinition<'shape'> = {
           strokeWidth: 1,
           paintMode: 'stroke',
         },
-      }, raw, asShapeState),
+      }, raw, asShapeState, ['shape']),
   },
   state: {
     initial: () =>

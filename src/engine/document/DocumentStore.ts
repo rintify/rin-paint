@@ -49,6 +49,7 @@ export class DocumentStore {
 
   setPage(page: PageOwned): void {
     this.pages.set(page.id, page);
+    this.updateOpenMode();
   }
 
   removePage(id: string): void {
@@ -124,8 +125,13 @@ export class DocumentStore {
     };
     this.pages.clear();
     for (const page of pages) this.pages.set(page.id, page);
-    this.reasons = pages.flatMap((page) => page.reasons);
-    this.mode = pages.some((page) => page.status !== 'ok') ? 'view-only' : 'edit';
+    this.updateOpenMode();
+  }
+
+  private updateOpenMode(): void {
+    const pages = [...this.pages.values()];
+    this.reasons = pages.flatMap(page => page.reasons);
+    this.mode = pages.some(page => page.status !== 'ok') ? 'view-only' : 'edit';
   }
 
   ppiOf(pageId: string, fallback: number): number {

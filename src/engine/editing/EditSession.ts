@@ -32,7 +32,7 @@ export class EditSession {
           opacity: layer.opacity,
           blend: layer.blend,
           visible: layer.visible,
-          parameterLink: layer.parameterLink ? structuredClone(layer.parameterLink) : undefined,
+          parameterLink: layer.parameterLink ? structuredClone(layer.parameterLink) : null,
           state: layerHandler(layer).state.clone(layer.state as never),
         },
       });
@@ -65,7 +65,7 @@ export class EditSession {
         opacity: layer.opacity,
         blend: layer.blend,
         visible: layer.visible,
-        parameterLink: layer.parameterLink ? structuredClone(layer.parameterLink) : undefined,
+        parameterLink: layer.parameterLink ? structuredClone(layer.parameterLink) : null,
         state: layerHandler(layer).state.clone(layer.state as never),
       };
       ops.push({

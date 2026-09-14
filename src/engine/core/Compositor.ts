@@ -1,3 +1,4 @@
+import { renderLayerById, renderView } from '../references/renderView';
 import { effectDamage } from './EffectDamage';
 import type { EffectPreview } from '../layer-types/types';
 import { shapeVisualPadding } from '../shapes';
@@ -179,6 +180,7 @@ export class Compositor {
       eng.getRootLayerIds(),
       eng
         .allLayers()
+        .map(layer => renderView(this.engine, layer))
         .map((layer) => [
           layer.id,
           layer.parentId,
@@ -350,7 +352,7 @@ export class Compositor {
       originX,
       originY,
       textRenderer: this.textRenderer,
-      layerById: (id) => eng.layerById(id),
+      layerById: (id) => renderLayerById(eng, id),
       handlerFor: layerHandler,
       borrowCanvas: (w = width, h = height) => this.borrowCanvas(w, h),
       borrowReadbackCanvas: (w = width, h = height) =>
@@ -393,7 +395,7 @@ export class Compositor {
   }
 
   syncTextRenders(): void {
-    const layers = this.engine.allLayers();
+    const layers = this.engine.allLayers().map(layer => renderView(this.engine, layer));
     const prepared = layers.filter(
       (layer) => layerHandler(layer).capabilities.renderLifecycle?.prepare,
     );
@@ -536,7 +538,7 @@ export class Compositor {
       this.ensureComposited();
       return this.artCacheCtx.getImageData(cx, cy, 1, 1).data;
     }
-    const layer = this.engine.layerById(includedLayerId);
+    const layer = renderLayerById(this.engine, includedLayerId);
     const padding = layer
       ? Math.max(
           0,
@@ -652,6 +654,7 @@ export class Compositor {
   }
 
   contentBounds(layer: Layer): RenderRect | null {
+    layer = renderView(this.engine, layer);
     if (
       layer.type === 'shape' &&
       'paintMode' in layer.state.shape &&
@@ -687,7 +690,7 @@ export class Compositor {
     let current = initial;
     const env = this.drawEnv(false);
     for (const id of ids) {
-      const layer = this.engine.layerById(id);
+      const layer = renderLayerById(this.engine, id);
       if (!layer) continue;
       const effect = layerHandler(layer).renderer.effect;
       if (effect) {
@@ -716,7 +719,7 @@ export class Compositor {
           ) {
             let masks: RenderRect | null = null;
             for (const maskId of layer.state.maskLayerIds) {
-              const maskLayer = this.engine.layerById(maskId);
+              const maskLayer = renderLayerById(this.engine, maskId);
               if (maskLayer)
                 masks = unionBounds(masks, this.contentBounds(maskLayer));
             }
@@ -749,7 +752,7 @@ export class Compositor {
     const layers = inputs.some(
       layer => layerHandler(layer).renderer.effect?.sourceRegion,
     )
-      ? this.engine.allLayers()
+      ? this.engine.allLayers().map(layer => renderView(this.engine, layer))
       : inputs;
     const pad = layers.reduce(
       (n, l) =>
@@ -959,6 +962,7 @@ export class Compositor {
     this.lastCompositedPixels = 0;
     const nativeOnly = !this.engine
       .allLayers()
+      .map(layer => renderView(this.engine, layer))
       .some((layer) => layer.visible && layerHandler(layer).renderer.effect);
     const renderOutput = (output: DirtyRect) => {
       const outputRegion = asRenderRect(output),
@@ -1043,6 +1047,7 @@ export class Compositor {
   private nativeDisplayLayers(): boolean {
     return !this.engine
       .allLayers()
+      .map(layer => renderView(this.engine, layer))
       .some((layer) => layer.visible && layerHandler(layer).renderer.effect);
   }
 

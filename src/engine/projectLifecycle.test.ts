@@ -2200,3 +2200,59 @@ it('allows configuring a transform before drawing and applies it to later upstre
     engine.compositor.detachCanvases();
   }
 });
+
+it('preserves unsupported projects through import, autosave, page navigation and reload', async () => {
+  await engine.newProject();
+  await engine.flushSave();
+  const { meta, page } = await loadActivePersisted();
+  const { packProjectFile } = await import('./persistence/projectFile');
+  const { PROJECT_VERSION } = await import('./persistence/version');
+  const { loadOriginalProject } = await import('./persistence/db');
+  const knownPage = structuredClone(page!);
+  knownPage.id = 'known-page';
+  const futurePage = structuredClone(page!);
+  futurePage.layers = [{
+    ...futurePage.layers[0],
+    type: 'future', kindId: 'vendor.layer.future', revision: 3,
+    state: { nested: { untouched: false } },
+    content: new Blob([new Uint8Array([4, 5, 6])]),
+  }];
+  const file = await packProjectFile({
+    app: 'rin-paint', version: PROJECT_VERSION,
+    meta: { ...meta!, pageOrder: [futurePage.id, knownPage.id] },
+    pages: [futurePage, knownPage],
+  });
+  const original = await file.arrayBuffer();
+  await engine.importProject(file as File);
+  expect(engine.document.mode).toBe('view-only');
+  expect(engine.document.reasons).not.toHaveLength(0);
+  expect(engine.document.originalBytes).toEqual(original);
+  const persisted = await loadPage(futurePage.id);
+  expect(persisted?.rootLayerIds).toEqual(futurePage.rootLayerIds);
+  expect(persisted?.layers[0].state).toEqual(futurePage.layers[0].state);
+  expect(await (persisted!.layers[0].content as Blob).arrayBuffer()).toEqual(new Uint8Array([4, 5, 6]).buffer);
+  engine.scheduleSave();
+  await engine.flushSave();
+  expect((await loadPage(futurePage.id))?.layers).toEqual(persisted?.layers);
+
+  await engine.pages.switchPage(knownPage.id);
+  expect(engine.document.mode).toBe('view-only');
+  await engine.pages.deletePage(futurePage.id);
+  await engine.pages.addPage();
+  expect(engine.pages.pageOrder).toEqual([futurePage.id, knownPage.id]);
+  expect((await loadProjectMeta())?.activePageId).toBe(futurePage.id);
+
+  // Re-open persisted state, including the unsupported active page with no runtime layers.
+  engine.document.clear();
+  await engine.project.doInit();
+  expect(engine.document.mode).toBe('view-only');
+  expect(engine.pages.activePageId).toBe(futurePage.id);
+  expect(engine.document.originalBytes).toEqual(original);
+  expect(await loadOriginalProject()).toEqual(original);
+  expect((await loadPage(futurePage.id))?.rootLayerIds).toEqual(futurePage.rootLayerIds);
+
+  await engine.newProject();
+  expect(engine.document.mode).toBe('edit');
+  expect(engine.document.originalBytes).toBeUndefined();
+  expect(await loadOriginalProject()).toBeUndefined();
+});

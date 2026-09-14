@@ -177,7 +177,7 @@ export class InputController {
     }
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (this.loupe) return;
-    if (eng.isBusy() || this.activePointer !== null) return;
+    if (eng.isBusy() || eng.document?.mode === 'view-only' || this.activePointer !== null) return;
     const p = this.toPoint(e);
     this.activePointer = e.pointerId;
     this.area?.setPointerCapture(e.pointerId);

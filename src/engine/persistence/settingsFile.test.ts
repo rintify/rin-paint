@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { SavedAppSettings, SavedAppSettingsFile } from './db';
-import { makeAppSettingsFile, parseAppSettingsFile, validateAppSettings } from './settingsFile';
+import { makeAppSettingsFile, parseAppSettingsFile, parseAppSettingsFileDetailed, validateAppSettings } from './settingsFile';
 import { SETTINGS_CONTAINER_VERSION } from './version';
 import { SETTINGS_NAMESPACE_IDS } from '../modules/ids';
 import { defaultShortcutBindings } from '../../shortcuts';
@@ -131,4 +131,17 @@ describe('app settings file', () => {
       unregisterSettingsNamespace('rin.settings.probe');
     }
   });
+});
+
+it('retains a newer known namespace across edits and repeated saves', () => {
+  const file = makeAppSettingsFile(settings());
+  const retained = { revision: 999, data: { future: { enabled: false, value: 0 } } };
+  file.namespaces![SETTINGS_NAMESPACE_IDS.tools] = retained;
+  const loaded = parseAppSettingsFileDetailed(file);
+  loaded.settings.showEffectRangeGuides = false;
+  const saved = makeAppSettingsFile(loaded.settings, loaded.retained, loaded.namespaceExtras);
+  expect(saved.namespaces![SETTINGS_NAMESPACE_IDS.tools]).toEqual(retained);
+  const reloaded = parseAppSettingsFileDetailed(saved);
+  expect(reloaded.settings.showEffectRangeGuides).toBe(false);
+  expect(makeAppSettingsFile(reloaded.settings, reloaded.retained).namespaces![SETTINGS_NAMESPACE_IDS.tools]).toEqual(retained);
 });

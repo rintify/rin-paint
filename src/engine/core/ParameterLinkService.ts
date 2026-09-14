@@ -16,7 +16,8 @@ import { parameterById, type ParameterHost } from '../parameters/host';
 import type { SavedPage } from '../persistence/db';
 import type { PaintEngine } from '../PaintEngine';
 import { commonFromOwned, type DocumentStore } from '../document/DocumentStore';
-import type { LayerOwned, PageOwned } from '../document/types';
+import { pageOwnedFromSaved } from '../document/loadPage';
+import type { LayerOwned } from '../document/types';
 import { resolveParameterValue, type HostLookup, type ResolvedValue } from '../references/resolver';
 
 export interface LayerLinkCandidate {
@@ -60,34 +61,6 @@ function hostFromOwned(owned: LayerOwned): ParameterHost {
   };
 }
 
-function pageOwnedFromSaved(page: SavedPage): PageOwned {
-  return {
-    id: page.id,
-    spec: { ...page.pageSpec },
-    rootLayerIds: [...page.rootLayerIds],
-    activeLayerId: page.activeLayerId,
-    layers: page.layers.map((layer) => {
-      const mod = findLayerModule(layer.kindId || layer.type);
-      const loaded = mod?.loadState(layer.state);
-      return {
-        id: layer.id,
-        type: layer.type,
-        kindId: layer.kindId || mod?.kindId || `rin.layer.${layer.type}`,
-        revision: layer.revision || mod?.revision || 1,
-        common: structuredClone(layer.common),
-        state: loaded?.status === 'ok' ? loaded.value : layer.state,
-        content: layer.content,
-      };
-    }),
-    history: page.history,
-    view: { ...page.view },
-    thumbnailVersion: page.thumbnailVersion,
-    thumbnail: page.thumbnail,
-    status: 'ok',
-    reasons: [],
-  };
-}
-
 /** 参照解決。リンク先へ値はコピーしない。 */
 export class ParameterLinkService {
   private entriesByKey = new Map<string, RecordEntry>();
@@ -105,8 +78,10 @@ export class ParameterLinkService {
   catalogCheckpoint(): () => void {
     const pages = this.document().allPages().map((page) => structuredClone(page));
     const meta = structuredClone(this.document().meta);
+    const originalBytes = this.document().originalBytes;
     return () => {
       this.document().replaceAll(meta, pages);
+      this.document().originalBytes = originalBytes;
       this.invalidate();
     };
   }
@@ -204,8 +179,9 @@ export class ParameterLinkService {
       const parameter = parameterById(clone, id);
       if (parameter) applyLayerProps(clone, parameter.write(clone, clone.state, resolved.value));
     }
-    if (constrain !== undefined) state.constrainAspect = constrain;
+    if (constrain !== undefined) (clone.state as { constrainAspect?: boolean }).constrainAspect = constrain;
     this.viewCache.set(layer, { generation: this.generation, view: clone });
+    this.viewCache.set(clone, { generation: this.generation, view: clone });
     return clone;
   }
 
@@ -398,6 +374,7 @@ export class ParameterLinkService {
   }
 
   async changeSource(targetLayerId: string, source: LayerAddress): Promise<void> {
+    if (this.engine.document?.mode === 'view-only' || this.engine.isBusy?.()) return;
     this.rebuildIndex();
     const targetAddress = this.currentAddress(targetLayerId);
     const target = this.find(targetAddress);
@@ -413,6 +390,7 @@ export class ParameterLinkService {
   }
 
   removeLink(targetLayerId: string): void {
+    if (this.engine.document?.mode === 'view-only' || this.engine.isBusy?.()) return;
     const targetAddress = this.currentAddress(targetLayerId);
     const target = this.find(targetAddress);
     if (!target?.host.parameterLink) return;
@@ -431,6 +409,7 @@ export class ParameterLinkService {
   }
 
   unlinkParameters(targetLayerIds: string[], semanticId: string): void {
+    if (this.engine.document?.mode === 'view-only' || this.engine.isBusy?.()) return;
     const ops = targetLayerIds.flatMap((targetLayerId) => {
       const targetAddress = this.currentAddress(targetLayerId);
       const target = this.find(targetAddress);
@@ -449,6 +428,7 @@ export class ParameterLinkService {
   }
 
   async relink(targetLayerId: string, semanticId?: string): Promise<void> {
+    if (this.engine.document?.mode === 'view-only' || this.engine.isBusy?.()) return;
     this.rebuildIndex();
     const targetAddress = this.currentAddress(targetLayerId);
     const target = this.find(targetAddress);

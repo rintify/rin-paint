@@ -24,6 +24,7 @@ import {
   loadPage,
   loadRasterAssets,
   loadProjectMeta,
+  loadOriginalProject,
   replaceProject,
   setPersistencePageId,
   type SavedPage,
@@ -60,14 +61,13 @@ export class ProjectService {
       const inspected = inspectLayerRecord(sl);
       if (inspected.status !== 'ok') reasons.push(inspected.reason);
     }
+    eng.links.noteSavedPage(page);
     await loadRasterAssets(page);
     for (const sl of page.layers) {
       const layer = await restoreLayerFrom(sl, { artboard: eng.artboard });
       if (layer) ls.layers.push(layer);
     }
-    if (reasons.length) {
-      eng.document.mode = 'view-only';
-      eng.document.reasons = reasons;
+    if (eng.document.mode === 'view-only') {
       useStore.getState().set({
         projectOpenMode: 'view-only',
         toolNotice: '未対応のデータを含むため閲覧専用で開きました。元のまま保存できます。',
@@ -88,7 +88,6 @@ export class ProjectService {
     eng.compositor.textRenderer.clear();
     ls.fixActive();
     eng.compositor.syncTextRenders();
-    eng.links.noteSavedPage(page);
   }
 
   async doInit(): Promise<void> {
@@ -121,8 +120,9 @@ export class ProjectService {
           useStore.getState().set({
             fonts: meta.fonts,
           });
-          await this.restoreSavedPage(page);
           eng.links.replaceCatalog(restoredPages as SavedPage[]);
+          eng.document.originalBytes = await loadOriginalProject();
+          await this.restoreSavedPage(page);
           useStore.getState().set({
             pageW: eng.artboard.w,
             pageH: eng.artboard.h,
@@ -134,8 +134,8 @@ export class ProjectService {
       restoreFailed = true;
       ls.layers = [];
     }
-    if (persistedDataFound && ls.layers.length === 0) restoreFailed = true;
-    if (ls.layers.length === 0) {
+    if (eng.document.mode === 'edit' && persistedDataFound && ls.layers.length === 0) restoreFailed = true;
+    if (ls.layers.length === 0 && eng.document.mode === 'edit') {
       const l = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
       ls.layers.push(l);
       ls.rootLayerIds = [l.id];
@@ -159,7 +159,7 @@ export class ProjectService {
     });
     eng.compositor.syncTextRenders();
     eng.scheduleStorageRefresh();
-    if (!restoreFailed) void collectUnusedRasterAssets().catch(() => undefined);
+    if (!restoreFailed && eng.document.mode === 'edit') void collectUnusedRasterAssets().catch(() => undefined);
     if (restoreFailed) {
       useStore.getState().set({
         toolNotice:
@@ -220,13 +220,13 @@ export class ProjectService {
     spec = { ...spec };
     const eng = this.engine;
     const ls = eng.layerService;
-    if (eng.isBusy()) throw new Error('処理の完了後にサイズを変更してください');
+    if (!eng.canMutate()) throw new Error('編集中のプロジェクトでサイズを変更してください');
     const error = validatePageSpec(spec);
     if (error) throw new Error(error);
     if (JSON.stringify(spec) === JSON.stringify(this.pageSpec)) return;
     eng.finishTextEditing();
     await eng.commitFloatSelection();
-    if (eng.isBusy()) throw new Error('処理の完了後にサイズを変更してください');
+    if (!eng.canMutate()) throw new Error('編集中のプロジェクトでサイズを変更してください');
     eng.cancelSessions();
     const rollback = runtimeCheckpoint(eng);
     eng.setBusy(true);
@@ -318,7 +318,8 @@ export class ProjectService {
       pages.activePageId = pageId;
       pages.pageOrder = [pageId];
       pages.thumbnailVersion = 0;
-      await eng.links.refreshCatalog();
+      eng.document.clear();
+      eng.links.replaceCatalog([page]);
       setPersistencePageId(pageId);
       ls.layers = [layer];
       ls.rootLayerIds = [layer.id];
@@ -454,6 +455,7 @@ export class ProjectService {
     const archive = await unpackProjectFile(file);
     let unsupported = false;
     for (const page of archive.pages) {
+      let pageUnsupported = false;
       if (!new HistoryTree().restore(page.history))
         throw new Error('履歴構造が不正です');
       if (validatePageSpec(page.pageSpec))
@@ -465,6 +467,7 @@ export class ProjectService {
         if (inspected.status === 'invalid') throw new Error(inspected.reason);
         if (inspected.status === 'unsupported') {
           unsupported = true;
+          pageUnsupported = true;
           continue;
         }
         const layer = await restoreLayerFrom(record, {
@@ -474,7 +477,7 @@ export class ProjectService {
         layers.push(layer);
       }
       if (
-        !unsupported && (
+        !pageUnsupported && (
           !validateLayerTree(page.rootLayerIds, layers) ||
           !layers.some((l) => l.id === page.activeLayerId)
         )
@@ -525,27 +528,26 @@ export class ProjectService {
         );
         if (layer) layers.push(layer);
       }
-      if (unsupported) {
-        eng.document.originalBytes = originalBytes;
-      } else if (!layers.some((l) => l.type === 'raster')) {
+      const rootLayerIds = [...proj.rootLayerIds];
+      if (!unsupported && !layers.some((l) => l.type === 'raster')) {
         const fallback = createRasterLayer(
           'レイヤー 1',
           eng.artboard.w,
           eng.artboard.h,
         );
         layers.push(fallback);
-        proj.rootLayerIds.push(fallback.id);
+        rootLayerIds.push(fallback.id);
       }
-      if (!validateLayerTree(proj.rootLayerIds, layers)) {
+      if (!validateLayerTree(rootLayerIds, layers)) {
         if (!unsupported) throw new Error('invalid layer tree');
         layers.length = 0;
-        proj.rootLayerIds = [];
+        rootLayerIds.length = 0;
       }
       pages.pageOrder = [...meta.pageOrder];
       pages.activePageId = meta.activePageId;
       setPersistencePageId(pages.activePageId);
       ls.layers = layers;
-      ls.rootLayerIds = [...proj.rootLayerIds];
+      ls.rootLayerIds = rootLayerIds;
       ls.activeLayerId = proj.activeLayerId ?? '';
       ls.resetCountersFromLayers();
       eng.history = new HistoryTree();
@@ -565,9 +567,13 @@ export class ProjectService {
       });
       ls.fixActive();
       eng.links.replaceCatalog(archive.pages);
+      eng.document.originalBytes = unsupported ? originalBytes : undefined;
+      if (unsupported) useStore.getState().set({
+        toolNotice: '未対応のデータを含むため閲覧専用で開きました。元のまま保存できます。',
+      });
       eng.links.reconcileAll();
       eng.compositor.syncTextRenders();
-      await replaceProject(meta, archive.pages);
+      await replaceProject(meta, archive.pages, eng.document.originalBytes);
     } catch (error) {
       pages.pageOrder = previousPageOrder;
       pages.activePageId = previousPageId;

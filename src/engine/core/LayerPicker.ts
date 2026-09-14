@@ -1,3 +1,4 @@
+import { renderLayerById } from '../references/renderView';
 import { flattenRenderOrder } from '../layerTree';
 import { layerHandler } from '../layer-types/registry';
 import type { CanvasLease } from '../layer-types/types';
@@ -24,7 +25,7 @@ export class LayerPicker {
     const env = compositor.drawEnv(false);
     for (let index = order.length - 1; index >= 0; index--) {
       const id = order[index]!;
-      const layer = this.engine.layerById(id);
+      const layer = renderLayerById(this.engine, id);
       if (!layer?.visible) continue;
       const effect = layerHandler(layer).renderer.effect;
       if (effect && !effect.clickableAddedPixels) continue;

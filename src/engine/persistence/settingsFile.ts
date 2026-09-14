@@ -44,6 +44,7 @@ export function settingsDocumentFromFlat(
 ): SettingsDocument {
   const namespaces: SettingsDocument['namespaces'] = { ...retained };
   for (const namespace of settingsNamespaces()) {
+    if (Object.hasOwn(retained, namespace.id)) continue;
     const data = namespace.fromFlat(settings);
     namespaces[namespace.id] = {
       revision: namespace.revision,

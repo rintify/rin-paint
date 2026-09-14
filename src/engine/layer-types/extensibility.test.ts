@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { createShapeLayer } from '../layers';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadWithZod } from '../schema/zodLoad';
 import { z } from 'zod';
 import {
   findLayerModule,
   inspectLayerRecord,
+  restoreLayerFrom,
+  savedLayerFrom,
+  layerDefinition,
   registerLayerModule,
   unregisterLayerModule,
   type ErasedLayerModule,
@@ -91,5 +95,44 @@ describe('module extensibility', () => {
   it('round-trips app settings after adding a namespaced field via makeAppSettingsFile', () => {
     const file = makeAppSettingsFile(settings());
     expect(parseAppSettingsFile(file).showEffectRangeGuides).toBe(true);
+  });
+});
+
+describe('layer revisions', () => {
+  const env = { artboard: { w: 100, h: 100 } };
+  async function record() {
+    return savedLayerFrom(createShapeLayer('line', {
+      kind: 'line', x1: 1, y1: 2, x2: 10, y2: 20, color: '#123456', strokeWidth: 1,
+    }), env);
+  }
+
+  it('uses the same revision check for inspection and runtime restore', async () => {
+    const source = await record();
+    source.revision = 999;
+    expect(inspectLayerRecord(source).status).toBe('unsupported');
+    expect(await restoreLayerFrom(source, env)).toBeNull();
+    source.revision = 0;
+    expect(inspectLayerRecord(source).status).toBe('invalid');
+    expect(await restoreLayerFrom(source, env)).toBeNull();
+  });
+
+  it('migrates older state inside the module and validates the result', async () => {
+    const source = await record();
+    const definition = layerDefinition('shape');
+    const mod = findLayerModule('shape')!;
+    const oldRevision = mod.revision;
+    mod.revision = 2;
+    const migrate = vi.fn((raw: unknown) => ({ status: 'ok' as const, value: raw }));
+    definition.schema.migrate = migrate;
+    try {
+      expect(inspectLayerRecord(source).status).toBe('ok');
+      expect((await restoreLayerFrom(source, env))?.state).toEqual(source.state);
+      expect(migrate).toHaveBeenCalledWith(source.state, 1);
+      delete definition.schema.migrate;
+      expect(inspectLayerRecord(source).status).toBe('unsupported');
+    } finally {
+      mod.revision = oldRevision;
+      delete definition.schema.migrate;
+    }
   });
 });

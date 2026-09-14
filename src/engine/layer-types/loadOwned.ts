@@ -26,6 +26,7 @@ export function loadEnvelope<S>(
   loadDefaults: S,
   raw: unknown,
   decode: (raw: unknown) => S | null,
+  opaqueFields: readonly string[] = [],
 ): LoadResult<S> {
   if (raw === undefined) return { status: 'ok', value: structuredClone(loadDefaults) };
   if (!isPlainObject(raw)) {
@@ -39,7 +40,12 @@ export function loadEnvelope<S>(
       raw,
     };
   }
-  const decoded = decode(fillMissing(loadDefaults, raw));
+  const filled = fillMissing(loadDefaults, raw);
+  // Discriminated payloads own their defaults; never merge another variant's fields.
+  for (const key of opaqueFields) {
+    if (Object.hasOwn(raw, key)) (filled as Record<string, unknown>)[key] = structuredClone(raw[key]);
+  }
+  const decoded = decode(filled);
   if (!decoded) return { status: 'invalid', reason: '保存データの値が不正です', raw };
   return { status: 'ok', value: decoded };
 }
