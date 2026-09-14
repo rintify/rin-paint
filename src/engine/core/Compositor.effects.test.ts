@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createCanvas, type Canvas } from '@napi-rs/canvas';
 import { Compositor } from './Compositor';
 import {
+  createTransformLayer,
   createAdjustLayer,
   createImageLayer,
   createShapeLayer,
@@ -955,4 +956,311 @@ describe('off-paper effect evaluation', () => {
     for (const x of [0, 254, 255, 256, 257, 510, 511, 512])
       expect(rgba(main, x, 255)).toEqual([255, 0, 0, 255]);
   });
+});
+
+describe('transform effects', () => {
+  it('moves only lower content and reads source pixels outside the page', () => {
+    const source = createRasterLayer('source');
+    paintRaster(
+      source,
+      (ctx) => {
+        ctx.fillStyle = '#ff0000';
+        ctx.fillRect(-4, 4, 4, 4);
+      },
+      { x: -4, y: 4, w: 4, h: 4 },
+    );
+    const effect = createTransformLayer('transform');
+    effect.state.translateX = 8;
+    const above = raster('above', (ctx) => {
+      ctx.fillStyle = '#0000ff';
+      ctx.fillRect(0, 0, 2, 2);
+    });
+    const output = render(
+      [source, effect, above],
+      [source.id, effect.id, above.id],
+    );
+    expect(rgba(output, 5, 5)).toEqual([255, 0, 0, 255]);
+    expect(rgba(output, 0, 0)).toEqual([0, 0, 255, 255]);
+    effect.visible = false;
+    expect(
+      rgba(render([source, effect], [source.id, effect.id]), 5, 5),
+    ).toEqual([255, 255, 255, 255]);
+  });
+  it('composes successive transforms and keeps child effects isolated', () => {
+    const source = raster('source', (ctx) => {
+      ctx.fillStyle = '#ff0000';
+      ctx.fillRect(2, 4, 4, 4);
+    });
+    const first = createTransformLayer('first');
+    first.state.translateX = 16;
+    const second = createTransformLayer('second');
+    second.state.translateX = -12;
+    const output = render(
+      [source, first, second],
+      [source.id, first.id, second.id],
+    );
+    expect(rgba(output, 7, 5)).toEqual([255, 0, 0, 255]);
+    source.childIds = [first.id];
+    first.parentId = source.id;
+    first.state.translateX = 4;
+    const other = raster('other', (ctx) => {
+      ctx.fillStyle = '#0000ff';
+      ctx.fillRect(0, 0, 2, 2);
+    });
+    expect(
+      rgba(render([other, source, first], [other.id, source.id]), 0, 0),
+    ).toEqual([0, 0, 255, 255]);
+  });
+  it('renders perspective with opaque interiors and updates transformed damage', () => {
+    const source = raster('source', (ctx) => {
+      ctx.fillStyle = '#ff0000';
+      ctx.fillRect(4, 4, 8, 8);
+    });
+    const effect = createTransformLayer('transform');
+    effect.state.perspectiveX = 40;
+    const result = createRenderer([source, effect], [source.id, effect.id]);
+    expect(rgba(result.main, 8, 8)).toEqual([255, 0, 0, 255]);
+    paintRaster(source, (ctx) => {
+      ctx.fillStyle = '#0000ff';
+      ctx.fillRect(4, 4, 8, 8);
+    });
+    result.compositor.invalidateLayer(source.id, {
+      minX: 4,
+      minY: 4,
+      maxX: 12,
+      maxY: 12,
+    });
+    result.compositor.composite();
+    expect(rgba(result.main, 8, 8)).toEqual([0, 0, 255, 255]);
+  });
+});
+
+it('transforms the same accumulated input as adjustment, including preceding effects and multiple roots', () => {
+  const a = raster('a', (ctx) => {
+    ctx.fillStyle = '#ff0000';
+    ctx.fillRect(1, 4, 2, 2);
+  });
+  const b = raster('b', (ctx) => {
+    ctx.fillStyle = '#00ff00';
+    ctx.fillRect(5, 4, 2, 2);
+  });
+  const adjust = createAdjustLayer('adjust');
+  adjust.state.params.brightness = 50;
+  const transform = createTransformLayer('transform');
+  transform.state.translateX = 4;
+  // An effect child shares the accumulated compositing input, just as another adjustment does.
+  adjust.childIds = [transform.id];
+  transform.parentId = adjust.id;
+  const above = raster('above', (ctx) => {
+    ctx.fillStyle = '#0000ff';
+    ctx.fillRect(0, 0, 2, 2);
+  });
+  const output = render(
+    [a, b, adjust, transform, above],
+    [a.id, b.id, adjust.id, above.id],
+  );
+  expect(rgba(output, 5, 4)).toEqual([128, 0, 0, 255]);
+  expect(rgba(output, 9, 4)).toEqual([0, 128, 0, 255]);
+  expect(rgba(output, 1, 4)).toEqual([255, 255, 255, 255]);
+  expect(rgba(output, 0, 0)).toEqual([0, 0, 255, 255]);
+});
+
+it('moves content across real-size compositor tiles', () => {
+  const source = raster(
+    'tile-source',
+    (ctx) => {
+      ctx.fillStyle = '#ff0000';
+      ctx.fillRect(70, 80, 40, 50);
+    },
+    1024,
+  );
+  const effect = createTransformLayer('tile-transform');
+  effect.state.translateX = 512;
+  const { main, compositor } = createRenderer(
+    [source, effect],
+    [source.id, effect.id],
+    300,
+    1024,
+  );
+  try {
+    expect(rgba(main, 85, 95)).toEqual([255, 255, 255, 255]);
+    expect(rgba(main, 597, 95)).toEqual([255, 0, 0, 255]);
+  } finally {
+    compositor.detachCanvases();
+  }
+});
+
+it('reuses the upstream image while dragging, samples a lighter preview and restores full quality on release', () => {
+  const size = 2048;
+  const source = createShapeLayer('source', {
+    kind: 'rect',
+    x: 0,
+    y: 0,
+    width: size,
+    height: size,
+    color: '#ff0000',
+    strokeWidth: 0,
+    paintMode: 'fill-inside',
+  });
+  const transform = createTransformLayer('transform');
+  transform.state.perspectiveX = 25;
+  const { main, compositor, revisions } = createRenderer(
+    [source, transform],
+    [source.id, transform.id],
+    300,
+    size,
+  );
+  const fullSamples = compositor.renderStats().transformSamplePixels;
+  compositor.beginTransformPreview(transform.id);
+  try {
+    transform.state.perspectiveX = 30;
+    revisions.set(transform.id, 1);
+    compositor.requestRender();
+    compositor.composite();
+    expect(compositor.renderStats().transformSamplePixels).toBeLessThanOrEqual(
+      fullSamples / 16,
+    );
+    transform.state.translateX = 10;
+    revisions.set(transform.id, 2);
+    compositor.requestRender();
+    compositor.composite();
+    expect(compositor.renderStats().cpuReadbackPixels).toBe(0);
+    expect(compositor.renderStats().canvasBorrows).toBeLessThan(64 * 4);
+    expect(rgba(main, 1024, 1024)).toEqual([255, 0, 0, 255]);
+    // Linked or otherwise edited upstream layers must invalidate the frozen input.
+    source.state.shape.color = '#0000ff';
+    revisions.set(source.id, 1);
+    compositor.invalidateLayer(source.id, {
+      minX: 0,
+      minY: 0,
+      maxX: size,
+      maxY: size,
+    });
+    compositor.composite();
+    expect(rgba(main, 1024, 1024)).toEqual([0, 0, 255, 255]);
+    expect(compositor.renderStats().cpuReadbackPixels).toBeGreaterThan(0);
+    compositor.endTransformPreview();
+    compositor.requestRender();
+    compositor.composite();
+    expect(compositor.renderStats().transformSamplePixels).toBe(fullSamples);
+    expect(rgba(main, 1024, 1024)).toEqual([0, 0, 255, 255]);
+  } finally {
+    compositor.endTransformPreview();
+    compositor.detachCanvases();
+  }
+});
+
+it.each([
+  { name: 'translation', state: { translateX: 530 }, opacity: 1 },
+  {
+    name: 'rotation and shear',
+    state: { rotation: 25, shear: 12, scaleX: 140 },
+    opacity: 1,
+  },
+  {
+    name: 'perspective',
+    state: { perspectiveX: 55, perspectiveY: -20 },
+    opacity: 1,
+  },
+  {
+    name: 'mixed original and transformed',
+    state: { translateX: 530, perspectiveX: 25 },
+    opacity: 0.5,
+  },
+])(
+  'repaints only local brush damage under $name, including erasure',
+  ({ state, opacity }) => {
+    const size = 1024;
+    const source = createRasterLayer('brush source');
+    const effect = createTransformLayer('effect');
+    Object.assign(effect.state, state);
+    effect.opacity = opacity;
+    const { main, compositor, revisions } = createRenderer(
+      [source, effect],
+      [source.id, effect.id],
+      25.4,
+      size,
+    );
+    const rect = { x: 200, y: 460, w: 12, h: 16 };
+    for (const erase of [false, true]) {
+      paintRaster(
+        source,
+        (ctx) => {
+          if (erase) ctx.clearRect(rect.x, rect.y, rect.w, rect.h);
+          else {
+            ctx.fillStyle = '#e01040';
+            ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+          }
+        },
+        rect,
+      );
+      revisions.set(source.id, erase ? 2 : 1);
+      compositor.invalidateLayer(source.id, {
+        minX: rect.x,
+        minY: rect.y,
+        maxX: rect.x + rect.w,
+        maxY: rect.y + rect.h,
+      });
+      compositor.composite();
+      const stats = compositor.renderStats();
+      expect(stats.compositedPixels).toBeLessThan((size * size) / 100);
+      expect(stats.transformSamplePixels).toBeLessThan((size * size) / 100);
+      expect(stats.cpuReadbackPixels).toBeLessThan((size * size) / 100);
+      const partial = main
+        .getContext('2d')!
+        .getImageData(0, 0, size, size).data;
+      if (!erase)
+        expect(partial.some((v, i) => i % 4 === 1 && v < 200)).toBe(true);
+      compositor.requestRender();
+      compositor.composite();
+      expect(
+        Buffer.from(
+          main.getContext('2d')!.getImageData(0, 0, size, size).data,
+        ).equals(Buffer.from(partial)),
+      ).toBe(true);
+    }
+  },
+);
+
+it('tracks damage through off-paper intermediate transforms and isolated child scopes', () => {
+  const source = createRasterLayer('source');
+  const first = createTransformLayer('first');
+  first.state.translateX = -1200;
+  source.childIds = [first.id];
+  first.parentId = source.id;
+  const second = createTransformLayer('second');
+  second.state.translateX = 1400;
+  const above = createRasterLayer('above');
+  const { main, compositor, revisions } = createRenderer(
+    [source, first, second, above],
+    [source.id, second.id, above.id],
+    25.4,
+    1024,
+  );
+  for (const layer of [source, above]) {
+    paintRaster(layer, (ctx) => {
+      ctx.fillStyle = '#00f';
+      ctx.fillRect(20, 30, 4, 4);
+    });
+    revisions.set(layer.id, 1);
+    compositor.invalidateLayer(layer.id, {
+      minX: 20,
+      minY: 30,
+      maxX: 24,
+      maxY: 34,
+    });
+    compositor.composite();
+    expect(compositor.lastCompositedPixels).toBeLessThan(200);
+    expect(rgba(main, layer === source ? 222 : 22, 32)).toEqual([
+      0, 0, 255, 255,
+    ]);
+  }
+  const partial = main.getContext('2d')!.getImageData(0, 0, 1024, 1024).data;
+  compositor.requestRender();
+  compositor.composite();
+  expect(
+    Buffer.from(
+      main.getContext('2d')!.getImageData(0, 0, 1024, 1024).data,
+    ).equals(Buffer.from(partial)),
+  ).toBe(true);
 });

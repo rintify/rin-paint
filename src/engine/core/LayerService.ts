@@ -30,6 +30,7 @@ import { layerMaskIds } from '../layer-types/definition';
 import { shapeLayerName } from '../layer-types/shape';
 import { textFrame } from '../layer-types/text';
 import {
+  createTransformLayer,
   createAdjustLayer,
   createClipLayer,
   createImageLayer,
@@ -556,67 +557,54 @@ export class LayerService {
   }
 
   addAdjustLayer(): void {
-    if (this.engine.isBusy()) return;
-    this.finishFloating();
-    const activeLocation = this.locationOf(this.activeLayerId);
-    const location = activeLocation
-      ? { ...activeLocation, index: activeLocation.index + 1 }
-      : { parentId: null, index: this.rootLayerIds.length };
-    const layer = createAdjustLayer(this.nextLayerName('adjust'));
-    this.layers.push(layer);
-    this.insertAt(layer.id, location);
-    this.activeLayerId = layer.id;
-    this.engine.history.push(
-      {
-        kind: 'layerAdd',
-        location,
-        snapshot: this.snapshotLayer(layer, false),
-      },
-      '補正レイヤー追加',
-    );
-    this.engine.committed();
+    this.addEffectLayer('adjust', createAdjustLayer, '補正レイヤー追加');
   }
 
   addOutlineLayer(): void {
-    if (this.engine.isBusy()) return;
-    this.finishFloating();
-    const activeLocation = this.locationOf(this.activeLayerId);
-    const location = activeLocation
-      ? { ...activeLocation, index: activeLocation.index + 1 }
-      : { parentId: null, index: this.rootLayerIds.length };
-    const layer = createOutlineLayer(this.nextLayerName('outline'));
-    this.layers.push(layer);
-    this.insertAt(layer.id, location);
-    this.activeLayerId = layer.id;
-    this.engine.history.push(
-      {
-        kind: 'layerAdd',
-        location,
-        snapshot: this.snapshotLayer(layer, false),
-      },
-      '縁どりレイヤー追加',
+    this.addEffectLayer('outline', createOutlineLayer, '縁どりレイヤー追加');
+  }
+
+  addTransformLayer(): void {
+    this.addEffectLayer(
+      'transform',
+      createTransformLayer,
+      'トランスフォームレイヤー追加',
     );
-    this.engine.committed();
   }
 
   addClipLayer(): void {
+    this.addEffectLayer('clip', createClipLayer, 'クリップレイヤー追加');
+  }
+
+  private addEffectLayer(
+    type: LayerType,
+    create: (name: string) => Layer,
+    label: string,
+  ): void {
     if (this.engine.isBusy()) return;
     this.finishFloating();
     const activeLocation = this.locationOf(this.activeLayerId);
     const location = activeLocation
       ? { ...activeLocation, index: activeLocation.index + 1 }
       : { parentId: null, index: this.rootLayerIds.length };
-    const layer = createClipLayer(this.nextLayerName('clip'));
+    const layer = create(this.nextLayerName(type));
     this.layers.push(layer);
     this.insertAt(layer.id, location);
     this.activeLayerId = layer.id;
+    useStore
+      .getState()
+      .set({
+        selectedLayerIds: [layer.id],
+        multiSelectMode: false,
+        shortcutTarget: { type: 'layer', id: layer.id },
+      });
     this.engine.history.push(
       {
         kind: 'layerAdd',
         location,
         snapshot: this.snapshotLayer(layer, false),
       },
-      'クリップレイヤー追加',
+      label,
     );
     this.engine.committed();
   }

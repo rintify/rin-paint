@@ -189,6 +189,14 @@ export class InputController {
       e.preventDefault();
       return;
     }
+    if (eng.transformEdit?.activeLayer()) {
+      if (!eng.beginShapeEdit(p, e)) {
+        this.activePointer = null;
+        this.area?.releasePointerCapture(e.pointerId);
+      }
+      e.preventDefault();
+      return;
+    }
     const activeTool = eng.activeTool();
     if (activeTool.startsImmediately) {
       activeTool.onDown(p, e);
@@ -484,6 +492,7 @@ export class InputController {
       }
       if (e.target === document.body) e.preventDefault();
     } else if (command === 'operation.cancel') {
+      eng.cancelShapeEdit();
       this.cancelEyedropper();
       eng.cancelFloatSelection();
     }

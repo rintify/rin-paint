@@ -1,3 +1,4 @@
+import { TransformLayerControls } from './TransformLayerControls';
 import { Box, Button, Chip, LinearProgress, Paper, Snackbar, Typography } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import { useEngine } from './EngineContext';
@@ -158,6 +159,7 @@ export function PageView() {
           <Button onClick={() => engine.cancelFloatSelection()}>キャンセル</Button>
         </Paper>
       )}
+      <TransformLayerControls />
       {polygonDraftActive && (
         <Paper elevation={6} data-canvas-ui sx={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 1, p: 1, zIndex: 6 }}>
           <Button disabled={polygonDraftPointCount === 0} onClick={() => engine.polygonUndoPoint()}>1点戻す</Button>

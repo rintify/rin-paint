@@ -873,7 +873,14 @@ describe('canvas history and new project', () => {
 
   it('merges drawable and effect layers as tiles-v1', async () => {
     const verify = async (
-      type: 'shape' | 'text' | 'adjust' | 'outline' | 'clip' | 'image',
+      type:
+        | 'shape'
+        | 'text'
+        | 'adjust'
+        | 'outline'
+        | 'clip'
+        | 'image'
+        | 'transform',
       add: () => void,
     ) => {
       await engine.newProject();
@@ -911,6 +918,7 @@ describe('canvas history and new project', () => {
     await verify('adjust', () => engine.addAdjustLayer());
     await verify('outline', () => engine.addOutlineLayer());
     await verify('clip', () => engine.addClipLayer());
+    await verify('transform', () => engine.addTransformLayer());
     await verify('image', () => {
       const canvas = document.createElement('canvas');
       canvas.width = 6;
@@ -2020,4 +2028,175 @@ describe('transaction failure recovery', () => {
     expect(await loadProjectMeta()).toEqual(meta);
     expect((await loadActivePersisted()).page?.layers).toEqual(page?.layers);
   });
+});
+
+it('selects a newly added transform even in multiselect and applies inspector values to rendered pixels', async () => {
+  await engine.newProject();
+  await engine.resizePage({ widthMm: 100, heightMm: 100, ppi: 25.4 });
+  const source = engine.layerById(engine.getActiveLayerId()) as RasterLayer;
+  paintRaster(source, (ctx) => {
+    ctx.fillStyle = '#ff0000';
+    ctx.fillRect(20, 20, 60, 60);
+  });
+  engine.beginMultiSelect(source.id);
+  engine.addTransformLayer();
+  const id = engine.getActiveLayerId();
+  expect(useStore.getState().multiSelectMode).toBe(false);
+  expect(useStore.getState().selectedLayerIds).toEqual([id]);
+  const main = document.createElement('canvas'),
+    overlay = document.createElement('canvas');
+  main.width = main.height = overlay.width = overlay.height = 100;
+  engine.compositor.attachCanvases(main, overlay);
+  const read = (x: number, y: number) => [
+    ...main.getContext('2d')!.getImageData(x, y, 1, 1).data,
+  ];
+  try {
+    engine.updateSelectedParameter('transform.translateX', 20);
+    engine.ensureComposited();
+    expect(read(25, 50)).toEqual([255, 255, 255, 255]);
+    expect(read(90, 50)).toEqual([255, 0, 0, 255]);
+    await engine.undo();
+    engine.ensureComposited();
+    expect(read(25, 50)).toEqual([255, 0, 0, 255]);
+    await engine.redo();
+    engine.ensureComposited();
+    expect(read(25, 50)).toEqual([255, 255, 255, 255]);
+  } finally {
+    engine.compositor.detachCanvases();
+  }
+});
+
+it('directly edits transform handles, records one undo step and cancels without changing saved parameters', async () => {
+  engine.transformEdit.setMode('scale');
+  await engine.newProject();
+  await engine.resizePage({ widthMm: 100, heightMm: 100, ppi: 25.4 });
+  const source = engine.layerById(engine.getActiveLayerId()) as RasterLayer;
+  paintRaster(source, (ctx) => {
+    ctx.fillRect(20, 20, 60, 60);
+  });
+  engine.addTransformLayer();
+  const layer = engine.layerById(engine.getActiveLayerId())!;
+  engine.setFitWidth(100);
+  engine.resetView();
+  const point = (x: number, y: number) => ({ x, y, pressure: 1 });
+  try {
+    expect(engine.transformEdit.frame()?.target).toEqual([
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+      { x: 100, y: 100 },
+      { x: 0, y: 100 },
+    ]);
+    const before = structuredClone(layer.state);
+    expect(engine.beginShapeEdit(point(50, 50))).toBe(true);
+    engine.updateShapeEdit(point(60, 60));
+    engine.finishShapeEdit(point(60, 60));
+    expect(layer.state).toMatchObject({
+      translateX: expect.closeTo(10, 8),
+      translateY: expect.closeTo(10, 8),
+    });
+    await engine.undo();
+    expect(layer.state).toEqual(before);
+    await engine.redo();
+    expect(layer.state).toMatchObject({
+      translateX: expect.closeTo(10, 8),
+      translateY: expect.closeTo(10, 8),
+    });
+    engine.transformEdit.reset();
+    expect(engine.beginShapeEdit(point(100, 100))).toBe(true);
+    engine.finishShapeEdit(point(110, 140));
+    const resized = engine.transformEdit.frame()!.target;
+    expect(resized[0].x).toBeCloseTo(0);
+    expect(resized[0].y).toBeCloseTo(0);
+    expect(resized[2].x).toBeCloseTo(110);
+    expect(resized[2].y).toBeCloseTo(140);
+    engine.transformEdit.reset();
+    // Rotate from the handle above the frame around its center.
+    expect(engine.beginShapeEdit(point(50, -32))).toBe(true);
+    engine.finishShapeEdit(point(132, 50));
+    const rotated = engine.transformEdit.frame()!.target;
+    expect(rotated[0].x).toBeCloseTo(100);
+    expect(rotated[0].y).toBeCloseTo(0);
+    engine.transformEdit.reset();
+    engine.transformEdit.setMode('shear');
+    expect(engine.beginShapeEdit(point(50, 0))).toBe(true);
+    engine.finishShapeEdit(point(65, 0));
+    const sheared = engine.transformEdit.frame()!.target;
+    expect(sheared[0].x).toBeCloseTo(15);
+    expect(sheared[1].x).toBeCloseTo(115);
+    expect(sheared[2].x).toBeCloseTo(100);
+    expect(sheared[3].x).toBeCloseTo(0);
+    engine.transformEdit.reset();
+    engine.transformEdit.setMode('perspective');
+    expect(engine.beginShapeEdit(point(0, 0))).toBe(true);
+    engine.finishShapeEdit(point(35, 30));
+    const warped = engine.transformEdit.frame()!.target;
+    expect(warped[0].x).toBeCloseTo(35);
+    expect(warped[0].y).toBeCloseTo(30);
+    expect(warped[1].x).toBeCloseTo(100);
+    expect(warped[1].y).toBeCloseTo(0);
+    expect(warped[2].x).toBeCloseTo(100);
+    expect(warped[2].y).toBeCloseTo(100);
+    engine.transformEdit.reset();
+    expect(engine.beginShapeEdit(point(50, 0))).toBe(true);
+    engine.finishShapeEdit(point(65, 10));
+    const edge = engine.transformEdit.frame()!.target;
+    expect(edge[0].x).toBeCloseTo(15);
+    expect(edge[0].y).toBeCloseTo(10);
+    expect(edge[1].x).toBeCloseTo(115);
+    expect(edge[1].y).toBeCloseTo(10);
+    expect(edge[2].x).toBeCloseTo(100);
+    expect(edge[2].y).toBeCloseTo(100);
+    const saved = structuredClone(layer.state);
+    engine.beginShapeEdit(point(50, 50));
+    engine.updateShapeEdit(point(55, 50));
+    engine.cancelShapeEdit();
+    expect(layer.state).toEqual(saved);
+    const persisted = engine.layerService.snapshotLayer(layer, false);
+    expect(persisted.state).toEqual(saved);
+  } finally {
+    engine.transformEdit.setMode('scale');
+  }
+});
+
+it('allows configuring a transform before drawing and applies it to later upstream content', async () => {
+  await engine.newProject();
+  await engine.resizePage({ widthMm: 100, heightMm: 100, ppi: 25.4 });
+  const source = engine.layerById(engine.getActiveLayerId()) as RasterLayer;
+  engine.addTransformLayer();
+  engine.setFitWidth(100);
+  engine.resetView();
+  const point = (x: number, y: number) => ({ x, y, pressure: 1 });
+  expect(engine.transformEdit.frame()?.source).toEqual([
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    { x: 100, y: 100 },
+    { x: 0, y: 100 },
+  ]);
+  expect(engine.beginShapeEdit(point(50, 50))).toBe(true);
+  engine.finishShapeEdit(point(70, 50));
+  const main = document.createElement('canvas'),
+    overlay = document.createElement('canvas');
+  main.width = main.height = overlay.width = overlay.height = 100;
+  engine.compositor.attachCanvases(main, overlay);
+  try {
+    paintRaster(source, (ctx) => {
+      ctx.fillStyle = '#ff0000';
+      ctx.fillRect(10, 30, 10, 10);
+    });
+    engine.invalidateLayer(source.id, {
+      minX: 10,
+      minY: 30,
+      maxX: 20,
+      maxY: 40,
+    });
+    engine.ensureComposited();
+    expect([...main.getContext('2d')!.getImageData(35, 35, 1, 1).data]).toEqual(
+      [255, 0, 0, 255],
+    );
+    expect([...main.getContext('2d')!.getImageData(15, 35, 1, 1).data]).toEqual(
+      [255, 255, 255, 255],
+    );
+  } finally {
+    engine.compositor.detachCanvases();
+  }
 });

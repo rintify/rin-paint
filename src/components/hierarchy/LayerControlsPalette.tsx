@@ -1,3 +1,4 @@
+import { DEFAULT_TRANSFORM } from '../../model/transform';
 import CloseIcon from '@mui/icons-material/Close';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import {
@@ -129,10 +130,17 @@ function LayerControls({
       {selected.some((layer) => engine.hasOutsideContent?.(layer.id)) && (
         <Typography variant="caption">用紙外に内容あり</Typography>
       )}
-      <Button onClick={() => engine.centerSelectedContent()}>
-        内容を用紙中央へ移動
-      </Button>
+      {meta.type === 'transform' ? (
+        <Typography variant="body2">キャンバスの青い枠をドラッグして変形できます。自由変形では四隅と辺を直接動かせます。移動はmm、回転・せん断は度、拡縮は倍率で指定できます。</Typography>
+      ) : (
+        <Button onClick={() => engine.centerSelectedContent()}>内容を用紙中央へ移動</Button>
+      )}
       <ParameterPanel layers={selected} />
+      {!multi && meta.type === 'transform' && (
+        <Button onClick={() => engine.commitLayerProps(meta.id, { state: meta.state }, { state: { ...DEFAULT_TRANSFORM } }, '自由変形をリセット')}>
+          自由変形をリセット
+        </Button>
+      )}
       {!multi && (
         <LayerSettingsOverflow
           meta={meta}

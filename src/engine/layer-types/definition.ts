@@ -88,6 +88,25 @@ export interface LayerRenderer<K extends LayerType> {
   ): HTMLCanvasElement | null;
   effect?: {
     apply(scope: EffectScope, layer: LayerOf<K>, env: LayerDrawEnv): void;
+    /** Nonlocal effects request their upstream pixels in source coordinates. */
+    sourceRegion?(
+      region: import('../raster/geometry').PixelRect,
+      layer: LayerOf<K>,
+      env: LayerDrawEnv,
+      available: import('../raster/geometry').PixelRect | null,
+    ): import('../raster/geometry').PixelRect | null;
+    mapBounds?(
+      bounds: import('../raster/geometry').PixelRect,
+      layer: LayerOf<K>,
+      env: LayerDrawEnv,
+    ): import('../raster/geometry').PixelRect | null;
+    /** Maps source damage to output coordinates, including the sampling footprint.
+     * null means unbounded; the compositor falls back to the whole output. */
+    mapDamage?(
+      bounds: import('../raster/geometry').PixelRect,
+      layer: LayerOf<K>,
+      env: LayerDrawEnv,
+    ): import('../raster/geometry').PixelRect | null;
     paddingPx?(layer: LayerOf<K>, env: LayerDrawEnv): number;
     dependencyLayerIds?(layer: LayerOf<K>): readonly string[];
     /** 効果自身が足した可視画素をクリック選択の対象にする。 */

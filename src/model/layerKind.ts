@@ -5,6 +5,7 @@ import type { ImageParams } from './image';
 import type { LayerParameterLink } from './layer';
 import type { OutlineParams } from './outline';
 import type { ShapeParams } from './shape';
+import type { TransformState } from './transform';
 import type { TextParams } from './text';
 
 export interface LayerCommon {
@@ -70,6 +71,7 @@ export interface KindSpec<S, R> {
 }
 
 export interface LayerKindMap {
+  transform: KindSpec<TransformState, undefined>;
   raster: KindSpec<RasterState, { surface: RasterSurface }>;
   adjust: KindSpec<AdjustState, undefined>;
   outline: KindSpec<OutlineState, undefined>;
@@ -84,6 +86,7 @@ export type LayerState = LayerKindMap[LayerType]['state'];
 export type LayerRuntime = LayerKindMap[LayerType]['runtime'];
 
 export const LAYER_TYPES: readonly LayerType[] = [
+  'transform',
   'raster',
   'adjust',
   'outline',

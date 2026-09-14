@@ -1,3 +1,5 @@
+import { effectDamage } from './EffectDamage';
+import type { EffectPreview } from '../layer-types/types';
 import { shapeVisualPadding } from '../shapes';
 import { RasterSurface, RasterEditSession } from '../raster/RasterSurface';
 import { tileCoordinates, tileKey, tileRect } from '../raster/geometry';
@@ -113,9 +115,14 @@ export class Compositor {
   raf = 0;
   /** テスト・計測用。直近フレームで実際に合成した画素面積。 */
   lastCompositedPixels = 0;
-  private readonly frameStats = { cpuReadbackPixels: 0, canvasBorrows: 0 };
+  private readonly frameStats = {
+    cpuReadbackPixels: 0,
+    canvasBorrows: 0,
+    transformSamplePixels: 0,
+  };
 
   renderStats(): {
+    transformSamplePixels: number;
     compositedPixels: number;
     cpuReadbackPixels: number;
     canvasBorrows: number;
@@ -125,6 +132,7 @@ export class Compositor {
     effectCacheMisses: number;
   } {
     return {
+      transformSamplePixels: this.frameStats.transformSamplePixels,
       compositedPixels: this.lastCompositedPixels,
       cpuReadbackPixels: this.frameStats.cpuReadbackPixels,
       canvasBorrows: this.frameStats.canvasBorrows,
@@ -132,6 +140,99 @@ export class Compositor {
       maskCacheMisses: this.maskRenderer.misses,
       effectCacheHits: this.effectCache.hits,
       effectCacheMisses: this.effectCache.misses,
+    };
+  }
+
+  private previewLayerId: string | null = null;
+  private previewSignature = '';
+  private previewLease: CanvasLease | null = null;
+  private effectPreview?: EffectPreview;
+
+  beginTransformPreview(layerId: string): void {
+    this.endTransformPreview();
+    this.previewLayerId = layerId;
+    this.refreshTransformPreview();
+  }
+
+  endTransformPreview(): void {
+    this.previewLease?.release();
+    this.previewLease = null;
+    this.previewLayerId = null;
+    this.previewSignature = '';
+    this.effectPreview = undefined;
+  }
+
+  private refreshTransformPreview(): void {
+    const id = this.previewLayerId;
+    if (!id) return;
+    const eng = this.engine;
+    const signature = JSON.stringify([
+      eng.artboard,
+      eng.getPageSpec().ppi,
+      eng.getRootLayerIds(),
+      eng
+        .allLayers()
+        .map((layer) => [
+          layer.id,
+          layer.parentId,
+          layer.childIds,
+          layer.id === id
+            ? null
+            : [
+                eng.getRenderRevision?.(layer.id) ?? 0,
+                layer.visible,
+                layer.opacity,
+                layer.blend,
+              ],
+        ]),
+    ]);
+    if (signature === this.previewSignature) return;
+    this.effectPreview = undefined;
+    this.previewLease?.release();
+    this.previewLease = null;
+    this.previewSignature = signature;
+    const { w, h } = eng.artboard;
+    const bounds = unionBounds(
+      { x: 0, y: 0, w, h },
+      this.sequenceVisibleBounds(eng.getRootLayerIds()),
+    )!;
+    const pad = this.maximumEffectPadding() + 2;
+    const region = {
+      x: Math.floor(bounds.x) - pad,
+      y: Math.floor(bounds.y) - pad,
+      w: Math.ceil(bounds.w) + pad * 2,
+      h: Math.ceil(bounds.h) + pad * 2,
+    };
+    // Very large off-paper work stays on the bounded regional rendering path.
+    if (region.w * region.h > 16 * 1024 * 1024) return;
+    const input = { effectId: id, result: null as CanvasLease | null };
+    const unused = this.regions.render(
+      region,
+      null,
+      true,
+      undefined,
+      undefined,
+      input,
+    );
+    unused.release();
+    if (!input.result) return;
+    this.previewLease = input.result;
+    this.effectPreview = {
+      layerId: id,
+      revision: signature,
+      source: {
+        canvas: input.result.canvas,
+        x: region.x,
+        y: region.y,
+        width: region.w,
+        height: region.h,
+      },
+      sampleStep:
+        2 **
+        Math.max(
+          0,
+          Math.ceil(Math.log2(Math.max(1, Math.sqrt((w * h) / 750000)))),
+        ),
     };
   }
 
@@ -231,6 +332,7 @@ export class Compositor {
     const drawAboveLayer = tool?.drawAboveLayer?.bind(tool);
     const env: LayerDrawEnv = {
       artboard: eng.artboard,
+      effectPreview: withToolOverlay ? this.effectPreview : undefined,
       outputRegion: { x: originX, y: originY, w: width, h: height },
       inputRegion: { x: originX, y: originY, w: width, h: height },
       paperRect: { x: 0, y: 0, w: eng.artboard.w, h: eng.artboard.h },
@@ -274,6 +376,7 @@ export class Compositor {
   }
 
   clearCaches(): void {
+    this.endTransformPreview();
     this.maskRenderer.clear();
     this.effectCache.clear();
     this.canvasPool.clear();
@@ -401,6 +504,7 @@ export class Compositor {
   }
 
   detachCanvases(): void {
+    this.endTransformPreview();
     this.stopLoop();
     this.main = null;
     this.mainCtx = null;
@@ -433,7 +537,9 @@ export class Compositor {
     if (!ctx || !surface) return;
     this.frameStats.cpuReadbackPixels = 0;
     this.frameStats.canvasBorrows = 0;
+    this.frameStats.transformSamplePixels = 0;
     this.syncWorkCanvases();
+    this.refreshTransformPreview();
     if (this.fullDirty || !this.damageByLayer.size)
       this.compositeFull(ctx, true);
     else this.compositePartial(ctx, this.damageByLayer);
@@ -501,6 +607,12 @@ export class Compositor {
       const effect = layerHandler(layer).renderer.effect;
       if (effect) {
         if (layer.visible && current) {
+          // Keep intermediate extents too: later transforms may bring these pixels back.
+          if (effect.mapBounds)
+            current = unionBounds(
+              current,
+              effect.mapBounds(current, layer, env),
+            )!;
           const padding = Math.max(
             0,
             effect.paddingPx?.(layer as never, env) ?? 0,
@@ -645,7 +757,13 @@ export class Compositor {
   private maximumEffectPadding(): number {
     return Math.max(
       0,
-      ...this.effectPaddingByLayer(this.drawEnv(false)).values(),
+      ...Array.from(
+        effectDamage(
+          this.engine.getRootLayerIds(),
+          this.drawEnv(false),
+        ).values(),
+        (value) => value.padding,
+      ),
     );
   }
   private renderEffectContribution(
@@ -696,81 +814,37 @@ export class Compositor {
     this.compositePartial(ctx, damage);
   }
 
-  private effectPaddingByLayer(env: LayerDrawEnv): Map<string, number> {
-    const eng = this.engine;
-    const activeEffectInChain = (layer: Layer): boolean => {
-      const effect = layerHandler(layer).renderer.effect;
-      if (effect && layer.visible) return true;
-      return layer.childIds.some((id) => {
-        const child = eng.layerById(id);
-        return !!child && activeEffectInChain(child);
-      });
-    };
-    const merge = (
-      target: Map<string, number>,
-      source: Map<string, number>,
-    ) => {
-      for (const [id, padding] of source)
-        target.set(id, Math.max(target.get(id) ?? 0, padding));
-    };
-    const visit = (ids: string[], state: Map<string, number>) => {
-      for (const id of ids) {
-        const layer = eng.layerById(id);
-        if (!layer) continue;
-        const effect = layerHandler(layer).renderer.effect;
-        if (effect) {
-          if (layer.visible) {
-            const padding = Math.max(0, effect.paddingPx?.(layer, env) ?? 0);
-            if (padding)
-              for (const [sourceId, value] of state)
-                state.set(sourceId, value + padding);
-            for (const dependencyId of effect.dependencyLayerIds?.(layer) ??
-              []) {
-              state.set(
-                dependencyId,
-                Math.max(state.get(dependencyId) ?? 0, padding),
-              );
-            }
-          }
-          visit(layer.childIds, state);
-          continue;
-        }
-        if (
-          layer.childIds.some((childId) => {
-            const child = eng.layerById(childId);
-            return !!child && activeEffectInChain(child);
-          })
-        ) {
-          const local = new Map<string, number>();
-          if (layer.visible) local.set(layer.id, 0);
-          visit(layer.childIds, local);
-          merge(state, local);
-        } else {
-          if (layer.visible)
-            state.set(layer.id, Math.max(state.get(layer.id) ?? 0, 0));
-          visit(layer.childIds, state);
-        }
-      }
-    };
-    const result = new Map<string, number>();
-    visit(eng.getRootLayerIds(), result);
-    return result;
-  }
-
   private compositePartial(
     ctx: CanvasRenderingContext2D,
     damages: Map<string, DirtyRect[]>,
   ): void {
     const { w, h } = this.engine.artboard;
     const env = this.drawEnv(true);
-    const paddingByLayer = this.effectPaddingByLayer(env);
+    const propagated = effectDamage(
+      this.engine.getRootLayerIds(),
+      env,
+      damages,
+    );
     const outputs: DirtyRect[] = [];
     let evaluationPadding = 0;
-    for (const [layerId, changes] of damages) {
-      const padding = paddingByLayer.get(layerId) ?? 0;
+    for (const { rects, padding } of propagated.values()) {
+      if (!rects.length) continue;
       evaluationPadding = Math.max(evaluationPadding, padding);
-      for (const damage of changes) {
-        let next = clampDirty(expandDirty(damage, padding), w, h);
+      for (const damage of rects) {
+        // Clip only after every effect: an intermediate transform can move off
+        // paper and a later transform can bring the changed pixels back.
+        let next = clampDirty(
+          damage
+            ? {
+                minX: damage.x,
+                minY: damage.y,
+                maxX: damage.x + damage.w,
+                maxY: damage.y + damage.h,
+              }
+            : { minX: 0, minY: 0, maxX: w, maxY: h },
+          w,
+          h,
+        );
         if (!next) continue;
         // Only merge intersecting damage; distant edits never fill their gap.
         for (let i = outputs.length - 1; i >= 0; i--) {
@@ -787,6 +861,9 @@ export class Compositor {
         }
         outputs.push(next);
       }
+    }
+    if (this.fullDirty) {
+      outputs.splice(0, outputs.length, { minX: 0, minY: 0, maxX: w, maxY: h });
     }
     const pad =
       evaluationPadding > 0

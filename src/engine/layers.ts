@@ -1,3 +1,4 @@
+import { DEFAULT_TRANSFORM } from '../model/transform';
 import { RasterSurface } from './raster/RasterSurface';
 import {
   cloneImageParams,
@@ -157,4 +158,8 @@ export function createShapeLayer(
 
 export function buildFilter(p: import('../model').AdjustParams): string {
   return `brightness(${p.brightness}%) contrast(${p.contrast}%) hue-rotate(${p.hue}deg) saturate(${p.saturation}%)`;
+}
+
+export function createTransformLayer(name: string, id = newLayerId()): LayerOf<'transform'> {
+  return { ...defaultLayerCommon(id, name), type: 'transform', state: { ...DEFAULT_TRANSFORM }, runtime: undefined };
 }

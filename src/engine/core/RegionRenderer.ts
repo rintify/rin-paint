@@ -201,7 +201,24 @@ export class RegionRenderer {
       activeRegion: RenderRect,
       activeEnv: LayerDrawEnv,
     ): boolean => {
-      for (const id of ids) {
+      const preview = activeEnv.effectPreview;
+      const resumeIndex =
+        preview && !included && !capture && !hit && !inputCapture
+          ? ids.indexOf(preview.layerId)
+          : -1;
+      if (resumeIndex >= 0 && preview) {
+        state.revision = mixRevision(state.revision, preview.revision);
+        // This exact upstream scope was captured before the drag. Reuse it instead
+        // of replaying all earlier layers and effects for every output tile.
+        resetTarget(target);
+        target.clearRect(0, 0, activeRegion.w, activeRegion.h);
+        target.drawImage(
+          preview.source.canvas,
+          preview.source.x - activeRegion.x,
+          preview.source.y - activeRegion.y,
+        );
+      }
+      for (const id of resumeIndex >= 0 ? ids.slice(resumeIndex) : ids) {
         const layer = eng.layerById(id);
         if (!layer) continue;
         const handler = layerHandler(layer);
@@ -231,11 +248,86 @@ export class RegionRenderer {
               ? this.host.borrowCanvas(region.w, region.h)
               : null;
             before?.ctx.drawImage(targetCanvas, 0, 0);
-            handler.renderer.effect.apply(
-              effectScope(targetCanvas, state.revision, activeRegion),
-              layer,
-              activeEnv,
-            );
+            const frozen =
+              activeEnv.effectPreview?.layerId === layer.id
+                ? activeEnv.effectPreview.source
+                : null;
+            const available =
+              !frozen && handler.renderer.effect.sourceRegion
+                ? this.host.sequenceVisibleBounds(eng.getRootLayerIds())
+                : null;
+            const requested =
+              !frozen &&
+              handler.renderer.effect.sourceRegion?.(
+                activeRegion,
+                layer,
+                activeEnv,
+                available,
+              );
+            const sourceBounds =
+              requested && available
+                ? (intersectBounds(requested, {
+                    x: Math.floor(available.x) - 1,
+                    y: Math.floor(available.y) - 1,
+                    w: Math.ceil(available.w) + 3,
+                    h: Math.ceil(available.h) + 3,
+                  }) ?? { x: requested.x, y: requested.y, w: 1, h: 1 })
+                : requested;
+            // Pixel readback needs an integer origin and row stride. Keeping the
+            // source grid fixed also makes partial and full rendering agree.
+            const sourceRegion = sourceBounds
+              ? {
+                  x: Math.floor(sourceBounds.x),
+                  y: Math.floor(sourceBounds.y),
+                  w:
+                    Math.ceil(sourceBounds.x + sourceBounds.w) -
+                    Math.floor(sourceBounds.x),
+                  h:
+                    Math.ceil(sourceBounds.y + sourceBounds.h) -
+                    Math.floor(sourceBounds.y),
+                }
+              : sourceBounds;
+            let source: CanvasLease | null = null;
+            if (sourceRegion) {
+              const upstream = {
+                effectId: layer.id,
+                result: null as CanvasLease | null,
+              };
+              const unused = this.render(
+                sourceRegion,
+                included,
+                drawToolOverlay,
+                undefined,
+                undefined,
+                upstream,
+              );
+              unused.release();
+              source = upstream.result;
+            }
+            try {
+              handler.renderer.effect.apply(
+                {
+                  ...effectScope(targetCanvas, state.revision, activeRegion),
+                  ...(frozen
+                    ? { source: frozen }
+                    : source && sourceRegion
+                      ? {
+                          source: {
+                            canvas: source.canvas,
+                            x: sourceRegion.x,
+                            y: sourceRegion.y,
+                            width: sourceRegion.w,
+                            height: sourceRegion.h,
+                          },
+                        }
+                      : {}),
+                },
+                layer,
+                activeEnv,
+              );
+            } finally {
+              source?.release();
+            }
             resetTarget(target);
             state.revision = mixRevision(
               state.revision,
@@ -273,7 +365,16 @@ export class RegionRenderer {
         });
         if (hasActiveDirectEffect) {
           const measured =
-            !capture && !hit && !inputCapture
+            !capture &&
+            !hit &&
+            !inputCapture &&
+            !eng
+              .allLayers()
+              .some(
+                (item) =>
+                  item.visible &&
+                  layerHandler(item).renderer.effect?.sourceRegion,
+              )
               ? this.host.sequenceVisibleBounds([layer.id])
               : null;
           const clipped = measured

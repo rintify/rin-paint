@@ -1,3 +1,4 @@
+import { transformLayerType } from './transform';
 import { RasterSurface } from '../raster/RasterSurface';
 import { RasterResampler } from '../raster/RasterResampler';
 import type { LayerCommon, LayerType } from '../../model';
@@ -35,6 +36,7 @@ import type {
 export type { LayerProps, LayerRecord, LayerSnapshot };
 
 const definitions = {
+  transform: transformLayerType,
   raster: rasterLayerType,
   adjust: adjustLayerType,
   outline: outlineLayerType,

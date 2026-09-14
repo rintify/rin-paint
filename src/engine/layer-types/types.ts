@@ -43,6 +43,7 @@ export interface LayerMeasureEnv {
 }
 
 export interface LayerDrawEnv extends LayerMeasureEnv {
+  effectPreview?: EffectPreview;
   outputRegion: PixelRect;
   inputRegion: PixelRect;
   paperRect: PixelRect;
@@ -68,6 +69,7 @@ export interface LayerDrawEnv extends LayerMeasureEnv {
 export interface RenderStatsAccumulator {
   cpuReadbackPixels: number;
   canvasBorrows: number;
+  transformSamplePixels?: number;
 }
 
 export interface CanvasLease {
@@ -84,7 +86,25 @@ export interface MaskCanvas {
   release(): void;
 }
 
+export interface EffectSource {
+  canvas: HTMLCanvasElement;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Lazily read once for the lifetime of an immutable interaction snapshot. */
+  pixels?: Uint8ClampedArray;
+}
+
+export interface EffectPreview {
+  revision: string;
+  layerId: string;
+  source: EffectSource;
+  sampleStep: number;
+}
+
 export interface EffectScope {
+  source?: EffectSource;
   canvas: HTMLCanvasElement;
   coverage: HTMLCanvasElement;
   x: number;

@@ -10,6 +10,7 @@ import { PageView } from './PageView';
 
 const setConstrained = vi.hoisted(() => vi.fn());
 const mockEngine = vi.hoisted(() => ({
+  transformEdit: { mode: 'scale' },
   attach() {},
   detach() {},
   setFitWidth() {},

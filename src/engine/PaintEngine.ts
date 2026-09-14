@@ -1,3 +1,4 @@
+import { TransformEditController } from './transform/TransformEditController';
 import { StoreProjectionCache, reuseArray } from './core/StoreProjectionCache';
 import type { RasterChangeSet } from './raster/RasterSurface';
 import { useStore } from '../state/store';
@@ -149,6 +150,7 @@ export class PaintEngine {
   }
 
   notifyLayerSelectionChange(): void {
+    this.transformEdit.cancel();
     this.activeTool().onLayerSelectionChange?.();
   }
 
@@ -159,14 +161,18 @@ export class PaintEngine {
     return (
       this.historyService.hasRasterEdits() ||
       this.shapeEdit.hasEdit() ||
+      this.transformEdit.hasEdit() ||
       (this.activeSession()?.active() ?? false)
     );
   }
   cancelSessions(): void {
+    this.transformEdit.cancel();
     if (this.shapeEdit.hasEdit()) this.shapeEdit.cancelShapeEdit();
     this.activeSession()?.cancel();
     if (this.historyService.hasRasterEdits()) this.activeTool().cancel?.();
   }
+
+  readonly transformEdit = new TransformEditController(this);
 
   constructor() {
     this.view.onChange = () => {
@@ -224,7 +230,7 @@ export class PaintEngine {
     this.lastViewState = view;
   }
   /** @internal */ hasShapeEdit(): boolean {
-    return this.shapeEdit.hasEdit();
+    return this.shapeEdit.hasEdit() || this.transformEdit.hasEdit();
   }
   /** @internal */ allLayers() {
     return this.layerService.layers;
@@ -582,6 +588,9 @@ export class PaintEngine {
   addOutlineLayer(): void {
     this.layerService.addOutlineLayer();
   }
+  addTransformLayer(): void {
+    this.layerService.addTransformLayer();
+  }
   addClipLayer(): void {
     this.layerService.addClipLayer();
   }
@@ -709,19 +718,27 @@ export class PaintEngine {
   }
 
   beginShapeEdit(point: StrokePoint, event?: PointerEvent): boolean {
-    return this.shapeEdit.beginShapeEdit(point, event);
+    return this.transformEdit.activeLayer()
+      ? this.transformEdit.begin(point)
+      : this.shapeEdit.beginShapeEdit(point, event);
   }
   updateShapeEdit(point: StrokePoint, event?: PointerEvent): boolean {
-    return this.shapeEdit.updateShapeEdit(point, event);
+    return this.transformEdit.hasEdit()
+      ? this.transformEdit.update(point)
+      : this.shapeEdit.updateShapeEdit(point, event);
   }
   finishShapeEdit(point: StrokePoint): boolean {
-    return this.shapeEdit.finishShapeEdit(point);
+    return this.transformEdit.hasEdit()
+      ? this.transformEdit.finish(point)
+      : this.shapeEdit.finishShapeEdit(point);
   }
   cancelShapeEdit(): void {
+    this.transformEdit.cancel();
     this.shapeEdit.cancelShapeEdit();
   }
   drawActiveShapeHandles(ctx: CanvasRenderingContext2D): void {
     this.shapeEdit.drawActiveShapeHandles(ctx);
+    this.transformEdit.draw(ctx);
   }
   setShapeHandleEdgeConstrained(value: boolean): void {
     this.shapeEdit.setShapeHandleEdgeConstrained(value);

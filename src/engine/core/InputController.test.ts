@@ -188,3 +188,33 @@ describe('frame-bounded transform input', () => {
     expect(onMove.mock.calls.map((call) => call[0].x)).toEqual([3]);
   });
 });
+
+it('starts transform manipulation on pointer down even with an immediate drawing or cursor tool selected', () => {
+  const beginShapeEdit = vi.fn(() => true),
+    onDown = vi.fn();
+  const engine = {
+    isBusy: () => false,
+    finishTextEditing() {},
+    view: { clientToArt: (x: number, y: number) => ({ x, y }) },
+    transformEdit: { activeLayer: () => ({ type: 'transform' }) },
+    activeTool: () => ({
+      startsImmediately: true,
+      allowsDirectShapeEdit: false,
+      onDown,
+    }),
+    beginShapeEdit,
+  } as unknown as PaintEngine;
+  const input = new InputController(engine),
+    area = document.createElement('div');
+  area.setPointerCapture = () => undefined;
+  area.releasePointerCapture = () => undefined;
+  input.attachListeners(area);
+  try {
+    area.dispatchEvent(pointerEvent('pointerdown', {}));
+    expect(beginShapeEdit).toHaveBeenCalledOnce();
+    expect(onDown).not.toHaveBeenCalled();
+    expect(input.pendingPress).toBeNull();
+  } finally {
+    input.detachListeners();
+  }
+});
