@@ -244,13 +244,13 @@ describe('layer settings entry points', () => {
     expect(actions.exitMultiSelect).toHaveBeenCalledOnce();
     expect(useStore.getState().multiSelectMode).toBe(false);
   });
-  it('selects descendants on long-press and ignores the following click', async () => {
+  it('keeps canvas selection separate from descendants on long-press', async () => {
     vi.useFakeTimers();
     actions.setActiveLayer.mockClear();
     actions.beginMultiSelect.mockClear();
     actions.toggleDescendantSelection.mockClear();
     const nested: LayerMeta[] = [
-      { ...base, id: 'parent', name: '親', type: 'raster', childIds: ['child'], state: {} },
+      { ...base, id: 'parent', name: '親', type: 'canvas', childIds: ['child'], state: { propagateTransforms: true } },
       { ...base, id: 'child', name: '子', type: 'shape', parentId: 'parent', canRemove: true, state: { snapEnabled: true, shape: { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 1, color: '#123456' } } },
     ];
     useStore.getState().set({
@@ -267,10 +267,10 @@ describe('layer settings entry points', () => {
       row.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 10, clientY: 10 }));
       row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(actions.toggleDescendantSelection).toHaveBeenCalledWith('parent');
+    expect(actions.toggleDescendantSelection).not.toHaveBeenCalled();
     expect(actions.beginMultiSelect).not.toHaveBeenCalled();
-    expect(actions.setActiveLayer).not.toHaveBeenCalled();
-    expect(useStore.getState().selectedLayerIds).toEqual(['parent', 'child']);
+    expect(actions.setActiveLayer).toHaveBeenCalledWith('parent');
+    expect(useStore.getState().selectedLayerIds).toEqual(['parent']);
     vi.useRealTimers();
   });
   it('enters multi-select while keeping the first layer primary', async () => {
@@ -324,9 +324,9 @@ describe('layer settings entry points', () => {
 });
 
 describe('mask candidates', () => {
-  it('keeps matching layers in hierarchy order with their ancestors', () => {
+  it('does not expose matching canvas descendants to an external mask', () => {
     const nested: LayerMeta[] = [
-      { ...base, id: 'parent', name: '親', type: 'raster', childIds: ['child'], state: {} },
+      { ...base, id: 'parent', name: '親', type: 'canvas', childIds: ['child'], state: { propagateTransforms: true } },
       { ...base, id: 'child', name: '対象文字', type: 'text', parentId: 'parent', state: { snapEnabled: true, text: {} as never } },
       {
         ...base,
@@ -337,7 +337,7 @@ describe('mask candidates', () => {
       },
     ];
     const result = maskCandidateRows(['parent', 'adjust'], nested, 'adjust', '対象');
-    expect(result.map(row => [row.layer.id, row.depth])).toEqual([['parent', 0], ['child', 1]]);
+    expect(result.map(row => [row.layer.id, row.depth])).toEqual([]);
   });
 });
 

@@ -69,12 +69,13 @@ export const adjustLayerType: LayerDefinition<'adjust'> = {
       apply(scope, layer, env) {
         const p = layer.state.params;
         if (layer.opacity <= 0 || (p.brightness === 100 && p.contrast === 100 && p.hue === 0 && p.saturation === 100)) return;
+        const mask = layer.state.maskLayerIds.length ? env.maskCanvas(layer.state.maskLayerIds) : null;
+        if (layer.state.maskLayerIds.length && !mask) return;
         const filtered = env.borrowCanvas();
         filtered.ctx.save();
         filtered.ctx.filter = buildFilter(p);
         filtered.ctx.drawImage(scope.canvas, 0, 0);
         filtered.ctx.restore();
-        const mask = layer.state.maskLayerIds.length ? env.maskCanvas(layer.state.maskLayerIds) : null;
         mixCanvases(scope, filtered.canvas, layer.opacity, mask);
         mask?.release();
         filtered.release();

@@ -149,7 +149,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
       pointerId: event.pointerId, mode, corner, x: point.x, y: point.y, width, height,
       before: structuredClone(text), capture,
       snapLines: mode === 'move' && layer.state.snapEnabled !== false
-        ? collectSnapLines(engine.artboard, engine.visibleObjectBounds(activeId))
+        ? collectSnapLines(engine.artboard, engine.visibleObjectBounds(activeId), layer.parentId === null)
         : undefined,
     };
     setSnapGuides({ x: null, y: null });

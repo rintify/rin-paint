@@ -25,11 +25,12 @@ import {
   layerTypeProps,
   restoreLayerFrom,
 } from '../layer-types/registry';
-import { layerMaskIds } from '../layer-types/definition';
 import { shapeLayerName } from '../layer-types/shape';
 import { textFrame } from '../layer-types/text';
 import {
   createAdjustLayer,
+  createCanvasLayer,
+  createTransformLayer,
   createClipLayer,
   createImageLayer,
   createOutlineLayer,
@@ -107,7 +108,8 @@ export class LayerService {
 
   siblingIds(parentId: string | null): string[] {
     if (parentId === null) return this.rootLayerIds;
-    return this.byId(parentId)?.childIds ?? [];
+    const canvas = this.byId(parentId);
+    return canvas?.type === 'canvas' ? canvas.childIds : [];
   }
 
   locationOf(id: string): LayerLocation | null {
@@ -213,13 +215,9 @@ export class LayerService {
     if (affectsMask) this.bumpMaskVersion(l.id);
   }
 
-  /** 削除されるレイヤーを参照しているマスク設定を外す */
-  maskReferenceOps(removedIds: Set<string>): { layerId: string; before: string[]; after: string[] }[] {
-    return this.layers.flatMap(layer => {
-      const before = layerMaskIds(layer.state);
-      if (!before || removedIds.has(layer.id) || !before.some(id => removedIds.has(id))) return [];
-      return [{ layerId: layer.id, before, after: before.filter(id => !removedIds.has(id)) }];
-    });
+  /** Authored mask IDs survive deletion; SceneQuery disables invalid references. */
+  maskReferenceOps(_removedIds: Set<string>): { layerId: string; before: string[]; after: string[] }[] {
+    return [];
   }
 
   detachMaskReferences(removedIds: Set<string>): { layerId: string; before: string[]; after: string[] }[] {
@@ -250,21 +248,16 @@ export class LayerService {
   private mergeTargetFor(layer: Layer): RasterLayer | null {
     if (!layerHandler(layer).renderer.effect) return this.mergeTarget(layer);
     if (layer.childIds.length) return null;
-    if (layer.parentId) {
-      const parent = this.rasterById(layer.parentId);
-      return parent?.childIds.length === 1 && parent.childIds[0] === layer.id ? parent : null;
-    }
-    const index = this.rootLayerIds.indexOf(layer.id);
-    if (index !== 1) return null;
-    const target = this.rasterById(this.rootLayerIds[0]);
-    return target && target.childIds.length === 0 ? target : null;
+    const siblings = this.siblingIds(layer.parentId);
+    if (siblings.indexOf(layer.id) !== 1) return null;
+    return this.rasterById(siblings[0]);
   }
 
   canTransferShape(id = this.activeLayerId): boolean {
     const layer = this.byId(id);
     return !!layer
       && !!layerHandler(layer).capabilities.transferToRaster?.canTransfer(layer as never)
-      && !!this.rasterById(layer.parentId!);
+      && this.layers.some(target => target.type === 'raster' && target.parentId === layer.parentId);
   }
 
   canMoveLayer(id: string, parentId: string | null): boolean {
@@ -325,7 +318,7 @@ export class LayerService {
     if (layer?.type !== 'text' || layer.childIds.length > 0 || !isEmptyText(layer.state.text)) return false;
     const parent = layer.parentId ? this.byId(layer.parentId) : null;
     // A bubble owns an outline sibling; its empty text is an intentional editable placeholder.
-    const bubblePlaceholder = parent?.type === 'shape' && parent.childIds.some(childId => this.byId(childId)?.type === 'outline');
+    const bubblePlaceholder = parent?.type === 'canvas' && parent.childIds.some(childId => this.byId(childId)?.type === 'outline');
     if (bubblePlaceholder) return false;
     const location = this.locationOf(id);
     if (!location) return false;
@@ -386,8 +379,7 @@ export class LayerService {
     const walk = (ids: string[]): string | null => {
       for (const id of [...ids].reverse()) {
         const layer = this.byId(id)!;
-        const child = walk(layer.childIds);
-        if (child) return child;
+
         if (layer.type !== 'text' || !layer.visible) continue;
         const frame = textFrame(layer, this.engine.compositor.textRenderer);
         const cx = frame.x + frame.w / 2, cy = frame.y + frame.h / 2, angle = -(layer.state.text.rotation ?? 0);
@@ -398,7 +390,7 @@ export class LayerService {
       }
       return null;
     };
-    return walk(this.rootLayerIds);
+    return walk(this.siblingIds(this.byId(this.activeLayerId)?.parentId ?? null));
   }
 
   textFrameSize(id: string): { width: number; height: number } | null {
@@ -415,76 +407,37 @@ export class LayerService {
     this.engine.requestRender();
   }
 
-  addRasterLayer(): void {
+  addCanvasLayer(): void { this.addScopeLayer(createCanvasLayer(this.nextLayerName('canvas')), 'キャンバスを追加'); }
+  addTransformLayer(): void { this.addScopeLayer(createTransformLayer(this.nextLayerName('transform')), 'トランスフォームを追加'); }
+
+  private addScopeLayer(layer: Layer, label: string): void {
     if (this.engine.isBusy()) return;
     this.finishFloating();
-    const activeLocation = this.locationOf(this.activeLayerId);
-    const location = activeLocation
-      ? { ...activeLocation, index: activeLocation.index + 1 }
-      : { parentId: null, index: this.rootLayerIds.length };
-    const layer = createRasterLayer(this.nextLayerName('raster'), this.engine.artboard.w, this.engine.artboard.h);
-    this.layers.push(layer);
-    this.insertAt(layer.id, location);
-    this.activeLayerId = layer.id;
-    this.engine.history.push(
-      { kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, false) },
-      'レイヤー追加',
-    );
+    const active = this.byId(this.activeLayerId);
+    const current = this.locationOf(this.activeLayerId);
+    const location = active?.type === 'canvas'
+      ? { parentId: active.id, index: active.childIds.length }
+      : current ? { ...current, index: current.index + 1 } : { parentId: null, index: this.rootLayerIds.length };
+    this.layers.push(layer); this.insertAt(layer.id, location); this.activeLayerId = layer.id;
+    this.engine.history.push({ kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, false) }, label);
     this.engine.committed();
+  }
+
+  addRasterLayer(): void {
+    if (this.engine.isBusy()) return;
+    this.addScopeLayer(createRasterLayer(this.nextLayerName('raster'), this.engine.artboard.w, this.engine.artboard.h), 'レイヤー追加');
   }
 
   addAdjustLayer(): void {
-    if (this.engine.isBusy()) return;
-    this.finishFloating();
-    const activeLocation = this.locationOf(this.activeLayerId);
-    const location = activeLocation
-      ? { ...activeLocation, index: activeLocation.index + 1 }
-      : { parentId: null, index: this.rootLayerIds.length };
-    const layer = createAdjustLayer(this.nextLayerName('adjust'));
-    this.layers.push(layer);
-    this.insertAt(layer.id, location);
-    this.activeLayerId = layer.id;
-    this.engine.history.push(
-      { kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, false) },
-      '補正レイヤー追加',
-    );
-    this.engine.committed();
+    this.addScopeLayer(createAdjustLayer(this.nextLayerName('adjust')), '補正レイヤー追加');
   }
 
   addOutlineLayer(): void {
-    if (this.engine.isBusy()) return;
-    this.finishFloating();
-    const activeLocation = this.locationOf(this.activeLayerId);
-    const location = activeLocation
-      ? { ...activeLocation, index: activeLocation.index + 1 }
-      : { parentId: null, index: this.rootLayerIds.length };
-    const layer = createOutlineLayer(this.nextLayerName('outline'));
-    this.layers.push(layer);
-    this.insertAt(layer.id, location);
-    this.activeLayerId = layer.id;
-    this.engine.history.push(
-      { kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, false) },
-      '縁どりレイヤー追加',
-    );
-    this.engine.committed();
+    this.addScopeLayer(createOutlineLayer(this.nextLayerName('outline')), '縁どりレイヤー追加');
   }
 
   addClipLayer(): void {
-    if (this.engine.isBusy()) return;
-    this.finishFloating();
-    const activeLocation = this.locationOf(this.activeLayerId);
-    const location = activeLocation
-      ? { ...activeLocation, index: activeLocation.index + 1 }
-      : { parentId: null, index: this.rootLayerIds.length };
-    const layer = createClipLayer(this.nextLayerName('clip'));
-    this.layers.push(layer);
-    this.insertAt(layer.id, location);
-    this.activeLayerId = layer.id;
-    this.engine.history.push(
-      { kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, false) },
-      'クリップレイヤー追加',
-    );
-    this.engine.committed();
+    this.addScopeLayer(createClipLayer(this.nextLayerName('clip')), 'クリップレイヤー追加');
   }
 
   addShapeLayer(shape: ShapeParams): void {
@@ -557,30 +510,32 @@ export class LayerService {
   addPanelFrame(shape: ShapeParams, options: PanelFrameLayerOptions): void {
     if (this.engine.isBusy()) return;
     this.finishFloating();
-    const root = createShapeLayer('コマ', shape);
+    const root = createCanvasLayer('コマ');
+    const maskShape = createShapeLayer('コマ形状', shape);
     const raster = createRasterLayer('コマ描画', this.engine.artboard.w, this.engine.artboard.h, undefined, true);
     const clip = createClipLayer('コマ内クリップ');
     const outline = createOutlineLayer('コマ枠');
-    root.childIds = [raster.id, clip.id];
+    root.childIds = [maskShape.id, raster.id, clip.id, outline.id];
+    maskShape.parentId = root.id;
     raster.parentId = root.id;
     clip.parentId = root.id;
-    clip.childIds = [outline.id];
-    clip.state.maskLayerIds = [root.id];
-    outline.parentId = clip.id;
+    clip.state.maskLayerIds = [maskShape.id];
+    outline.parentId = root.id;
     outline.state.outline = {
       ...outline.state.outline,
       color: options.outlineColor,
       widthMm: options.outlineWidthMm,
       cornerStyle: 'sharp',
     };
-    this.addGeneratedTree(root, [root, raster, clip, outline], raster.id, 'コマを追加');
+    this.addGeneratedTree(root, [root, maskShape, raster, clip, outline], raster.id, 'コマを追加');
     useStore.getState().pushColor(shape.color);
   }
 
   addSpeechBubble(bodyShape: ShapeParams, tailShape: ShapeParams | null, options: SpeechBubbleLayerOptions): void {
     if (this.engine.isBusy()) return;
     this.finishFloating();
-    const body = createShapeLayer('吹き出し', bodyShape);
+    const root = createCanvasLayer('吹き出し');
+    const body = createShapeLayer('本体', bodyShape);
     const tail = tailShape ? createShapeLayer('しっぽ', tailShape) : null;
     const outline = createOutlineLayer('吹き出し枠');
     const frame = options.textFrame;
@@ -592,9 +547,10 @@ export class LayerService {
       verticalAlign: 'top',
       lineHeight: 1.5,
     }));
-    body.childIds = [...(tail ? [tail.id] : []), outline.id, text.id];
+    root.childIds = [body.id, ...(tail ? [tail.id] : []), outline.id, text.id];
+    body.parentId = root.id;
     if (tail) {
-      tail.parentId = body.id;
+      tail.parentId = root.id;
       tail.parameterLink = {
         source: { pageId: this.engine.pages.activePageId, layerId: body.id },
         sourceNameHint: body.name,
@@ -603,15 +559,15 @@ export class LayerService {
         fallbackValues: { 'appearance.color': bodyShape.color },
       };
     }
-    outline.parentId = body.id;
+    outline.parentId = root.id;
     outline.state.outline = {
       ...outline.state.outline,
       color: options.outlineColor,
       widthMm: options.outlineWidthMm,
       cornerStyle: bodyShape.kind === 'rect' ? 'sharp' : 'round',
     };
-    text.parentId = body.id;
-    this.addGeneratedTree(body, [body, ...(tail ? [tail] : []), outline, text], text.id, '吹き出しを追加', text.id);
+    text.parentId = root.id;
+    this.addGeneratedTree(root, [root, body, ...(tail ? [tail] : []), outline, text], text.id, '吹き出しを追加', text.id);
     useStore.getState().pushColor(bodyShape.color);
     useStore.getState().pushColor(options.textColor);
   }
@@ -743,12 +699,13 @@ export class LayerService {
     }
   }
 
-  transferShapeLayer(): void {
+  transferShapeLayer(targetId: string): void {
     if (this.engine.isBusy()) return;
     if (!this.canTransferShape()) return;
     const layer = this.byId(this.activeLayerId)!;
-    const parent = this.rasterById(layer.parentId!)!;
-    this.bakeAndMerge(layer, parent, layer.type === 'image' ? '画像を転写' : '図形を転写', layer.id);
+    const target = this.rasterById(targetId);
+    if (!target || target.parentId !== layer.parentId) return;
+    this.bakeAndMerge(layer, target, layer.type === 'image' ? '画像を転写' : '図形を転写', layer.id);
   }
 
   async applyLayerContent(snapshot: LayerSnapshot): Promise<void> {
@@ -795,6 +752,11 @@ export class LayerService {
     if (this.engine.isBusy() || !this.byId(id)) return;
     const state = useStore.getState();
     state.set({ shortcutTarget: { type: 'layer', id } });
+    if (state.multiSelectMode && this.byId(id)?.parentId !== this.byId(this.activeLayerId)?.parentId) {
+      this.finishFloating(); this.activeLayerId = id;
+      state.set({ multiSelectMode: false, selectedLayerIds: [id] });
+      this.engine.syncStore(); this.engine.notifyLayerSelectionChange(); return;
+    }
     if (state.multiSelectMode) {
       const selected = new Set(state.selectedLayerIds);
       const removing = selected.has(id);
@@ -906,44 +868,13 @@ export class LayerService {
   }
 
   beginMultiSelect(id: string): void {
-    if (!this.byId(id)) return;
+    const layer = this.byId(id);
+    if (!layer) return;
     const st = useStore.getState();
     const previous = st.selectedLayerIds.length ? st.selectedLayerIds : [this.activeLayerId];
-    const selected = [...previous.filter(existing => !!this.byId(existing)), ...(!previous.includes(id) ? [id] : [])];
+    const selected = [...previous.filter(existing => this.byId(existing)?.parentId === layer.parentId), ...(!previous.includes(id) ? [id] : [])];
     this.activeLayerId = selected[0] ?? id;
     this.applyMultiSelection(selected);
-  }
-
-  toggleDescendantSelection(id: string): void {
-    const layer = this.byId(id);
-    if (!layer?.childIds.length) return;
-    const descendants = this.descendantIds(id).slice(1);
-    const st = useStore.getState();
-    const current = (st.selectedLayerIds.length ? st.selectedLayerIds : [this.activeLayerId])
-      .filter(existing => !!this.byId(existing));
-    const selected = new Set(current);
-    const allDescendantsSelected = descendants.every(descendant => selected.has(descendant));
-    if (st.multiSelectMode && selected.has(id) && allDescendantsSelected) {
-      selected.delete(id);
-      for (const descendant of descendants) selected.delete(descendant);
-      const next = [...selected];
-      if (!next.length) {
-        this.activeLayerId = id;
-        this.exitMultiSelect();
-        return;
-      }
-      if (!next.includes(this.activeLayerId)) this.activeLayerId = next[0]!;
-      this.applyMultiSelection(next);
-      return;
-    }
-    if (!st.multiSelectMode) {
-      this.activeLayerId = id;
-      this.applyMultiSelection([id, ...descendants]);
-      return;
-    }
-    selected.add(id);
-    for (const descendant of descendants) selected.add(descendant);
-    this.applyMultiSelection([...selected]);
   }
 
   exitMultiSelect(): void {

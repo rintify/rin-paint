@@ -1,4 +1,7 @@
 import AddIcon from '@mui/icons-material/Add';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
+import { SceneQuery, MASK_PROBLEM_LABELS } from '../../engine/core/SceneQuery';
+import { layerMaskIds } from '../../engine/layer-types/definition';
 import LibraryAddCheckIcon from '@mui/icons-material/LibraryAddCheck';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import VisibilityIcon from '@mui/icons-material/Visibility';
@@ -27,7 +30,6 @@ import { useStore } from '../../state/store';
 import type { LayerMeta } from '../../model';
 import { appAlert } from '../AppDialogs';
 import { useEngine } from '../EngineContext';
-import { useLongPress } from '../hooks/useLongPress';
 import { NameEditor } from '../NameEditor';
 import { LayerControlsPalette } from './LayerControlsPalette';
 import { Thumb } from './Thumb';
@@ -59,6 +61,7 @@ export function HierarchyPanel() {
   const requestedPaletteId = useRef<string | null>(null);
   const byId = useMemo(() => new Map(layers.map(l => [l.id, l])), [layers]);
   const active = byId.get(activeId);
+  const scene = useMemo(() => new SceneQuery(rootLayerIds, layers), [rootLayerIds, layers]);
   const [palette, setPalette] = useState<{ id: string; open: boolean }>(() => ({
     id: activeId,
     open: !!active && hasLayerControls(active.type),
@@ -80,17 +83,6 @@ export function HierarchyPanel() {
   const [rename, setRename] = useState<{ id: string; value: string } | null>(null);
   const renameSubmit = useRef<(() => boolean) | null>(null);
   const pendingRename = useRef<{ id: string; value: string } | null>(null);
-  const longPressTarget = useRef<string | null>(null);
-  const ignoreClick = useRef(false);
-  const longPress = useLongPress(() => {
-    const id = longPressTarget.current;
-    if (!id) return;
-    const layer = byId.get(id) ?? metadata.current.get(id);
-    if (!layer?.childIds.length) return;
-    ignoreClick.current = true;
-    engine.toggleDescendantSelection(id);
-    setPalette({ id, open: true });
-  });
   const visible = dragId && frozen.current ? frozen.current : desired;
   const signature = visible.map(r => r.id + ':' + r.depth).join('|');
   const [rows, setRows] = useState<VisibleRow[]>([]);
@@ -248,10 +240,6 @@ export function HierarchyPanel() {
   }, [activeId, active, multi]);
 
   const select = (id: string, additive = false) => {
-    if (ignoreClick.current) {
-      ignoreClick.current = false;
-      return;
-    }
     oldRects.current = new Map([...elements.current].map(([key, node]) => [key, node.getBoundingClientRect()]));
     setFocusRequest(null);
     if (additive) engine.beginMultiSelect(id);
@@ -314,6 +302,8 @@ export function HierarchyPanel() {
             </IconButton>
           </Tooltip>
           <Menu anchorEl={addEffectAnchor} open={!!addEffectAnchor} onClose={() => setAddEffectAnchor(null)}>
+            <MenuItem onClick={() => { engine.addCanvasLayer(); setAddEffectAnchor(null); }}>キャンバスを追加</MenuItem>
+            <MenuItem onClick={() => { engine.addTransformLayer(); setAddEffectAnchor(null); }}>トランスフォームを追加</MenuItem>
             <MenuItem onClick={() => { engine.addAdjustLayer(); setAddEffectAnchor(null); }}>色調補正を追加</MenuItem>
             <MenuItem onClick={() => { engine.addOutlineLayer(); setAddEffectAnchor(null); }}>縁どりを追加</MenuItem>
             <MenuItem onClick={() => { engine.addClipLayer(); setAddEffectAnchor(null); }}>クリップを追加</MenuItem>
@@ -406,14 +396,6 @@ export function HierarchyPanel() {
                   if (event.shiftKey) event.preventDefault();
                   select(meta.id, event.shiftKey);
                 }}
-                onPointerDown={event => {
-                  if ((event.target as HTMLElement).closest('button')) return;
-                  longPressTarget.current = meta.id;
-                  longPress.onPointerDown(event);
-                }}
-                onPointerMove={event => longPress.onPointerMove(event)}
-                onPointerUp={longPress.onPointerUp}
-                onPointerCancel={longPress.onPointerCancel}
                 onDragStart={event => {
                   if ((event.target as HTMLElement).closest('button')) {
                     event.preventDefault();
@@ -440,7 +422,7 @@ export function HierarchyPanel() {
                     depth--;
                   }
                   const siblings = anchor.parentId ? byId.get(anchor.parentId)!.childIds : rootLayerIds;
-                  const inside = anchor.id === meta.id && ratio >= 0.28 && ratio <= 0.72;
+                  const inside = meta.type === 'canvas' && anchor.id === meta.id && ratio >= 0.28 && ratio <= 0.72;
                   const target: DropTarget = inside
                     ? {
                         parentId: meta.id,
@@ -470,6 +452,11 @@ export function HierarchyPanel() {
                   applyDrop();
                 }}
               >
+                {scene.masks(meta.id,layerMaskIds(meta.state) ?? []).invalid.length > 0 && (
+                  <Tooltip title={scene.masks(meta.id,layerMaskIds(meta.state) ?? []).invalid.map(item => `${byId.get(item.sourceId)?.name ?? item.sourceId}: ${MASK_PROBLEM_LABELS[item.problem]}`).join(' / ')}>
+                    <WarningAmberIcon color="warning" fontSize="small" aria-label="無効なマスク参照" />
+                  </Tooltip>
+                )}
                 <Tooltip title={meta.parameterLink?.linkedParameterIds.includes('layer.visible')
                   ? '表示状態はリンク元を参照中'
                   : meta.parameterLink && meta.compatibleLinkParameterIds?.includes('layer.visible')

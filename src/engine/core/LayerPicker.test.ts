@@ -4,6 +4,7 @@ import { createCanvas, type Canvas } from '@napi-rs/canvas';
 import type { PaintEngine } from '../PaintEngine';
 import {
   createAdjustLayer,
+  createCanvasLayer,
   createClipLayer,
   createImageLayer,
   createOutlineLayer,
@@ -59,6 +60,7 @@ function pickerFor(layers: Layer[], roots?: string[]) {
   const engine = {
     artboard: { w: 16, h: 16 },
     allLayers: () => layers,
+    getActiveLayerId: () => layers.find(layer => layer.parentId === null)?.id ?? '',
     layerById: (id: string) => byId.get(id) ?? null,
     getRootLayerIds: () => roots ?? layers.filter(layer => layer.parentId === null).map(layer => layer.id),
     getPageSpec: () => ({ widthMm: 16, heightMm: 16, ppi: 25.4 }),
@@ -114,17 +116,19 @@ describe('layer picking from visible pixels', () => {
     expect(pickId(picker, 16, 4)).toBeNull();
   });
 
-  it('does not treat a shape interior or child pixels as the parent layer', () => {
-    const parent = raster('parent', ctx => { ctx.fillStyle = '#00f'; ctx.fillRect(0, 0, 16, 16); });
+  it('exposes canvas output as one selectable layer and excludes empty shape interiors', () => {
+    const parent = createCanvasLayer('parent', 'parent');
+    const base = raster('base', ctx => { ctx.fillStyle = '#00f'; ctx.fillRect(0, 0, 16, 16); });
+    base.parentId = parent.id;
     const child = raster('child', ctx => { ctx.fillStyle = '#f00'; ctx.fillRect(0, 0, 6, 6); });
     child.parentId = parent.id;
-    parent.childIds = [child.id];
+    parent.childIds = [base.id, child.id];
     const frame = createShapeLayer('枠', {
       kind: 'rect', x: 2, y: 2, width: 10, height: 10, color: '#0f0',
       strokeWidth: 2, paintMode: 'stroke',
     }, 'stroke');
-    const { picker } = pickerFor([parent, child, frame], [parent.id, frame.id]);
-    expect(pickId(picker, 4, 4)).toBe(child.id);
+    const { picker } = pickerFor([parent, base, child, frame], [parent.id, frame.id]);
+    expect(pickId(picker, 4, 4)).toBe(parent.id);
     expect(pickId(picker, 10, 10)).toBe(parent.id);
     expect(pickId(picker, 7, 7)).toBe(parent.id);
     expect(pickId(picker, 2, 7)).toBe(frame.id);

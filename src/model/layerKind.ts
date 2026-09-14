@@ -5,6 +5,7 @@ import type { LayerParameterLink } from './layer';
 import type { OutlineParams } from './outline';
 import type { ShapeParams } from './shape';
 import type { TextParams } from './text';
+import type { Homography } from './geometry';
 
 export interface LayerCommon {
   id: string;
@@ -28,6 +29,9 @@ export interface LayerCommonRecord {
 }
 
 export type RasterState = Record<string, never>;
+
+export interface CanvasState { propagateTransforms: boolean }
+export interface TransformState { matrix: Homography }
 
 export interface AdjustState {
   params: AdjustParams;
@@ -75,6 +79,8 @@ export interface KindSpec<S, R> {
 }
 
 export interface LayerKindMap {
+  canvas: KindSpec<CanvasState, undefined>;
+  transform: KindSpec<TransformState, undefined>;
   raster: KindSpec<RasterState, CanvasRuntime>;
   adjust: KindSpec<AdjustState, undefined>;
   outline: KindSpec<OutlineState, undefined>;
@@ -89,7 +95,7 @@ export type LayerState = LayerKindMap[LayerType]['state'];
 export type LayerRuntime = LayerKindMap[LayerType]['runtime'];
 
 export const LAYER_TYPES: readonly LayerType[] = [
-  'raster', 'adjust', 'outline', 'clip', 'shape', 'text', 'image',
+  'raster', 'adjust', 'outline', 'clip', 'shape', 'text', 'image', 'canvas', 'transform',
 ];
 
 export function isLayerType(value: string): value is LayerType {

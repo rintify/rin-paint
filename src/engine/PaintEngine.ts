@@ -353,7 +353,7 @@ export class PaintEngine {
   }
   visibleObjectBounds(excludeId: string): { x: number; y: number; w: number; h: number }[] {
     return this.layerService.layers.flatMap(layer => {
-      if (layer.id === excludeId || !layer.visible || !layerHandler(layer).capabilities.objectTransform) return [];
+      if (layer.parentId !== this.layerService.byId(excludeId)?.parentId || layer.id === excludeId || !layer.visible || !layerHandler(layer).capabilities.objectTransform) return [];
       const bounds = this.objectBounds(layer.id);
       return bounds ? [bounds] : [];
     });
@@ -372,6 +372,8 @@ export class PaintEngine {
   editTextLayer(id: string): void { this.layerService.editTextLayer(id); }
   async addFont(file: File): Promise<ProjectFont | null> { return this.project.addFont(file); }
 
+  addCanvasLayer(): void { this.layerService.addCanvasLayer(); }
+  addTransformLayer(): void { this.layerService.addTransformLayer(); }
   addRasterLayer(): void { this.layerService.addRasterLayer(); }
   addAdjustLayer(): void { this.layerService.addAdjustLayer(); }
   addOutlineLayer(): void { this.layerService.addOutlineLayer(); }
@@ -397,7 +399,7 @@ export class PaintEngine {
   canMergeLayerDown(id = this.layerService.activeLayerId): boolean { return this.layerService.canMergeLayerDown(id); }
   canTransferShape(id = this.layerService.activeLayerId): boolean { return this.layerService.canTransferShape(id); }
   async mergeLayerDown(id = this.layerService.activeLayerId): Promise<void> { return this.layerService.mergeLayerDown(id); }
-  transferShapeLayer(): void { this.layerService.transferShapeLayer(); }
+  transferShapeLayer(targetId: string): void { this.layerService.transferShapeLayer(targetId); }
   convertRectToPolygon(id?: string): void { this.layerService.convertRectToPolygon(id); }
   setActiveLayer(id: string): void { this.layerService.setActiveLayer(id); }
   previewLayerProps(id: string, props: LayerProps): void { this.layerService.previewLayerProps(id, props); }
@@ -575,7 +577,6 @@ export class PaintEngine {
 
   renameLayer(id: string, name: string): boolean { return this.layerService.renameLayer(id, name); }
   beginMultiSelect(id: string): void { this.layerService.beginMultiSelect(id); }
-  toggleDescendantSelection(id: string): void { this.layerService.toggleDescendantSelection(id); }
   exitMultiSelect(): void { this.layerService.exitMultiSelect(); }
   commitSelectedLayerProps(before: LayerProps, after: LayerProps, label: string): void {
     this.layerService.commitSelectedLayerProps(before, after, label);

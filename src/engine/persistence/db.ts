@@ -106,6 +106,17 @@ export async function savePage(page: SavedPage): Promise<void> {
   await tx.done;
   void refreshProjectBytes();
 }
+
+/** A model snapshot and its history must commit together with its project metadata. */
+export async function saveProjectSnapshot(meta: SavedProjectMeta, page: SavedPage): Promise<void> {
+  const d = await db();
+  const tx = d.transaction(['kv', 'pages', 'thumbnails'], 'readwrite');
+  void tx.objectStore('kv').put(meta, 'project-meta');
+  void tx.objectStore('pages').put(page);
+  if (page.thumbnail) void tx.objectStore('thumbnails').put(page.thumbnail, page.id);
+  await tx.done;
+  void refreshProjectBytes();
+}
 export async function loadPage(id: string): Promise<SavedPage | undefined> {
   const value = await (await db()).get('pages', id) as unknown;
   return value === undefined ? undefined : migrateSavedPage(value);

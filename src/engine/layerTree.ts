@@ -21,7 +21,7 @@ export function selectedLayerRows(roots: string[], layers: TreeLayerLike[], acti
       const layer = byId.get(id);
       if (!layer) continue;
       rows.push({ id, depth });
-      if (open.has(id)) visit(layer.childIds, depth + 1);
+      if (layer.type === 'canvas' && open.has(id)) visit(layer.childIds, depth);
     }
   };
   visit(roots, 0);
@@ -32,7 +32,7 @@ export function canReparent(layers: TreeLayerLike[], id: string, parentId: strin
   if (id === parentId || !layers.some((layer) => layer.id === id)) return false;
   if (parentId === null) return true;
   const byId = new Map(layers.map((layer) => [layer.id, layer]));
-  if (!byId.has(parentId)) return false;
+  if (byId.get(parentId)?.type !== 'canvas') return false;
   let cursor: string | null = parentId;
   while (cursor) {
     if (cursor === id) return false;
@@ -53,6 +53,7 @@ export function validateLayerTree(roots: string[], layers: TreeLayerLike[]): boo
     const layer = byId.get(id);
     if (!layer || layer.parentId !== parentId || visiting.has(id) || seen.has(id)) return false;
     visiting.add(id);
+    if (layer.childIds.length && layer.type !== 'canvas') return false;
     for (const childId of layer.childIds) if (!visit(childId, id)) return false;
     visiting.delete(id);
     seen.add(id);
@@ -76,14 +77,8 @@ export function flattenRenderOrder(roots: string[], layers: TreeLayerLike[]): st
 }
 
 export function closestRasterOrRoot(layers: TreeLayerLike[], activeId: string): string | null {
-  const byId = new Map(layers.map((layer) => [layer.id, layer]));
-  let cursor = byId.get(activeId);
-  if (cursor?.type === 'raster') return cursor.id;
-  while (cursor?.parentId) {
-    cursor = byId.get(cursor.parentId);
-    if (cursor?.type === 'raster') return cursor.id;
-  }
-  return null;
+  const layer = layers.find(layer => layer.id === activeId);
+  return layer?.type === 'canvas' ? layer.id : layer?.parentId ?? null;
 }
 
 export function structuralLowerId(layer: TreeLayerLike, roots: string[], layers: TreeLayerLike[]): string | null {
@@ -92,5 +87,5 @@ export function structuralLowerId(layer: TreeLayerLike, roots: string[], layers:
   const siblings = layer.parentId ? byId.get(layer.parentId)?.childIds ?? [] : roots;
   const index = siblings.indexOf(layer.id);
   if (index < 0) return null;
-  return index > 0 ? siblings[index - 1] : layer.parentId;
+  return index > 0 ? siblings[index - 1] : null;
 }

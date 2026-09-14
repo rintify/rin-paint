@@ -4,6 +4,9 @@ import { createCanvas, type Canvas } from '@napi-rs/canvas';
 import { Compositor } from './Compositor';
 import {
   createAdjustLayer,
+  createCanvasLayer,
+  createShapeLayer,
+  createTransformLayer,
   createClipLayer,
   createOutlineLayer,
   createRasterLayer,
@@ -57,6 +60,7 @@ function createRenderer(layers: Layer[], roots: string[], ppi = 25.4, size = 16)
   const engine = {
     artboard: { w: size, h: size },
     allLayers: () => layers,
+    getActiveLayerId: () => layers.find(layer => layer.parentId === null)?.id ?? '',
     layerById: (id: string) => byId.get(id) ?? null,
     getRootLayerIds: () => roots,
     getPageSpec: () => ({ widthMm: size, heightMm: size, ppi }),
@@ -105,41 +109,64 @@ describe('effect scopes', () => {
     expect(pixel.slice(1)).toEqual([0, 0, 255]);
   });
 
-  it('clips only the parent scope, ignores hidden mask visibility, and leaves later children above the effect', () => {
+  it('clips only the canvas scope, ignores hidden mask visibility, and leaves later children above the effect', () => {
     const lower = raster('lower', ctx => { ctx.fillStyle = '#0000ff'; ctx.fillRect(0, 0, 16, 16); });
-    const parent = raster('parent', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 16, 16); });
+    const parent = createCanvasLayer('parent', 'parent');
+    const content = raster('content', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 16, 16); });
     const mask = raster('mask', ctx => { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 8, 16); });
     mask.visible = false;
-    mask.parentId = parent.id;
     const clip = createClipLayer('クリップ', 'clip');
-    clip.parentId = parent.id;
     clip.state.maskLayerIds = [mask.id];
     const later = raster('later', ctx => { ctx.fillStyle = '#00ff00'; ctx.fillRect(10, 0, 1, 1); });
-    later.parentId = parent.id;
-    parent.childIds = [mask.id, clip.id, later.id];
-
-    const result = render([lower, parent, mask, clip, later], [lower.id, parent.id]);
+    for (const child of [content,mask,clip,later]) child.parentId = parent.id;
+    parent.childIds = [content.id,mask.id,clip.id,later.id];
+    const result = render([lower,parent,content,mask,clip,later],[lower.id,parent.id]);
     expect(rgba(result, 2, 2)).toEqual([255, 0, 0, 255]);
     expect(rgba(result, 12, 2)).toEqual([0, 0, 255, 255]);
     expect(rgba(result, 10, 0)).toEqual([0, 255, 0, 255]);
   });
 
-  it('keeps a nested child effect scoped to the parent even when its effect parent is hidden', () => {
-    const lower = raster('lower', ctx => { ctx.fillStyle = '#0000ff'; ctx.fillRect(0, 0, 16, 16); });
-    const parent = raster('parent', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 16, 16); });
-    const mask = raster('mask', ctx => { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 8, 16); });
+  it('bypasses an explicitly masked adjustment when every reference is outside its scope', () => {
+    const mask = raster('mask', ctx => {ctx.fillStyle='#000';ctx.fillRect(0,0,16,16);});
     mask.visible = false;
-    const skipped = createClipLayer('非表示クリップ', 'skipped');
-    skipped.visible = false;
-    skipped.parentId = parent.id;
-    const nested = createClipLayer('子クリップ', 'nested');
-    nested.parentId = skipped.id;
-    nested.state.maskLayerIds = [mask.id];
-    skipped.childIds = [nested.id];
-    parent.childIds = [skipped.id];
-    const result = render([lower, parent, mask, skipped, nested], [lower.id, parent.id, mask.id]);
-    expect(rgba(result, 2, 2)).toEqual([255, 0, 0, 255]);
-    expect(rgba(result, 12, 2)).toEqual([0, 0, 255, 255]);
+    const canvas = createCanvasLayer('canvas','canvas');
+    const content = raster('content',ctx => {ctx.fillStyle='#f00';ctx.fillRect(0,0,16,16);});
+    const adjust = createAdjustLayer('adjust','adjust');
+    adjust.state.params.brightness = 0;
+    adjust.state.maskLayerIds = [mask.id];
+    content.parentId = adjust.parentId = canvas.id;
+    canvas.childIds = [content.id,adjust.id];
+    expect(rgba(render([mask,canvas,content,adjust],[mask.id,canvas.id]),4,4)).toEqual([255,0,0,255]);
+  });
+
+  it('applies opacity once to the isolated canvas result', () => {
+    const canvas = createCanvasLayer('canvas','canvas');
+    canvas.opacity = .5;
+    const a = raster('a',ctx => {ctx.fillStyle='#f00';ctx.fillRect(0,0,16,16);});
+    const b = raster('b',ctx => {ctx.fillStyle='#00f';ctx.fillRect(0,0,8,16);});
+    a.parentId = b.parentId = canvas.id;
+    canvas.childIds = [a.id,b.id];
+    expect(rgba(render([canvas,a,b],[canvas.id]),4,4)).toEqual([127,127,255,255]);
+  });
+
+  it('transforms an off-page shape back into the final output rectangle', () => {
+    const shape = createShapeLayer('shape',{kind:'rect',x:-20,y:0,width:8,height:8,color:'#f00',strokeWidth:1,paintMode:'fill-inside'},'shape');
+    const transform = createTransformLayer('transform','transform');
+    transform.state.matrix = [1,0,22,0,1,0,0,0,1];
+    expect(rgba(render([shape,transform],[shape.id,transform.id]),4,4)).toEqual([255,0,0,255]);
+  });
+
+  it('invalidates a canvas mask when a nested child changes visibility', () => {
+    const source = raster('source',ctx => {ctx.fillStyle='#f00';ctx.fillRect(0,0,16,16);});
+    const canvas = createCanvasLayer('canvas','canvas'); canvas.visible = false;
+    const mask = raster('mask',ctx => {ctx.fillStyle='#000';ctx.fillRect(0,0,8,16);});
+    mask.parentId = canvas.id; canvas.childIds = [mask.id];
+    const clip = createClipLayer('clip','clip'); clip.state.maskLayerIds = [canvas.id];
+    const {main,compositor} = createRenderer([source,canvas,mask,clip],[source.id,canvas.id,clip.id]);
+    expect(rgba(main,4,4)).toEqual([255,0,0,255]);
+    mask.visible = false;
+    compositor.requestRender(); compositor.ensureComposited();
+    expect(rgba(main,4,4)).toEqual([255,255,255,255]);
   });
 
   it('uses layer opacity as clip strength and treats no mask as a complete no-op', () => {
@@ -405,12 +432,13 @@ describe('effect scopes', () => {
 
   it('does not expand damage for an outline isolated in another child scope', () => {
     const source = raster('source', ctx => { ctx.fillStyle = '#f00'; ctx.fillRect(0, 0, 16, 16); });
-    const parent = raster('parent', ctx => { ctx.fillStyle = '#fff'; ctx.fillRect(12, 12, 1, 1); });
+    const parent = createCanvasLayer('parent','parent');
+    const content = raster('content', ctx => { ctx.fillStyle = '#fff'; ctx.fillRect(12, 12, 1, 1); });
     const outline = createOutlineLayer('縁どり', 'outline');
-    outline.parentId = parent.id;
-    parent.childIds = [outline.id];
+    content.parentId = outline.parentId = parent.id;
+    parent.childIds = [content.id,outline.id];
     const { main, compositor, revisions } = createRenderer(
-      [source, parent, outline],
+      [source, parent, content, outline],
       [source.id, parent.id],
     );
     source.runtime.ctx.fillStyle = '#00f';

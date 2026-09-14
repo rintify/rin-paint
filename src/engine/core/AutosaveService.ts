@@ -1,7 +1,7 @@
 import { useStore } from '../../state/store';
 import { savedLayerFrom } from '../layer-types/registry';
 import { canvasToBlob } from '../layers';
-import { getPersistenceUsage, savePage, saveProjectMeta, type SavedLayer } from '../persistence/db';
+import { getPersistenceUsage, saveProjectSnapshot, type SavedLayer } from '../persistence/db';
 import { PROJECT_VERSION } from '../persistence/version';
 import type { PaintEngine } from '../PaintEngine';
 
@@ -67,6 +67,8 @@ export class AutosaveService {
     const ls = eng.layerService;
     const pages = eng.pages;
     const st = useStore.getState();
+    const pageId = pages.activePageId;
+    const pageOrder = [...pages.pageOrder];
     // レイヤー内容は同期でコピーされ、PNG 化だけが非同期に進む。
     const layerSources = ls.layers.map((l) => savedLayerFrom(l, { artboard: eng.artboard }));
     const activeLayerId = ls.activeLayerId;
@@ -75,35 +77,31 @@ export class AutosaveService {
     const fonts = structuredClone(st.fonts);
     const rootLayerIds = [...ls.rootLayerIds];
     const historyPromise = eng.history.serialize(canvasToBlob);
-    const layers: SavedLayer[] = await Promise.all(layerSources);
-    let thumbnail: Blob | undefined;
+    let thumbnailPromise: Promise<Blob | undefined> = Promise.resolve(undefined);
+    let thumbnailVersion = pages.thumbnailVersion;
     if (eng.compositor.main) {
       eng.ensureComposited();
       const thumb = document.createElement('canvas');
       thumb.width = 240;
       thumb.height = Math.max(1, Math.round(240 * eng.artboard.h / eng.artboard.w));
       thumb.getContext('2d')!.drawImage(eng.compositor.main, 0, 0, thumb.width, thumb.height);
-      thumbnail = await new Promise(resolve => thumb.toBlob(blob => resolve(blob ?? undefined), 'image/webp', .72));
-      pages.thumbnailVersion++;
+      thumbnailPromise = new Promise(resolve => thumb.toBlob(blob => resolve(blob ?? undefined), 'image/webp', .72));
+      thumbnailVersion = ++pages.thumbnailVersion;
     }
-    await saveProjectMeta({
-      version: PROJECT_VERSION,
-      pageOrder: [...pages.pageOrder],
-      activePageId: pages.activePageId,
-      fonts,
-    });
+    const layers: SavedLayer[] = await Promise.all(layerSources);
+    const [history, thumbnail] = await Promise.all([historyPromise, thumbnailPromise]);
     const page = {
-      id: pages.activePageId,
+      id: pageId,
       pageSpec,
       rootLayerIds,
       layers,
       activeLayerId,
-      history: await historyPromise,
+      history,
       view,
-      thumbnailVersion: pages.thumbnailVersion,
+      thumbnailVersion,
       thumbnail,
     };
-    await savePage(page);
+    await saveProjectSnapshot({version:PROJECT_VERSION, pageOrder, activePageId:pageId, fonts}, page);
     eng.links.noteSavedPage(page);
     this.scheduleStorageRefresh();
   }

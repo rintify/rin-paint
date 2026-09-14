@@ -20,6 +20,8 @@ import { outlineLayerType } from './outline';
 import { rasterLayerType, scaleRasterRuntime } from './raster';
 import { shapeLayerType } from './shape';
 import { textLayerType } from './text';
+import { canvasLayerType } from './canvas';
+import { transformLayerType } from './transform';
 import type {
   LayerContentEnv,
   LayerScaleEnv,
@@ -30,6 +32,8 @@ import type {
 export type { LayerProps, LayerRecord, LayerSnapshot };
 
 const definitions = {
+  canvas: canvasLayerType,
+  transform: transformLayerType,
   raster: rasterLayerType,
   adjust: adjustLayerType,
   outline: outlineLayerType,
@@ -65,7 +69,7 @@ export function kindCatalog(layer: { type: LayerType; state: unknown }): Paramet
 
 export function resolvedParameters(layer: LayerCommon & { type: LayerType; state: unknown }): ResolvedParameter[] {
   const def = layerDefinition(layer.type);
-  const common = commonForLayer(def.info.supportsBlend).map(resolveCommonParameter);
+  const common = commonForLayer(def.info.supportsBlend).filter(item => layer.type !== 'transform' || item.id === 'visible').map(resolveCommonParameter);
   const catalog = kindCatalog(layer);
   return [...common, ...catalog.definitions.map(item => resolveKindParameter(item, layer.type))];
 }
