@@ -1,6 +1,6 @@
 import { CommandService } from './CommandService';
 import { ProjectRepository } from './ProjectRepository';
-import { addressKey, type DocumentKey, type FieldValueMap, type LayerDocument, type LayerEntity, type LayerSourceAddress, type Occurrence } from './types';
+import { addressKey, type FieldValueMap, type LayerDocument, type LayerEntity, type LayerSourceAddress, type Occurrence } from './types';
 
 const MASK_FIELDS = new Set(['mask.sources']);
 
@@ -17,7 +17,7 @@ export class BinService {
     const bin: LayerDocument = {key,root:{id:crypto.randomUUID(),children:[{id:crypto.randomUUID(),entityId:entity.id}]},entities:{}};
     const mapping = new Map<string, LayerSourceAddress>();
     const seenOccurrences = new Set<string>();
-    const copy = (current: LayerEntity, origin: LayerSourceAddress, owner: DocumentKey): LayerEntity => {
+    const copy = (current: LayerEntity, origin: LayerSourceAddress): LayerEntity => {
       const id = bin.entities[current.id] ? crypto.randomUUID() : current.id;
       mapping.set(addressKey(origin),{document:key,entityId:id});
       const clone = structuredClone(current);
@@ -32,17 +32,17 @@ export class BinService {
       // The snapshot is taken before stripping page dependencies.
       clone.binding.localValues = values;
       if (clone.type === 'canvas' && current.type === 'canvas') {
-        const children = this.repository.scopes.childrenFrom(current,owner);
+        const children = this.repository.scopes.children(origin);
         clone.structure = {source:null,local:{id:crypto.randomUUID(),children:[]},suppressed:[],placements:[],overrides:{}};
         for (const child of children) {
           seenOccurrences.add(child.id);
-          const copied = copy(child.entity,child.origin,child.owner);
+          const copied = copy(child.entity,child.origin);
           clone.structure.local.children.push({id:child.id,entityId:copied.id});
         }
       }
       return clone;
     };
-    const root = copy(entity,source,source.document);
+    const root = copy(entity,source);
     bin.root.children[0].entityId = root.id;
     for (const current of Object.values(bin.entities)) {
       const binding = current.binding;
@@ -56,8 +56,6 @@ export class BinService {
         if (Array.isArray(value)) binding.localValues[field] = value.filter(id => typeof id === 'string' && seenOccurrences.has(id));
         binding.linkedFields = binding.linkedFields.filter(id => id !== field);
       }
-      // Retained internal/bin links resolve on read; do not save duplicate copies of their values.
-      if (binding.source) for (const field of binding.linkedFields) delete binding.localValues[field];
     }
     // Commit registration first. Page Undo deliberately cannot remove this document.
     this.repository.replace([...this.repository.snapshot(),bin]);
@@ -69,7 +67,7 @@ export class BinService {
         if (value !== undefined) localValues[field] = structuredClone(value);
       }
       pageEntity.binding = {source:destination,
-        linkedFields:this.repository.links.fields(destination).filter(field => !MASK_FIELDS.has(field)),localValues};
+        linkedFields:Object.keys(root.binding.localValues).filter(field => !MASK_FIELDS.has(field)),localValues};
       if (pageEntity.type === 'canvas') {
         // Existing occurrence IDs in the bin keep page selection and internal mask IDs stable.
         pageEntity.structure = {source:destination,local:{id:pageEntity.structure.local.id,children:[]},suppressed:[],placements:[],overrides:{}};

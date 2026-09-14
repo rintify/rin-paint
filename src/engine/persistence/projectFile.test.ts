@@ -5,7 +5,6 @@ import { isPersistedHistory, isSavedProjectMeta } from './schema';
 
 const rasterLayer = {
   id: 'l1',
-  unit: 'mm' as const,
   type: 'raster' as const,
   common: {
     name: 'L',
@@ -19,7 +18,7 @@ const rasterLayer = {
   content: new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }),
 };
 
-describe('v11 project container', () => {
+describe('v10 project container', () => {
   it('stores binary layer/history payloads without base64 and restores them', async () => {
     const history = {
       version: HISTORY_VERSION,
@@ -48,23 +47,6 @@ describe('v11 project container', () => {
     const restored = await unpackProjectFile(packed) as ProjectFile;
     expect(new Uint8Array(await restored.pages[0].layers[0].content!.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
     expect(restored.meta.fonts).toEqual([]);
-    const bin = { id: 'asset', workArea: page.pageSpec, rootLayerIds: ['l1'],
-      activeLayerId: 'l1', layers: [{ ...rasterLayer, content: new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }) }],
-      history, view: page.view };
-    const withBin = await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages: [page], bins: [bin] });
-    const offset = new TextEncoder().encode(PROJECT_MAGIC).length;
-    const length = new DataView(await withBin.slice(offset, offset + 4).arrayBuffer()).getUint32(0, true);
-    const manifest = JSON.parse(await withBin.slice(offset + 4, offset + 4 + length).text());
-    expect(manifest.sizes).toEqual([3]);
-    expect((await unpackProjectFile(withBin)).bins?.[0].id).toBe('asset');
-    const invalid = structuredClone(bin);
-    Object.assign(invalid.layers[0].common, { parameterLink: {
-      source: { document: { kind: 'page', id: 'p1' }, layerId: 'l1' },
-      sourceNameHint: 'L', sourcePageIndexHint: 0, linkedParameterIds: [], fallbackValues: {},
-    } });
-    const invalidFile = await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages: [page], bins: [invalid] });
-    await expect(unpackProjectFile(invalidFile)).rejects.toThrow('ビンの保存形式が不正です');
-
   });
 
   it('explicitly rejects a legacy v7 magic container', async () => {
@@ -72,7 +54,7 @@ describe('v11 project container', () => {
     const page = {
       id: 'p1', pageSpec: { widthMm: 10, heightMm: 10, ppi: 300 }, rootLayerIds: ['l1'], activeLayerId: 'l1',
       layers: [{
-        id: 'l1', unit: 'mm' as const, type: 'shape' as const,
+        id: 'l1', type: 'shape' as const,
         common: { name: '直線', opacity: 1, blend: 'source-over' as const, visible: true, parentId: null, childIds: [] },
         state: { shape: { kind: 'line' as const, x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 5, color: '#000' }, snapEnabled: true },
       }],

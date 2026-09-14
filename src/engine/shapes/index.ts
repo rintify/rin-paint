@@ -1,4 +1,3 @@
-import {withCanvasOrigin} from '../geometry/canvasPrecision';
 import {
   TRANSPARENT,
   normalizeShapePaintMode,
@@ -105,8 +104,7 @@ export function drawShape(
   ctx.lineCap = 'round';
   ctx.lineJoin = normalizeShapeStrokeJoin(shape.strokeJoin);
   ctx.miterLimit = SHAPE_MITER_LIMIT;
-  const origin=shapeCenter(shape),local=translateShape(shape,-origin.x,-origin.y);
-  withCanvasOrigin(ctx,origin.x,origin.y,()=>shapeKindHandler(local).draw(ctx,local,artboard));
+  shapeKindHandler(shape).draw(ctx, shape, artboard);
   ctx.restore();
 }
 

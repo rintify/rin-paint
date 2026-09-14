@@ -1,8 +1,3 @@
-import {ImageAsset} from '../image/ImageAsset';
-import { adoptPixelLayout, scaleTextLayout } from '../physicalCoordinates';
-import { scaleShape } from '../pageSpec';
-import { scopeOwner, layerChildren } from '../layerTree';
-import { rebuildScopeOwnership } from '../layer-types/scopes';
 import { useStore } from '../../state/store';
 import {
   cloneImageParams,
@@ -20,7 +15,7 @@ import {
   type TileLayerMergeOp,
   type LayerLinkOp,
 } from '../history/historyTree';
-import { extractSparseTiles } from '../history/tilePatch';
+import { extractTiles } from '../history/tilePatch';
 import {
   applyLayerProps,
   buildLayerSnapshot,
@@ -42,6 +37,9 @@ import {
   createRasterLayer,
   createShapeLayer,
   createTextLayer,
+  ensureRasterSurface,
+  markRasterContent,
+  makeCanvas,
   type ImageLayer,
   type Layer,
   type RasterLayer,
@@ -90,8 +88,7 @@ export class LayerService {
   }
 
   byId(id: string): Layer | null {
-    const layer=this.layers.find(l=>l.id===id);
-    return layer?this.engine.links.resolveLayer(layer):null;
+    return this.layers.find((l) => l.id === id) ?? null;
   }
 
   rasterById(id: string): RasterLayer | null {
@@ -115,19 +112,18 @@ export class LayerService {
     return canvas?.type === 'canvas' ? canvas.childIds : [];
   }
 
-  scopeOf(id: string): string | null { return scopeOwner(this.layers, id); }
-
   locationOf(id: string): LayerLocation | null {
     const layer = this.byId(id);
     if (!layer) return null;
-    const siblings = this.siblingIds(this.scopeOf(layer.id));
+    const siblings = this.siblingIds(layer.parentId);
     const index = siblings.indexOf(id);
-    return index < 0 ? null : { parentId: this.scopeOf(layer.id), index };
+    return index < 0 ? null : { parentId: layer.parentId, index };
   }
 
   insertAt(id: string, location: LayerLocation): void {
     const layer = this.byId(id);
     if (!layer) return;
+    layer.parentId = location.parentId;
     const siblings = this.siblingIds(location.parentId);
     siblings.splice(Math.max(0, Math.min(location.index, siblings.length)), 0, id);
   }
@@ -145,13 +141,17 @@ export class LayerService {
       const layer = this.byId(layerId);
       if (!layer) return;
       result.push(layerId);
-      for (const child of layerChildren(layer)) visit(child);
+      for (const child of layer.childIds) visit(child);
     };
     visit(id);
     return result;
   }
 
   bumpLayer(id: string, rect?: DirtyRect): void {
+    const raster = this.rasterById(id);
+    if (raster && rect) markRasterContent(raster, {
+      x: rect.minX, y: rect.minY, w: rect.maxX - rect.minX, h: rect.maxY - rect.minY,
+    });
     this.versions.set(id, (this.versions.get(id) ?? 0) + 1);
     this.bumpMaskVersion(id);
     if (rect) this.engine.compositor.invalidateLayer(id, rect);
@@ -163,34 +163,31 @@ export class LayerService {
     this.engine.compositor.invalidateMaskLayer(id);
   }
 
-  snapshotLayer(l: Layer, withContent: boolean): LayerSnapshot {
-    this.engine.links.resolveLayer(l);
+  snapshotLayer(l: Layer, withContent: boolean, keepCanvas = false): LayerSnapshot {
     return buildLayerSnapshot(l, {
       artboard: this.engine.artboard,
-      ppi: this.engine.getPageSpec().ppi,
       withContent,
+      keepCanvas,
+      onEncoded: () => this.engine.scheduleStorageRefresh(),
     });
   }
 
   async restoreLayer(snap: LayerSnapshot, location?: LayerLocation): Promise<Layer | null> {
-    const layer = await restoreLayerFrom(snap, { artboard: this.engine.artboard, ppi: this.engine.getPageSpec().ppi });
+    const layer = await restoreLayerFrom(snap, { artboard: this.engine.artboard });
     if (!layer) return null;
     this.layers.push(layer);
     if (location) this.insertAt(layer.id, location);
-    rebuildScopeOwnership(this.layers);
     this.bumpLayer(layer.id);
     return layer;
   }
 
   removeLayerInternal(id: string): void {
-    this.engine.links.archiveRemoval(this.descendantIds(id));
     this.detachLayer(id);
     const ids = new Set(this.descendantIds(id));
     this.layers = this.layers.filter((l) => !ids.has(l.id));
   }
 
   removeLayerExact(id: string): void {
-    this.engine.links.archiveRemoval([id]);
     this.detachLayer(id);
     this.layers = this.layers.filter((layer) => layer.id !== id);
   }
@@ -240,7 +237,7 @@ export class LayerService {
   canRemoveLayer(id: string): boolean {
     if (!this.byId(id)) return false;
     const removed = new Set(this.descendantIds(id));
-    return this.layers.some(layer => !removed.has(layer.id));
+    return this.layers.some(l => l.type === 'raster' && !removed.has(l.id));
   }
 
   canMergeLayerDown(id = this.activeLayerId): boolean {
@@ -250,8 +247,8 @@ export class LayerService {
 
   private mergeTargetFor(layer: Layer): RasterLayer | null {
     if (!layerHandler(layer).renderer.effect) return this.mergeTarget(layer);
-    if (layerChildren(layer).length) return null;
-    const siblings = this.siblingIds(this.scopeOf(layer.id));
+    if (layer.childIds.length) return null;
+    const siblings = this.siblingIds(layer.parentId);
     if (siblings.indexOf(layer.id) !== 1) return null;
     return this.rasterById(siblings[0]);
   }
@@ -260,22 +257,15 @@ export class LayerService {
     const layer = this.byId(id);
     return !!layer
       && !!layerHandler(layer).capabilities.transferToRaster?.canTransfer(layer as never)
-      && this.layers.some(target => target.type === 'raster' && this.scopeOf(target.id) === this.scopeOf(layer.id));
-  }
-
-  canAddToScope(scopeId: string | null): boolean {
-    if (!this.engine.bins?.activeId || scopeId !== null || !this.rootLayerIds.length) return true;
-    useStore.getState().set({toolNotice: 'ビンではキャンバス素材の内部にレイヤーを追加できます'});
-    return false;
+      && this.layers.some(target => target.type === 'raster' && target.parentId === layer.parentId);
   }
 
   canMoveLayer(id: string, parentId: string | null): boolean {
-    if (this.engine.bins?.activeId && (this.rootLayerIds.includes(id) || parentId === null)) return false;
     return canReparent(this.layers, id, parentId);
   }
 
   layerChildren(id: string): string[] {
-    return [...layerChildren(this.byId(id))];
+    return [...(this.byId(id)?.childIds ?? [])];
   }
 
   layerRootIds(): string[] {
@@ -289,32 +279,28 @@ export class LayerService {
 
   getShape(id: string): ShapeParams | null {
     const layer = this.shapeById(id);
-    return layer ? scaleShape(layer.state.shape, this.engine.getPageSpec().ppi / 25.4) : null;
+    return layer ? cloneShape(layer.state.shape) : null;
   }
 
   getText(id: string): TextParams | null {
     const layer = this.byId(id);
-    return layer?.type === 'text' ? scaleTextLayout(layer.state.text, this.engine.getPageSpec().ppi / 25.4) : null;
+    return layer?.type === 'text' ? structuredClone(layer.state.text) : null;
   }
 
   activeRaster(): RasterLayer | null {
     const l = this.byId(this.activeLayerId);
-    return l && l.type === 'raster' && l.visible ? l : null;
+    return l && l.type === 'raster' && l.visible ? ensureRasterSurface(l) : null;
   }
 
   selectedRasters(): RasterLayer[] {
     const state = useStore.getState();
     const ids = state.multiSelectMode ? new Set(state.selectedLayerIds) : new Set([this.activeLayerId]);
-    return this.layers.filter((layer): layer is RasterLayer => layer.type === 'raster' && layer.visible && ids.has(layer.id));
+    return this.layers.filter((layer): layer is RasterLayer => layer.type === 'raster' && layer.visible && ids.has(layer.id)).map(ensureRasterSurface);
   }
 
   hasSelectedObjects(): boolean {
-    return this.engine.transforms.targets().some(target => {
-      if (target.canvasId) return true;
-      const layer = this.byId(target.id);
-      return !!layer && (layer.type === 'raster' || layer.type === 'transform'
-        || !!layerHandler(layer).capabilities.objectTransform);
-    });
+    const ids = new Set(useStore.getState().selectedLayerIds);
+    return this.layers.some(layer => ids.has(layer.id) && !!layerHandler(layer).capabilities.objectTransform);
   }
 
   finishFloating(): void {
@@ -329,8 +315,8 @@ export class LayerService {
     useStore.getState().set({ textEditingId: null });
     this.engine.requestRender();
     const layer = this.byId(id);
-    if (layer?.type !== 'text' || !isEmptyText(layer.state.text)) return false;
-    const parent = this.byId(this.scopeOf(layer.id) ?? '');
+    if (layer?.type !== 'text' || layer.childIds.length > 0 || !isEmptyText(layer.state.text)) return false;
+    const parent = layer.parentId ? this.byId(layer.parentId) : null;
     // A bubble owns an outline sibling; its empty text is an intentional editable placeholder.
     const bubblePlaceholder = parent?.type === 'canvas' && parent.childIds.some(childId => this.byId(childId)?.type === 'outline');
     if (bubblePlaceholder) return false;
@@ -345,8 +331,6 @@ export class LayerService {
   }
 
   updateText(id: string, before: TextParams, after: TextParams, preview = false): void {
-    const factor = 25.4 / this.engine.getPageSpec().ppi;
-    before = scaleTextLayout(before, factor); after = scaleTextLayout(after, factor);
     const layer = this.byId(id);
     if (this.engine.isBusy() || layer?.type !== 'text') return;
     const linkChange = !preview ? this.engine.links.detachChanged(
@@ -365,14 +349,14 @@ export class LayerService {
       const propsOp = { kind: 'layerProps' as const, layerId: id, before: { state: { text: structuredClone(before) } }, after: { state: { text: structuredClone(after) } } };
       this.engine.history.push(linkChange ? { kind: 'batch', ops: [propsOp, {
         kind: 'layerLink',
-        target: { document: this.engine.documentKey, layerId: id },
+        target: { pageId: this.engine.pages.activePageId, layerId: id },
         before: linkChange.before,
         after: linkChange.after,
       }] } : propsOp, '文字を編集');
-      this.engine.links.propagateFrom({ document: this.engine.documentKey, layerId: id });
+      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: id });
       this.engine.committed();
     } else {
-      if (preview) this.engine.links.propagateFrom({ document: this.engine.documentKey, layerId: id }, true);
+      if (preview) this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: id }, true);
       this.engine.syncStore();
     }
   }
@@ -383,8 +367,6 @@ export class LayerService {
     const parentId = closestRasterOrRoot(this.layers, this.activeLayerId);
     const location = { parentId, index: this.siblingIds(parentId).length };
     const layer = createTextLayer('文字', text);
-    adoptPixelLayout(layer, this.engine.getPageSpec().ppi);
-    if (!this.canAddToScope(location.parentId)) return;
     this.layers.push(layer);
     this.insertAt(layer.id, location);
     this.activeLayerId = layer.id;
@@ -399,7 +381,7 @@ export class LayerService {
         const layer = this.byId(id)!;
 
         if (layer.type !== 'text' || !layer.visible) continue;
-        const frame = textFrame(layer, this.engine.compositor.textRenderer, this.engine.getPageSpec().ppi);
+        const frame = textFrame(layer, this.engine.compositor.textRenderer);
         const cx = frame.x + frame.w / 2, cy = frame.y + frame.h / 2, angle = -(layer.state.text.rotation ?? 0);
         const dx = x - cx, dy = y - cy;
         const localX = dx * Math.cos(angle) - dy * Math.sin(angle) + cx;
@@ -408,13 +390,13 @@ export class LayerService {
       }
       return null;
     };
-    return walk(this.siblingIds(this.scopeOf(this.activeLayerId)));
+    return walk(this.siblingIds(this.byId(this.activeLayerId)?.parentId ?? null));
   }
 
   textFrameSize(id: string): { width: number; height: number } | null {
     const layer = this.byId(id);
     if (layer?.type !== 'text') return null;
-    const frame = textFrame(layer, this.engine.compositor.textRenderer, this.engine.getPageSpec().ppi);
+    const frame = textFrame(layer, this.engine.compositor.textRenderer);
     return { width: frame.w, height: frame.h };
   }
 
@@ -436,7 +418,6 @@ export class LayerService {
     const location = active?.type === 'canvas'
       ? { parentId: active.id, index: active.childIds.length }
       : current ? { ...current, index: current.index + 1 } : { parentId: null, index: this.rootLayerIds.length };
-    if (!this.canAddToScope(location.parentId)) return;
     this.layers.push(layer); this.insertAt(layer.id, location); this.activeLayerId = layer.id;
     this.engine.history.push({ kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, false) }, label);
     this.engine.committed();
@@ -444,7 +425,7 @@ export class LayerService {
 
   addRasterLayer(): void {
     if (this.engine.isBusy()) return;
-    this.addScopeLayer(createRasterLayer(this.nextLayerName('raster'), this.engine.getPageSpec().ppi, undefined), 'レイヤー追加');
+    this.addScopeLayer(createRasterLayer(this.nextLayerName('raster'), this.engine.artboard.w, this.engine.artboard.h), 'レイヤー追加');
   }
 
   addAdjustLayer(): void {
@@ -465,8 +446,6 @@ export class LayerService {
     const siblings = this.siblingIds(parentId);
     const location: LayerLocation = { parentId, index: siblings.length };
     const layer = createShapeLayer(shapeLayerName(shape), shape);
-    adoptPixelLayout(layer, this.engine.getPageSpec().ppi);
-    if (!this.canAddToScope(location.parentId)) return;
     this.layers.push(layer);
     this.insertAt(layer.id, location);
     this.activeLayerId = layer.id;
@@ -496,8 +475,7 @@ export class LayerService {
     const rootLocation: LayerLocation = activeLocation
       ? { parentId: activeLocation.parentId, index: activeLocation.index + 1 }
       : { parentId: null, index: this.rootLayerIds.length };
-    if (!this.canAddToScope(rootLocation.parentId)) return;
-    for (const layer of layers) adoptPixelLayout(layer, this.engine.getPageSpec().ppi);
+    root.parentId = rootLocation.parentId;
     this.layers.push(...layers);
     this.insertAt(root.id, rootLocation);
     for (const layer of layers) {
@@ -513,7 +491,7 @@ export class LayerService {
     const entries: LocatedLayerSnapshot[] = layers.map(layer => {
       const location = layer.id === root.id
         ? rootLocation
-        : { parentId: this.scopeOf(layer.id), index: layerChildren(this.byId(this.scopeOf(layer.id) ?? '')).indexOf(layer.id) };
+        : { parentId: layer.parentId, index: this.byId(layer.parentId ?? '')?.childIds.indexOf(layer.id) ?? 0 };
       return { location, snapshot: this.snapshotLayer(layer, false) };
     });
     useStore.getState().set({
@@ -534,11 +512,15 @@ export class LayerService {
     this.finishFloating();
     const root = createCanvasLayer('コマ');
     const maskShape = createShapeLayer('コマ形状', shape);
-    const raster = createRasterLayer('コマ描画', this.engine.getPageSpec().ppi, undefined);
+    const raster = createRasterLayer('コマ描画', this.engine.artboard.w, this.engine.artboard.h, undefined, true);
     const clip = createClipLayer('コマ内クリップ');
     const outline = createOutlineLayer('コマ枠');
     root.childIds = [maskShape.id, raster.id, clip.id, outline.id];
+    maskShape.parentId = root.id;
+    raster.parentId = root.id;
+    clip.parentId = root.id;
     clip.state.maskLayerIds = [maskShape.id];
+    outline.parentId = root.id;
     outline.state.outline = {
       ...outline.state.outline,
       color: options.outlineColor,
@@ -566,21 +548,25 @@ export class LayerService {
       lineHeight: 1.5,
     }));
     root.childIds = [body.id, ...(tail ? [tail.id] : []), outline.id, text.id];
+    body.parentId = root.id;
     if (tail) {
+      tail.parentId = root.id;
       tail.parameterLink = {
-        source: { document: this.engine.documentKey, layerId: body.id },
+        source: { pageId: this.engine.pages.activePageId, layerId: body.id },
         sourceNameHint: body.name,
         sourcePageIndexHint: Math.max(0, this.engine.pages.pageOrder.indexOf(this.engine.pages.activePageId)),
         linkedParameterIds: ['appearance.color'],
         fallbackValues: { 'appearance.color': bodyShape.color },
       };
     }
+    outline.parentId = root.id;
     outline.state.outline = {
       ...outline.state.outline,
       color: options.outlineColor,
       widthMm: options.outlineWidthMm,
       cornerStyle: bodyShape.kind === 'rect' ? 'sharp' : 'round',
     };
+    text.parentId = root.id;
     this.addGeneratedTree(root, [root, body, ...(tail ? [tail] : []), outline, text], text.id, '吹き出しを追加', text.id);
     useStore.getState().pushColor(bodyShape.color);
     useStore.getState().pushColor(options.textColor);
@@ -596,25 +582,22 @@ export class LayerService {
       canvas,
       placedImage(canvas, x, y, maxWidth, maxHeight),
     );
-    if (!this.canAddToScope(location.parentId)) return;
-    adoptPixelLayout(layer, this.engine.getPageSpec().ppi);
     this.layers.push(layer);
     this.insertAt(layer.id, location);
     this.activeLayerId = layer.id;
-    this.engine.history.push({ kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, true) }, '画像を追加');
+    this.engine.history.push({ kind: 'layerAdd', location, snapshot: this.snapshotLayer(layer, true, true) }, '画像を追加');
     this.engine.committed();
   }
 
   moveLayerAsTopChild(id: string, parentId: string): void {
     const parent = this.byId(parentId);
-    if (parent && this.canMoveLayer(id, parentId)) this.moveLayer(id, { parentId, index: layerChildren(parent).length });
+    if (parent && this.canMoveLayer(id, parentId)) this.moveLayer(id, { parentId, index: parent.childIds.length });
   }
 
   moveLayerOut(id: string): void {
     const layer = this.byId(id);
-    const owner = this.scopeOf(id);
-    if (!layer || !owner) return;
-    const parentLocation = this.locationOf(owner);
+    if (!layer?.parentId) return;
+    const parentLocation = this.locationOf(layer.parentId);
     if (parentLocation) this.moveLayer(id, { parentId: parentLocation.parentId, index: parentLocation.index + 1 });
   }
 
@@ -625,7 +608,9 @@ export class LayerService {
     if (!location) return;
     const ids = this.descendantIds(id);
     const removeIds = new Set(ids);
-    if (!this.canRemoveLayer(id)) return;
+    const rasterCount = this.layers.filter((l) => l.type === 'raster').length;
+    const removedRasterCount = this.layers.filter((l) => removeIds.has(l.id) && l.type === 'raster').length;
+    if (rasterCount - removedRasterCount < 1) return;
     const snapshots = ids.map((layerId) => this.snapshotLayer(this.byId(layerId)!, true));
     const maskOps = this.detachMaskReferences(removeIds).map(change => ({
       kind: 'layerProps' as const,
@@ -633,10 +618,9 @@ export class LayerService {
       before: { state: { maskLayerIds: change.before } },
       after: { state: { maskLayerIds: change.after } },
     }));
-    const structureOp = this.engine.canvases.suppress(id, location.parentId);
     this.removeLayerInternal(id);
     const removeOp = { kind: 'layerRemove' as const, location, snapshots };
-    this.engine.history.push({kind: 'batch', ops: [...(structureOp ? [structureOp] : []), removeOp, ...maskOps]}, 'レイヤー削除');
+    this.engine.history.push(maskOps.length ? { kind: 'batch', ops: [removeOp, ...maskOps] } : removeOp, 'レイヤー削除');
     this.fixActive();
     this.engine.committed();
   }
@@ -644,20 +628,21 @@ export class LayerService {
   moveLayer(id: string, to: LayerLocation): boolean {
     if (this.engine.isBusy()) return false;
     const from = this.locationOf(id);
-    if (!from || !this.canMoveLayer(id, to.parentId)) return false;
+    if (!from || !canReparent(this.layers, id, to.parentId)) return false;
     const adjusted = { ...to };
     if (from.parentId === to.parentId && from.index < to.index) adjusted.index--;
     if (from.parentId === adjusted.parentId && from.index === adjusted.index) return false;
     this.detachLayer(id);
     this.insertAt(id, adjusted);
-    const structureOps = this.engine.canvases.move(id, from, adjusted);
-    this.engine.history.push({kind: 'batch', ops: [{kind: 'layerMove', layerId: id, from, to: adjusted}, ...structureOps]}, 'レイヤー並べ替え');
+    this.engine.history.push({ kind: 'layerMove', layerId: id, from, to: adjusted }, 'レイヤー並べ替え');
     this.engine.committed();
     return true;
   }
 
   bakeAndMerge(upper: Layer, lower: RasterLayer, label: string, beforeActiveId: string): void {
-    const before = lower.runtime.surface.snapshot();
+    const beforeCanvas = makeCanvas(this.engine.artboard.w, this.engine.artboard.h);
+    const beforeCtx = beforeCanvas.getContext('2d', { willReadFrequently: true })!;
+    beforeCtx.drawImage(lower.runtime.canvas, 0, 0);
     const removedLocation = this.locationOf(upper.id);
     if (!removedLocation) return;
     const removedSnapshot = this.snapshotLayer(upper, true);
@@ -671,7 +656,13 @@ export class LayerService {
     this.removeLayerInternal(upper.id);
     this.activeLayerId = lower.id;
     this.bumpLayer(lower.id);
-    const extraction = extractSparseTiles(before, lower.runtime.surface.snapshot());
+    const extraction = extractTiles(
+      beforeCtx,
+      lower.runtime.ctx,
+      { minX: 0, minY: 0, maxX: this.engine.artboard.w, maxY: this.engine.artboard.h },
+      this.engine.artboard.w,
+      this.engine.artboard.h,
+    );
     const op: TileLayerMergeOp = {
       kind: 'layerMerge',
       format: 'tiles-v1',
@@ -713,20 +704,16 @@ export class LayerService {
     if (!this.canTransferShape()) return;
     const layer = this.byId(this.activeLayerId)!;
     const target = this.rasterById(targetId);
-    if (!target || this.scopeOf(target.id) !== this.scopeOf(layer.id)) return;
+    if (!target || target.parentId !== layer.parentId) return;
     this.bakeAndMerge(layer, target, layer.type === 'image' ? '画像を転写' : '図形を転写', layer.id);
   }
 
   async applyLayerContent(snapshot: LayerSnapshot): Promise<void> {
     const current = this.byId(snapshot.id);
     if (!current || current.type !== snapshot.type) return;
-    const restored = await restoreLayerFrom(snapshot, { artboard: this.engine.artboard, ppi: this.engine.getPageSpec().ppi });
+    const restored = await restoreLayerFrom(snapshot, { artboard: this.engine.artboard });
     if (!restored || restored.type !== current.type) return;
-    if (current.type === 'raster' && restored.type === 'raster') {
-      current.runtime = restored.runtime;
-      if (current.parameterLink) current.parameterLink.linkedContent = snapshot.common.parameterLink?.linkedContent ?? false;
-    } else if (current.type === 'image' && restored.type === 'image') {
-      if (current.parameterLink) current.parameterLink.linkedContent = snapshot.common.parameterLink?.linkedContent ?? false;
+    if (current.type === 'image' && restored.type === 'image') {
       current.runtime = restored.runtime;
       current.state = restored.state;
     } else {
@@ -739,12 +726,10 @@ export class LayerService {
     if (this.engine.isBusy()) return;
     const layer = this.imageById(id);
     if (!layer || canvas.width <= 0 || canvas.height <= 0) return;
-    const before = this.snapshotLayer(layer, true);
-    if (layer.parameterLink) layer.parameterLink.linkedContent = false;
-    this.engine.links.authoredContent(layer);
-    layer.runtime = {asset:new ImageAsset(canvas)};
+    const before = this.snapshotLayer(layer, true, true);
+    layer.runtime = { canvas, ctx: canvas.getContext('2d', { willReadFrequently: true })! };
     this.bumpLayer(layer.id);
-    const after = this.snapshotLayer(layer, true);
+    const after = this.snapshotLayer(layer, true, true);
     this.engine.history.push({ kind: 'layerContent', layerId: layer.id, before, after }, '画像を差し替え');
     this.engine.committed();
   }
@@ -753,7 +738,7 @@ export class LayerService {
     if (this.engine.isBusy()) return;
     const layer = this.imageById(id);
     if (!layer) return;
-    const afterImage = fitImageParamsToSource(layer.state.placement, layer.runtime.asset.width, layer.runtime.asset.height);
+    const afterImage = fitImageParamsToSource(layer.state.placement, layer.runtime.canvas.width, layer.runtime.canvas.height);
     if (afterImage.width === layer.state.placement.width && afterImage.height === layer.state.placement.height) return;
     this.commitLayerProps(
       id,
@@ -767,10 +752,10 @@ export class LayerService {
     if (this.engine.isBusy() || !this.byId(id)) return;
     const state = useStore.getState();
     state.set({ shortcutTarget: { type: 'layer', id } });
-    if (state.multiSelectMode && this.scopeOf(id) !== this.scopeOf(this.activeLayerId)) {
+    if (state.multiSelectMode && this.byId(id)?.parentId !== this.byId(this.activeLayerId)?.parentId) {
       this.finishFloating(); this.activeLayerId = id;
       state.set({ multiSelectMode: false, selectedLayerIds: [id] });
-      this.engine.syncStore(); this.engine.scheduleSave(); this.engine.notifyLayerSelectionChange(); return;
+      this.engine.syncStore(); this.engine.notifyLayerSelectionChange(); return;
     }
     if (state.multiSelectMode) {
       const selected = new Set(state.selectedLayerIds);
@@ -787,7 +772,6 @@ export class LayerService {
       }
       this.engine.syncStore();
       this.engine.shapeEdit.refreshVertexState();
-      this.engine.scheduleSave();
       this.engine.notifyLayerSelectionChange();
       return;
     }
@@ -806,7 +790,7 @@ export class LayerService {
     const l = this.byId(id);
     if (!l) return;
     this.assignProps(l, props);
-    this.engine.links.propagateFrom({ document: this.engine.documentKey, layerId: id }, true);
+    this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: id }, true);
     this.engine.requestRender();
     this.engine.syncStore();
   }
@@ -822,7 +806,7 @@ export class LayerService {
     this.assignProps(layer, { parameterLink: change.after });
     return {
       kind: 'layerLink',
-      target: { document: this.engine.documentKey, layerId: layer.id },
+      target: { pageId: this.engine.pages.activePageId, layerId: layer.id },
       before: change.before,
       after: change.after,
     };
@@ -840,13 +824,11 @@ export class LayerService {
       kind: 'batch',
       ops: [propsOp, linkOp],
     } : propsOp, label);
-    this.engine.links.propagateFrom({ document: this.engine.documentKey, layerId: id });
+    this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: id });
     this.engine.committed();
   }
 
   updateShapeParams(id: string, before: ShapeParams, after: ShapeParams, preview = false): void {
-    const factor = 25.4 / this.engine.getPageSpec().ppi;
-    before = scaleShape(before, factor); after = scaleShape(after, factor);
     if (preview) this.previewLayerProps(id, { state: { shape: after } });
     else this.commitLayerProps(id, { state: { shape: before } }, { state: { shape: after } }, '図形を編集');
   }
@@ -871,7 +853,7 @@ export class LayerService {
       after: { state: { shape: cloneShape(layer.state.shape) }, name: layer.name },
     } as const;
     const linkOp = this.linkOpForUserChange(layer, propsOp.before, propsOp.after);
-    const downstreamLinkOps = this.engine.links.propagateFrom({ document: this.engine.documentKey, layerId: layer.id });
+    const downstreamLinkOps = this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });
     const operations = [propsOp, ...(linkOp ? [linkOp] : []), ...downstreamLinkOps];
     this.engine.history.push(operations.length > 1 ? { kind: 'batch', ops: operations } : propsOp, '多角形に変換');
     this.engine.committed();
@@ -890,7 +872,7 @@ export class LayerService {
     if (!layer) return;
     const st = useStore.getState();
     const previous = st.selectedLayerIds.length ? st.selectedLayerIds : [this.activeLayerId];
-    const selected = [...previous.filter(existing => this.scopeOf(existing) === this.scopeOf(layer.id)), ...(!previous.includes(id) ? [id] : [])];
+    const selected = [...previous.filter(existing => this.byId(existing)?.parentId === layer.parentId), ...(!previous.includes(id) ? [id] : [])];
     this.activeLayerId = selected[0] ?? id;
     this.applyMultiSelection(selected);
   }
@@ -899,11 +881,8 @@ export class LayerService {
     const st = useStore.getState();
     st.set({ multiSelectMode: false, selectedLayerIds: this.activeLayerId ? [this.activeLayerId] : [] });
     this.engine.syncStore();
-    this.engine.scheduleSave();
     this.engine.notifyLayerSelectionChange();
   }
-
-  selectMembers(selected:string[]):void { this.applyMultiSelection(selected); }
 
   private applyMultiSelection(selected: string[]): void {
     const ids = [...new Set(selected.filter(id => !!this.byId(id)))];
@@ -913,7 +892,6 @@ export class LayerService {
     if (!getToolDescriptor(st.tool ?? '')?.capabilities.multiSelect) st.deactivateTool();
     st.set({ multiSelectMode: true, selectedLayerIds: ids, shortcutTarget: { type: 'layer', id: this.activeLayerId } });
     this.engine.syncStore();
-    this.engine.scheduleSave();
     this.engine.notifyLayerSelectionChange();
   }
 
@@ -930,7 +908,7 @@ export class LayerService {
       const op = { kind: 'layerProps' as const, layerId: id, before: { ...current, ...before }, after };
       this.assignProps(layer, after);
       const linkOp = this.linkOpForUserChange(layer, op.before, after);
-      this.engine.links.propagateFrom({ document: this.engine.documentKey, layerId: id });
+      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: id });
       return linkOp ? [op, linkOp] : [op];
     });
     if (!ops.length) return;
@@ -944,7 +922,7 @@ export class LayerService {
       const layer = this.byId(id);
       if (layer) {
         this.assignProps(layer, props);
-        this.engine.links.propagateFrom({ document: this.engine.documentKey, layerId: id }, true);
+        this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: id }, true);
       }
     }
     this.engine.requestRender();
@@ -962,7 +940,7 @@ export class LayerService {
       this.bumpLayer(layerId);
       const propsOp = { kind: 'layerProps' as const, layerId, before: { state: { shape: before } }, after: { state: { shape: after } } };
       const linkOp = this.linkOpForUserChange(layer, propsOp.before, propsOp.after);
-      this.engine.links.propagateFrom({ document: this.engine.documentKey, layerId });
+      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId });
       return linkOp ? [propsOp, linkOp] : [propsOp];
     });
     if (!ops.length) return;
@@ -996,7 +974,7 @@ export class LayerService {
     });
     if (!ops.length) return;
     this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, '複数レイヤーの不透明度');
-    for (const { layerId } of changes) this.engine.links.propagateFrom({ document: this.engine.documentKey, layerId });
+    for (const { layerId } of changes) this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId });
     this.engine.committed();
   }
 

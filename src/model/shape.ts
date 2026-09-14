@@ -28,7 +28,7 @@ export interface RectShapeParams {
   color: string;
   strokeWidth: number;
   strokeJoin?: ShapeStrokeJoin;
-  /** 図形本体の角丸半径（mm） */
+  /** 図形本体の角丸半径（canvas px） */
   cornerRadius?: number;
   paintMode: ShapePaintMode;
   /** 中心基準の回転角（ラジアン） */
@@ -58,7 +58,7 @@ export interface PolygonShapeParams {
   color: string;
   strokeWidth: number;
   strokeJoin?: ShapeStrokeJoin;
-  /** 図形本体の角丸半径（mm） */
+  /** 図形本体の角丸半径（canvas px） */
   cornerRadius?: number;
   paintMode: ShapePaintMode;
   /** 中心基準の回転角（ラジアン） */
@@ -74,7 +74,7 @@ export interface BubbleTailShapeParams {
   start: ShapePoint;
   control: ShapePoint;
   tip: ShapePoint;
-  /** 普通しっぽの根元幅／丸しっぽの最大直径 (mm) */
+  /** 普通しっぽの根元幅／丸しっぽの最大直径 (canvas px) */
   width: number;
   circleCount: number;
   /** 0 = edge gaps are equal, 1 = gaps strongly tighten toward the tip. */

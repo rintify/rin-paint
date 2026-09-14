@@ -1,9 +1,9 @@
 import type { TextParams, TextStyle } from '../../model/text';
 import { DEFAULT_TEXT_TOOL_SETTINGS, type TextToolSettings } from '../../tools/text/settings';
 
-export const DEFAULT_TEXT_STYLE: TextStyle = { fontId: DEFAULT_TEXT_TOOL_SETTINGS.fontId, color: '#222222', sizeMm: DEFAULT_TEXT_TOOL_SETTINGS.sizePt * 25.4 / 72 };
+export const DEFAULT_TEXT_STYLE: TextStyle = { fontId: DEFAULT_TEXT_TOOL_SETTINGS.fontId, color: '#222222', sizePt: DEFAULT_TEXT_TOOL_SETTINGS.sizePt };
 export function newText(x: number, y: number, color: string, width: number | null = null, height: number | null = null, settings: TextToolSettings = DEFAULT_TEXT_TOOL_SETTINGS): TextParams {
-  return { content: '', style: { fontId: settings.fontId, sizeMm: settings.sizePt * 25.4 / 72, color: color === 'transparent' ? '#222222' : color }, ranges: [], ruby: [], direction: settings.direction, horizontalAlign: settings.horizontalAlign, verticalAlign: settings.verticalAlign, lineHeight: settings.lineHeight, x, y, width, height, rotation: 0 };
+  return { content: '', style: { fontId: settings.fontId, sizePt: settings.sizePt, color: color === 'transparent' ? '#222222' : color }, ranges: [], ruby: [], direction: settings.direction, horizontalAlign: settings.horizontalAlign, verticalAlign: settings.verticalAlign, lineHeight: settings.lineHeight, x, y, width, height, rotation: 0 };
 }
 
 /** CSS writing modes use logical axes, while the UI exposes physical alignment. */
@@ -55,10 +55,10 @@ export function resizeTextBox(
 }
 export function styleAt(text: TextParams, index: number): TextStyle {
   const range = text.ranges.find(r => index >= r.start && index < r.end);
-  return range ? { fontId: range.fontId, color: range.color, sizeMm: range.sizeMm } : { ...text.style };
+  return range ? { fontId: range.fontId, color: range.color, sizePt: range.sizePt } : { ...text.style };
 }
 function sameStyle(a: TextStyle, b: TextStyle): boolean {
-  return a.fontId === b.fontId && a.color === b.color && a.sizeMm === b.sizeMm;
+  return a.fontId === b.fontId && a.color === b.color && a.sizePt === b.sizePt;
 }
 export function normalizeRanges(text: TextParams): TextParams {
   const points = [...new Set([0, text.content.length, ...text.ranges.flatMap(r => [r.start, r.end])])].filter(n => n >= 0 && n <= text.content.length).sort((a, b) => a - b);

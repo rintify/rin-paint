@@ -4,7 +4,7 @@ import { CommandService } from './CommandService';
 import { DocumentSession } from './DocumentSession';
 import { overrideField } from './LinkResolver';
 import { ProjectRepository } from './ProjectRepository';
-import type { LayerDocument, LayerEntity } from './types';
+import type { LayerDocument } from './types';
 
 describe('bin ownership and document history', () => {
   it('keeps registration and subsequent bin edits when page binding changes are undone and redone', () => {
@@ -44,35 +44,5 @@ describe('bin ownership and document history', () => {
     const restored = new DocumentSession(); restored.restore(session.snapshot());
     expect(restored.snapshot().target?.scope.scopeId).toBe('inner');
     expect(Object.values(restored.snapshot().views).map(value => value.zoom)).toEqual([2,4]);
-  });
-
-  it('registers nested overridden structure, including local children and removed inherited children', () => {
-    const key={kind:'page' as const,id:'p'};
-    const binding=()=>({source:null,linkedFields:[],localValues:{}});
-    const canvas=(id:string,children:string[],source?:string): LayerEntity & {type:'canvas'} => ({
-      id,type:'canvas',binding:binding(),structure:{source:source?{document:key,entityId:source}:null,
-        local:{id:`scope-${id}`,children:children.map(entityId=>({id:`o-${entityId}`,entityId}))},
-        suppressed:[],placements:[],overrides:{}},
-    });
-    const original=canvas('original',['inner']);
-    const inner=canvas('inner',['removed']);
-    const variant=canvas('variant',[],'original');
-    const changed=canvas('changed',['added'],'inner');
-    changed.structure.suppressed=['o-removed'];
-    variant.structure.overrides['o-inner']=changed;
-    const entities: LayerEntity[]=[original,inner,variant,
-      ...['removed','added'].map(id=>({id,type:'raster' as const,binding:binding()}))];
-    const repo=new ProjectRepository();
-    repo.replace([{key,root:{id:'root',children:[{id:'o-original',entityId:'original'},{id:'o-variant',entityId:'variant'}]},
-      entities:Object.fromEntries(entities.map(entity=>[entity.id,entity]))}]);
-    const commands=new CommandService(repo);
-    const bin=new BinService(repo,commands).register({document:key,entityId:'variant'});
-    const binChild=repo.scopes.children(bin)[0];
-    expect(repo.scopes.childrenOf(binChild).map(child=>child.id)).toEqual(['o-added']);
-    expect(JSON.stringify(repo.document(bin.document))).not.toContain('"kind":"page"');
-    commands.undo(key);
-    expect(repo.scopes.childrenOf(repo.scopes.children({document:key,entityId:'variant'})[0]).map(child=>child.id)).toEqual(['o-added']);
-    commands.redo(key);
-    expect(repo.scopes.childrenOf(repo.scopes.children({document:key,entityId:'variant'})[0]).map(child=>child.id)).toEqual(['o-added']);
   });
 });

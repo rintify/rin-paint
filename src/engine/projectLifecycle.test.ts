@@ -1,9 +1,8 @@
-import { layerChildren } from './layerTree';
 /// <reference types="node" />
 // @vitest-environment happy-dom
 import 'fake-indexeddb/auto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createCanvas, loadImage, Path2D, type Canvas } from '@napi-rs/canvas';
+import { createCanvas, loadImage, type Canvas } from '@napi-rs/canvas';
 import { TRANSPARENT, type TextParams } from '../types';
 import { Blob as NodeBlob } from 'node:buffer';
 import { newText } from './text/model';
@@ -21,10 +20,10 @@ function backing(node: HTMLCanvasElement): Canvas {
   if (canvas.height !== node.height) canvas.height = node.height;
   return canvas;
 }
+vi.mock('html-to-image', () => ({ toCanvas: vi.fn(async () => document.createElement('canvas')) }));
 let engine: typeof import('./instance')['engine'];
 beforeAll(async () => {
   vi.stubGlobal('Blob', NodeBlob);
-  vi.stubGlobal('Path2D', Path2D);
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (this: HTMLCanvasElement) {
     const ctx = backing(this).getContext('2d');
     return new Proxy(ctx, {
@@ -63,185 +62,11 @@ async function loadActivePersisted() {
   return { meta, page };
 }
 
-function paintRaster(id: string, x: number, y: number, w: number, h: number, color: string): void {
-  const layer = engine.layerById(id);
-  if (layer?.type !== 'raster') throw new Error('Raster expected');
-  layer.runtime.surface.paint({x, y, w, h}, ctx => {ctx.fillStyle = color; ctx.fillRect(x, y, w, h);});
-}
-
 function pixel(layerId: string, x: number, y: number): number[] {
   return [...engine.getLayerCanvas(layerId)!.getContext('2d')!.getImageData(x, y, 1, 1).data];
 }
 
 describe('canvas history and new project', () => {
-  it('edits bin assets with isolated history and preserves their current contents across page registration Undo and Redo', async () => {
-    await engine.newProject();
-    engine.addShapeLayer({kind: 'rect', x: 10, y: 10, width: 20, height: 20, color: '#ff0000', strokeWidth: 1, paintMode: 'fill-inside'});
-    const id = engine.getActiveLayerId();
-    await engine.bins.register(id);
-    const bin = engine.bins.items[0];
-    const pageHistory = engine.history.current.id;
-    expect(bin.layers.every(layer => layer.common.parameterLink?.source.document.kind !== 'page')).toBe(true);
-    await engine.bins.open(bin.id);
-    expect(engine.documentKey).toEqual({kind: 'bin-item', id: bin.id});
-    const before = structuredClone(engine.getShape(id)!);
-    engine.commitLayerProps(id, {state: {shape: before}}, {state: {shape: {...before, color: '#0000ff'}}}, '素材色');
-    await engine.bins.returnToPage();
-    expect(engine.history.current.id).toBe(pageHistory);
-    expect(engine.getShape(id)?.color).toBe('#0000ff');
-    await engine.undo();
-    expect(engine.getShape(id)?.color).toBe('#ff0000');
-    expect(engine.bins.items).toHaveLength(1);
-    await engine.redo();
-    expect(engine.getShape(id)?.color).toBe('#0000ff');
-    await engine.bins.open(bin.id);
-    await engine.undo();
-    expect(engine.getShape(id)?.color).toBe('#ff0000');
-    await engine.bins.returnToPage();
-    expect(engine.history.current.id).toBe(pageHistory);
-    await engine.newProject();
-  });
-
-  it('retains distant positive and negative raster tiles through page resize, save and Undo without allocating the gap', async () => {
-    await engine.newProject();
-    const layer = engine.activeRaster()!;
-    engine.captureBefore(layer);
-    paintRaster(layer.id, -1000000, -1000000, 2, 2, '#ff0000');
-    paintRaster(layer.id, 1000000, 1000000, 2, 2, '#00ff00');
-    engine.commitRasterEdit(layer, {minX: -1000000, minY: -1000000, maxX: 1000002, maxY: 1000002}, '遠距離描画');
-    await awaitHistoryReady();
-    expect(layer.runtime.surface.tileCount).toBe(2);
-    const op = internalHistory().current.op;
-    expect(op?.kind).toBe('raster');
-    if (op?.kind === 'raster') expect(op.tiles).toHaveLength(2);
-    const encoded = await layer.runtime.surface.encode();
-    const {RasterSurface} = await import('./raster/RasterSurface');
-    const restored = await RasterSurface.decode(encoded);
-    expect(restored.tileCount).toBe(2);
-    expect([...restored.imageData({x: -1000000, y: -1000000, w: 1, h: 1}).data]).toEqual([255, 0, 0, 255]);
-    await engine.undo();
-    expect(layer.runtime.surface.tileCount).toBe(0);
-    await engine.redo();
-    expect(layer.runtime.surface.tileCount).toBe(2);
-    await engine.newProject();
-  });
-
-  it('keeps current cross-page source values when a consumer-only move is undone', async () => {
-    await engine.newProject();
-    const sourcePage=engine.pages.activePageId;
-    engine.addShapeLayer({kind:'rect',x:10,y:10,width:20,height:20,strokeWidth:1,color:'#f00',paintMode:'fill-inside'});
-    const sourceId=engine.getActiveLayerId();
-    await engine.pages.addPage();const targetPage=engine.pages.pageOrder.find(id=>id!==sourcePage)!;
-    await engine.pages.switchPage(targetPage);
-    engine.addShapeLayer({kind:'rect',x:10,y:10,width:20,height:20,strokeWidth:1,color:'#f00',paintMode:'fill-inside'});
-    const targetId=engine.getActiveLayerId();
-    engine.links.createPasteLink(targetId,{document: {kind: 'page' as const, id: sourcePage}, layerId:sourceId});
-    const before=structuredClone(engine.layerById(targetId)!.state);
-    const after=structuredClone(before);
-    if(!('shape' in after) || after.shape.kind!=='rect') throw new Error();
-    after.shape.x=50 * 25.4 / engine.getPageSpec().ppi;
-    engine.commitLayerProps(targetId,{state:before},{state:after},'参照側の移動');
-    await engine.pages.switchPage(sourcePage);
-    const oldSource=structuredClone(engine.layerById(sourceId)!.state);
-    const newSource=structuredClone(oldSource);
-    if(!('shape' in newSource)) throw new Error();
-    newSource.shape.color='#00f';
-    engine.commitLayerProps(sourceId,{state:oldSource},{state:newSource},'リンク元の色');
-    await engine.pages.switchPage(targetPage);
-    expect(engine.getShape(targetId)).toMatchObject({x:50,color:'#00f'});
-    await engine.undo();
-    expect(engine.getShape(targetId)).toMatchObject({x:10,color:'#00f'});
-    await engine.redo();
-    expect(engine.getShape(targetId)).toMatchObject({x:50,color:'#00f'});
-  });
-
-  it('propagates a canvas scale to editable shapes, effect widths, and conjugated operators in one Undo', async () => {
-    await engine.newProject();engine.addCanvasLayer();const canvasId=engine.getActiveLayerId();
-    engine.addShapeLayer({kind:'rect',x:10,y:10,width:20,height:20,strokeWidth:1,color:'#f00',paintMode:'fill-inside'});
-    const shapeId=engine.getActiveLayerId();
-    engine.addOutlineLayer();const outlineId=engine.getActiveLayerId();
-    engine.addTransformLayer();const transformId=engine.getActiveLayerId();
-    engine.commitLayerProps(transformId,{state:{matrix:[1,0,0,0,1,0,0,0,1]}},{state:{matrix:[1,0,10,0,1,0,0,0,1]}},'移動');
-    const width=(engine.layerById(outlineId)!.state as {outline:{widthMm:number}}).outline.widthMm;
-    engine.setActiveLayer(canvasId);
-    const before=internalHistory().current.id;
-    const entries=engine.selectedObjectsInRect({minX:0,minY:0,maxX:1000,maxY:1000});
-    const source=[{x:0,y:0},{x:100,y:0},{x:100,y:100},{x:0,y:100}];
-    engine.previewObjectGroup(entries,source,source.map(p=>({x:p.x*2,y:p.y*2})));
-    engine.commitObjectGroup(entries);
-    expect(engine.getShape(shapeId)?.strokeWidth).toBe(2);
-    expect((engine.layerById(outlineId)!.state as {outline:{widthMm:number}}).outline.widthMm).toBe(width*2);
-    expect((engine.layerById(transformId)!.state as {matrix:readonly number[]}).matrix[2]).toBeCloseTo(20);
-    expect(engine.getActiveLayerId()).toBe(canvasId);
-    await engine.undo();
-    expect(internalHistory().current.id).toBe(before);
-    expect(engine.getShape(shapeId)?.strokeWidth).toBe(1);
-    expect((engine.layerById(transformId)!.state as {matrix:readonly number[]}).matrix[2]).toBe(10);
-  });
-
-  it('creates a terminal transform only on preview, cancels it cleanly, and restores canvas selection on Redo', async () => {
-    await engine.newProject();engine.addCanvasLayer();const canvasId=engine.getActiveLayerId();
-    engine.commitLayerProps(canvasId,{state:{propagateTransforms:true}},{state:{propagateTransforms:false}},'伝播');
-    engine.addShapeLayer({kind:'rect',x:10,y:10,width:20,height:20,strokeWidth:1,color:'#f00',paintMode:'fill-inside'});
-    const shapeId=engine.getActiveLayerId(),shape=structuredClone(engine.getShape(shapeId));
-    engine.setActiveLayer(canvasId);
-    const count=engine.allLayers().length;
-    let entries=engine.selectedObjectsInRect({minX:0,minY:0,maxX:100,maxY:100});
-    expect(engine.allLayers()).toHaveLength(count);
-    const source=[{x:0,y:0},{x:100,y:0},{x:100,y:100},{x:0,y:100}];
-    const target=source.map(p=>({x:p.x+15,y:p.y+20}));
-    engine.previewObjectGroup(entries,source,target);
-    expect(engine.allLayers()).toHaveLength(count+1);
-    engine.restoreObjectGroup(entries);
-    expect(engine.allLayers()).toHaveLength(count);
-    entries=engine.selectedObjectsInRect({minX:0,minY:0,maxX:100,maxY:100});
-    engine.previewObjectGroup(entries,source,target);engine.commitObjectGroup(entries);
-    expect(engine.getShape(shapeId)).toEqual(shape);
-    const terminal=layerChildren(engine.layerById(canvasId)).at(-1)!;
-    expect(engine.layerById(terminal)?.type).toBe('transform');
-    await engine.undo();expect(engine.layerById(terminal)).toBeNull();
-    await engine.redo();expect(engine.layerById(terminal)?.type).toBe('transform');
-    expect(engine.getActiveLayerId()).toBe(canvasId);
-    expect(engine.getShape(shapeId)).toEqual(shape);
-  });
-
-  it('groups siblings without a render node, restores order and grouping with one Undo, and persists groups', async () => {
-    await engine.newProject();
-    const first=engine.getActiveLayerId();
-    engine.addRasterLayer();const middle=engine.getActiveLayerId();
-    engine.addRasterLayer();const last=engine.getActiveLayerId();
-    engine.layerService.selectMembers([first,last]);
-    engine.stacks.create();
-    expect(engine.getRootLayerIds()).toEqual([first,last,middle]);
-    expect(engine.allLayers()).toHaveLength(3);
-    expect(engine.stacks.snapshot()[0].memberIds).toEqual([first,last]);
-    await engine.undo();
-    expect(engine.getRootLayerIds()).toEqual([first,middle,last]);
-    expect(engine.stacks.snapshot()).toEqual([]);
-    await engine.redo();
-    const groups=engine.stacks.snapshot();
-    await engine.flushSavePublic();
-    const {page}=await loadActivePersisted();
-    expect(page?.layerStacks).toEqual(groups);
-    await engine.restoreSavedPagePublic(page!);
-    expect(engine.stacks.snapshot()).toEqual(groups);
-    await engine.undo();
-    expect(engine.stacks.snapshot()).toEqual([]);
-    expect(engine.getRootLayerIds()).toEqual([first,middle,last]);
-  });
-
-  it('dissolves a two-member stack on deletion and restores membership when deletion is undone', async () => {
-    await engine.newProject();const first=engine.getActiveLayerId();
-    engine.addRasterLayer();const second=engine.getActiveLayerId();
-    engine.layerService.selectMembers([first,second]);engine.stacks.create();
-    const groups=engine.stacks.snapshot();
-    engine.removeLayer(second);
-    expect(engine.stacks.snapshot()).toEqual([]);
-    await engine.undo();
-    expect(engine.stacks.snapshot()).toEqual(groups);
-    expect(engine.layerById(second)).not.toBeNull();
-  });
-
   it('creates a panel subtree with a deferred raster and restores it in one history step', async () => {
     await engine.newProject();
     const shape = {
@@ -259,9 +84,9 @@ describe('canvas history and new project', () => {
     expect(panel.type).toBe('canvas');
     expect(clip.state).toEqual({ maskLayerIds: [maskId] });
     expect(outline.state).toMatchObject({ outline: { color: '#112233', widthMm: 2, cornerStyle: 'sharp' } });
-    const internal = engine.layerById(rasterId);
-    expect(internal?.type).toBe('raster');
-    if (internal?.type === 'raster') expect(internal.runtime.surface.tileCount).toBe(0);
+    const internal = (engine as unknown as { layerById(id: string): { runtime?: { deferred?: boolean; canvas?: HTMLCanvasElement } } | null }).layerById(rasterId);
+    expect(internal?.runtime).toMatchObject({ deferred: true });
+    expect(internal?.runtime?.canvas).toMatchObject({ width: 1, height: 1 });
     expect(internalHistory().current.op?.kind).toBe('layerReplace');
     await engine.undo();
     expect(useStore.getState().layers.some(layer => layer.id === panel.id)).toBe(false);
@@ -282,7 +107,7 @@ describe('canvas history and new project', () => {
     expect(children.map(layer => layer.name)).toEqual(['本体', 'しっぽ', '吹き出し枠', '文字']);
     expect(children[1].parameterLink).toMatchObject({ source: { layerId: children[0].id }, linkedParameterIds: ['appearance.color'] });
     expect(children[2].state).toMatchObject({ outline: { cornerStyle: 'round' } });
-    expect(children[3].state).toMatchObject({ text: { direction: 'vertical', horizontalAlign: 'left', verticalAlign: 'top', lineHeight: 1.5, width: 84 * 25.4 / engine.getPageSpec().ppi, height: expect.closeTo(56 * 25.4 / engine.getPageSpec().ppi) } });
+    expect(children[3].state).toMatchObject({ text: { direction: 'vertical', horizontalAlign: 'left', verticalAlign: 'top', lineHeight: 1.5, width: 84, height: 56 } });
     expect(useStore.getState().textEditingId).toBe(children[3].id);
     await engine.undo();
     expect(useStore.getState().layers.some(layer => layer.id === bubble.id)).toBe(false);
@@ -409,7 +234,7 @@ describe('canvas history and new project', () => {
     engine.addShapeLayer({ kind: 'rect', x: 100, y: 200, width: 70, height: 80, strokeWidth: 5, color: '#445566', rotation: .8, paintMode: 'stroke' });
     const second = useStore.getState().activeLayerId;
     engine.beginMultiSelect(first);
-    engine.updateSelectedShapes(shape => shape.kind === 'rect' ? { ...shape, width: 120 * 25.4 / engine.getPageSpec().ppi } : shape);
+    engine.updateSelectedShapes(shape => shape.kind === 'rect' ? { ...shape, width: 120 } : shape);
     expect(engine.getShape(first)).toMatchObject({ x: 10, width: 120, strokeWidth: 2, rotation: .2 });
     expect(engine.getShape(second)).toMatchObject({ x: 100, width: 120, strokeWidth: 5, rotation: .8 });
     await engine.undo();
@@ -425,7 +250,7 @@ describe('canvas history and new project', () => {
     await engine.newProject();
     engine.addShapeLayer({ kind: 'rect', x: 10, y: 10, width: 50, height: 30, strokeWidth: 2, color: '#111111', rotation: .2, paintMode: 'stroke' });
     const shapeId = useStore.getState().activeLayerId;
-    const text = { ...newText(20, 20, '#222222'), content: 'ab', ranges: [{ start: 0, end: 1, fontId: 'serif', color: '#333333', sizeMm: 8 }] };
+    const text = { ...newText(20, 20, '#222222'), content: 'ab', ranges: [{ start: 0, end: 1, fontId: 'serif', color: '#333333', sizePt: 8 }] };
     engine.addTextLayer(text);
     const textId = useStore.getState().activeLayerId;
     engine.finishTextEditing();
@@ -443,8 +268,10 @@ describe('canvas history and new project', () => {
   });
   it('restores cropped pixels, dimensions, and earlier raster history across reload', async () => {
     const id = useStore.getState().activeLayerId;
+    const canvas = engine.getLayerCanvas(id)!;
+    const ctx = canvas.getContext('2d')!;
     engine.captureBefore(engine.activeRaster()!);
-    paintRaster(id, 1200, 900, 20, 20, '#ff0000');
+    ctx.fillStyle = '#ff0000'; ctx.fillRect(1200, 900, 20, 20);
     engine.commitRasterEdit(engine.activeRaster()!, { minX: 1200, minY: 900, maxX: 1220, maxY: 920 }, '描画');
     engine.commitLayerProps(id, { opacity: 1 }, { opacity: .6 }, 'opacity');
     const smaller = { widthMm: 800 * 25.4 / 300, heightMm: 600 * 25.4 / 300, ppi: 300 };
@@ -470,7 +297,8 @@ describe('canvas history and new project', () => {
   it('resamples pixels, shape positions and text frames while retaining point sizes', async () => {
     await engine.newProject();
     const raster = useStore.getState().activeLayerId;
-    paintRaster(raster, 10, 10, 20, 20, '#00ff00');
+    const ctx = engine.getLayerCanvas(raster)!.getContext('2d')!;
+    ctx.fillStyle = '#00ff00'; ctx.fillRect(10, 10, 20, 20);
     engine.addShapeLayer({ kind: 'line', x1: 10, y1: 20, x2: 100, y2: 120, color: '#000000', strokeWidth: 3 });
     const shapeId = useStore.getState().activeLayerId;
     const text: TextParams = { ...newText(30, 40, '#000000', 200, 100), content: '文字' };
@@ -480,7 +308,7 @@ describe('canvas history and new project', () => {
     expect(engine.getLayerCanvas(raster)!.width).toBe(1600);
     expect([...engine.getLayerCanvas(raster)!.getContext('2d')!.getImageData(30, 30, 1, 1).data]).toEqual([0, 255, 0, 255]);
     expect(engine.getShape(shapeId)).toMatchObject({ x1: 20, y1: 40, strokeWidth: 6 });
-    expect(engine.getText(textId)).toMatchObject({ x: 60, y: 80, width: 400, height: 200, style: { sizeMm: 12 * 25.4 / 72 } });
+    expect(engine.getText(textId)).toMatchObject({ x: 60, y: 80, width: 400, height: 200, style: { sizePt: 12 } });
     await engine.undo();
     expect(engine.getText(textId)).toEqual(text);
     await engine.redo();
@@ -558,10 +386,14 @@ describe('canvas history and new project', () => {
   it('stores raster merges as tiles-v1 across undo, redo and reload', async () => {
     await engine.newProject();
     const lowerId = useStore.getState().activeLayerId;
-    paintRaster(lowerId, 0, 0, 100, 100, '#ff0000');
+    const lower = engine.getLayerCanvas(lowerId)!;
+    lower.getContext('2d')!.fillStyle = '#ff0000';
+    lower.getContext('2d')!.fillRect(0, 0, 100, 100);
     engine.addRasterLayer();
     const upperId = useStore.getState().activeLayerId;
-    paintRaster(upperId, 10, 10, 20, 20, '#0000ff');
+    const upper = engine.getLayerCanvas(upperId)!;
+    upper.getContext('2d')!.fillStyle = '#0000ff';
+    upper.getContext('2d')!.fillRect(10, 10, 20, 20);
     engine.commitLayerProps(
       upperId,
       { opacity: 1, blend: 'source-over' },
@@ -648,7 +480,9 @@ describe('canvas history and new project', () => {
   it('bakes target opacity into an exact effect merge and restores it through undo/redo', async () => {
     await engine.newProject();
     const targetId = useStore.getState().activeLayerId;
-    paintRaster(targetId, 0, 0, 1, 1, '#ff0000');
+    const target = engine.getLayerCanvas(targetId)!;
+    target.getContext('2d')!.fillStyle = '#ff0000';
+    target.getContext('2d')!.fillRect(0, 0, 1, 1);
     engine.commitLayerProps(targetId, { opacity: 1 }, { opacity: .5 }, '不透明度');
     engine.addAdjustLayer();
     const effectId = useStore.getState().activeLayerId;
@@ -801,7 +635,7 @@ describe('shape snap, constraints, and persistence', () => {
       [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }],
       [{ x: 1, y: 0 }, { x: 11, y: 0 }, { x: 11, y: 10 }, { x: 1, y: 10 }],
     );
-    expect(engine.getShape(id)).toMatchObject({ x: expect.closeTo(6), y: 80 });
+    expect(engine.getShape(id)).toMatchObject({ x: 6, y: 80 });
   });
 
   it('constrains polygon vertices along edges from Shift or the GUI toggle', async () => {
@@ -855,7 +689,7 @@ describe('shape snap, constraints, and persistence', () => {
     engine.updateShapeEdit(pt(96, 98));
     expect(engine.getShape(id)).toEqual(expect.objectContaining({
       kind: 'polygon',
-      points: [expect.anything(), expect.objectContaining({ x: expect.closeTo(96), y: expect.closeTo(98) }), expect.anything()],
+      points: [expect.anything(), expect.objectContaining({ x: 96, y: 98 }), expect.anything()],
     }));
     engine.cancelShapeEdit();
   });
@@ -872,9 +706,9 @@ describe('shape snap, constraints, and persistence', () => {
     engine.updateShapeEdit(pt(204, 137));
     expect(engine.getShape(id)).toEqual(expect.objectContaining({
       kind: 'polygon',
-      points: [expect.anything(), expect.objectContaining({ x: expect.closeTo(200), y: expect.closeTo(140) }), expect.anything()],
+      points: [expect.anything(), expect.objectContaining({ x: 200, y: 140 }), expect.anything()],
     }));
-    expect(shapeEdit().snapGuides()).toEqual({ x: expect.closeTo(200), y: expect.closeTo(140) });
+    expect(shapeEdit().snapGuides()).toEqual({ x: 200, y: 140 });
     engine.cancelShapeEdit();
   });
 
@@ -903,7 +737,7 @@ describe('shape snap, constraints, and persistence', () => {
     engine.beginShapeEdit(pt(20, 20));
     engine.setShapeHandleEdgeConstrained(true);
     engine.updateShapeEdit(pt(35, 23));
-    expect(engine.getShape(rectId)).toMatchObject({ kind: 'rect', x: expect.closeTo(35), y: expect.closeTo(20), width: expect.closeTo(25), height: expect.closeTo(30) });
+    expect(engine.getShape(rectId)).toMatchObject({ kind: 'rect', x: 35, y: 20, width: 25, height: 30 });
     engine.finishShapeEdit(pt(35, 23));
 
     engine.addShapeLayer({ kind: 'ellipse', cx: 100, cy: 100, rx: 20, ry: 10, rotation: 0, color: '#000', strokeWidth: 1, paintMode: 'stroke' });
@@ -945,7 +779,8 @@ describe('selection and layer transform', () => {
   it('still floats a lassoed raster and commits the moved pixels', async () => {
     await engine.newProject();
     const rasterId = useStore.getState().activeLayerId;
-    paintRaster(rasterId, 10, 10, 20, 20, '#ff0000');
+    engine.getLayerCanvas(rasterId)!.getContext('2d')!.fillStyle = '#ff0000';
+    engine.getLayerCanvas(rasterId)!.getContext('2d')!.fillRect(10, 10, 20, 20);
     activateKind('lasso');
     const lasso = engine.lasso;
     lasso.onDown(pt(5, 5));
@@ -966,7 +801,8 @@ describe('selection and layer transform', () => {
   it('floats selected raster and shape layers when the move tool is activated', async () => {
     await engine.newProject();
     const rasterId = useStore.getState().activeLayerId;
-    paintRaster(rasterId, 10, 10, 20, 20, '#ff0000');
+    engine.getLayerCanvas(rasterId)!.getContext('2d')!.fillStyle = '#ff0000';
+    engine.getLayerCanvas(rasterId)!.getContext('2d')!.fillRect(10, 10, 20, 20);
     engine.addShapeLayer({ kind: 'rect', x: 40, y: 40, width: 20, height: 20, color: '#00ff00', strokeWidth: 1, paintMode: 'fill-inside' });
     const shapeId = useStore.getState().activeLayerId;
     engine.beginMultiSelect(rasterId);
@@ -981,377 +817,5 @@ describe('selection and layer transform', () => {
     expect(pixel(rasterId, 15, 15)[3]).toBe(0);
     expect(pixel(rasterId, 35, 15)[0]).toBeGreaterThan(200);
     expect(engine.getShape(shapeId)).toMatchObject({ x: 60, y: 40 });
-  });
-});
-
-
-describe('raster physical input coordinates', () => {
-  it('inverse maps the complete brush through an operator and native PPI and preserves one undo', async () => {
-    await engine.newProject();
-    const raster = engine.activeRaster()!;
-    const ppi = engine.getPageSpec().ppi;
-    raster.runtime.surface.restore({...raster.runtime.surface.snapshot(), intrinsicPpi: ppi / 2});
-    engine.layerService.addTransformLayer();
-    const operator = engine.layerById(engine.layerService.activeLayerId)!;
-    if (operator.type !== 'transform') throw new Error('missing transform');
-    // Native pixel (10, 10) → page pixel (20, 20) → displayed pixel (60, 40).
-    operator.state.matrix = [2, 0, 20 * 25.4 / ppi, 0, 2, 0, 0, 0, 1];
-    engine.setActiveLayer(raster.id);
-    const { PenTool } = await import('../tools/pen/tool');
-    const pen = new PenTool(engine);
-    pen.onDown({x: 60, y: 40, pressure: 1});
-    pen.onUp({x: 60, y: 40, pressure: 1}, {pressure: 1} as PointerEvent);
-    await awaitHistoryReady();
-    expect(raster.runtime.surface.imageData({x: 10, y: 10, w: 1, h: 1}).data[3]).toBeGreaterThan(0);
-    expect(raster.runtime.surface.imageData({x: 60, y: 40, w: 1, h: 1}).data[3]).toBe(0);
-    await engine.undo();
-    expect(raster.runtime.surface.tileCount).toBe(0);
-    await engine.redo();
-    expect(raster.runtime.surface.imageData({x: 10, y: 10, w: 1, h: 1}).data[3]).toBeGreaterThan(0);
-  });
-});
-
-
-describe('shared raster content', () => {
-  it('follows bin drawing until content is edited, and undo relinks without rewinding the bin', async () => {
-    await engine.newProject();
-    engine.selectToolInstance(useStore.getState().tools.find(tool => tool.kind === 'pen')!.id);
-    const id = engine.getActiveLayerId();
-    paintRaster(id, 10, 10, 4, 4, '#ff0000');
-    await engine.bins.register(id);
-    expect(engine.layerById(id)?.parameterLink?.linkedContent).toBe(true);
-    const bin = engine.bins.items[0];
-    await engine.bins.open(bin.id);
-    paintRaster(id, 10, 10, 4, 4, '#0000ff');
-    engine.committed();
-    expect(pixel(id, 11, 11)[2]).toBe(255);
-    await engine.bins.returnToPage();
-    await engine.readyToRender();
-    expect(engine.layerById(id)?.parameterLink?.linkedContent).toBe(true);
-    const {RasterSurface} = await import('./raster/RasterSurface');
-    const savedBinSurface = await RasterSurface.decode(engine.bins.items[0].layers[0].content!);
-    expect([...savedBinSurface.imageData({x: 11, y: 11, w: 1, h: 1}).data]).toEqual([0, 0, 255, 255]);
-    expect(pixel(id, 11, 11)).toEqual([0, 0, 255, 255]);
-    await engine.undo();
-    expect(pixel(id, 11, 11)).toEqual([255, 0, 0, 255]);
-    await engine.redo();
-    await engine.readyToRender();
-    expect(pixel(id, 11, 11)).toEqual([0, 0, 255, 255]);
-    const target = engine.activeRaster()!;
-    engine.captureBefore(target);
-    paintRaster(id, 20, 20, 4, 4, '#00ff00');
-    engine.commitRasterEdit(target, {minX: 20, minY: 20, maxX: 24, maxY: 24}, '参照側へ描画');
-    await awaitHistoryReady();
-    expect(target.parameterLink?.linkedContent).toBe(false);
-    await engine.bins.open(bin.id);
-    paintRaster(id, 10, 10, 4, 4, '#ffff00');
-    engine.committed();
-    await engine.bins.returnToPage();
-    await engine.readyToRender();
-    expect(pixel(id, 11, 11)).toEqual([0, 0, 255, 255]);
-    expect(pixel(id, 21, 21)).toEqual([0, 255, 0, 255]);
-    await engine.undo();
-    expect(pixel(id, 11, 11)).toEqual([255, 255, 0, 255]);
-    expect(pixel(id, 21, 21)[3]).toBe(0);
-    await engine.redo();
-    expect(pixel(id, 11, 11)).toEqual([0, 0, 255, 255]);
-    expect(pixel(id, 21, 21)).toEqual([0, 255, 0, 255]);
-    await engine.links.relinkContent(id);
-    expect(pixel(id, 11, 11)).toEqual([255, 255, 0, 255]);
-    expect(pixel(id, 21, 21)[3]).toBe(0);
-    await engine.undo();
-    expect(pixel(id, 11, 11)).toEqual([0, 0, 255, 255]);
-    expect(pixel(id, 21, 21)).toEqual([0, 255, 0, 255]);
-  });
-});
-
-
-describe('PPI ownership', () => {
-  it('resamples only page-owned independent content and renders bin content at the same mm size', async () => {
-    await engine.newProject();
-    engine.selectToolInstance(useStore.getState().tools.find(tool => tool.kind === 'pen')!.id);
-    const sharedId = engine.getActiveLayerId(), ppi = engine.getPageSpec().ppi;
-    paintRaster(sharedId, 10, 10, 4, 4, '#ff0000');
-    await engine.bins.register(sharedId);
-    engine.layerService.addRasterLayer();
-    const ownedId = engine.getActiveLayerId();
-    paintRaster(ownedId, 10, 10, 4, 4, '#0000ff');
-    await engine.resizePage({...engine.getPageSpec(), ppi: ppi * 2});
-    const shared = engine.layerService.rasterById(sharedId)!;
-    const owned = engine.layerService.rasterById(ownedId)!;
-    expect(shared.runtime.surface.intrinsicPpi).toBe(ppi);
-    expect(owned.runtime.surface.intrinsicPpi).toBe(ppi * 2);
-    expect(pixel(sharedId, 22, 22)).toEqual([255, 0, 0, 255]);
-    expect(pixel(sharedId, 11, 11)[3]).toBe(0);
-    await engine.undo();
-    expect(engine.layerService.rasterById(ownedId)!.runtime.surface.intrinsicPpi).toBe(ppi);
-    expect(pixel(sharedId, 11, 11)).toEqual([255, 0, 0, 255]);
-  });
-});
-
-
-describe('linked canvas structures', () => {
-  it('keeps locally edited deleted descendants and follows source reordering around local additions', async () => {
-    await engine.newProject();
-    engine.selectToolInstance(useStore.getState().tools.find(tool => tool.kind === 'pen')!.id);
-    engine.addCanvasLayer(); const canvasId = engine.getActiveLayerId();
-    const shape = {kind: 'rect' as const, x: 10, y: 10, width: 20, height: 20, color: '#f00', strokeWidth: 1, paintMode: 'fill-inside' as const};
-    engine.addShapeLayer(shape); const first = engine.getActiveLayerId();
-    engine.addShapeLayer(shape); const second = engine.getActiveLayerId();
-    await engine.bins.register(canvasId); const bin = engine.bins.items[0];
-    engine.layerService.renameLayer(first, '独自の子');
-    await engine.canvases.flush();
-    await engine.bins.open(bin.id);
-    engine.removeLayer(first);
-    await engine.bins.returnToPage();
-    await engine.readyToRender();
-    const canvas = engine.layerById(canvasId)!;
-    expect(layerChildren(canvas)).toContain(first);
-    expect(engine.layerById(first)?.name).toBe('独自の子');
-    expect(engine.layerById(first)?.parameterLink).toBeUndefined();
-    expect(layerChildren(canvas)).toContain(second);
-    engine.setActiveLayer(canvasId); engine.layerService.addRasterLayer();
-    const local = engine.getActiveLayerId();
-    engine.moveLayer(local, {parentId: canvasId, index: 0});
-    await engine.readyToRender();
-    expect(layerChildren(canvas)[0]).toBe(local);
-    await engine.bins.open(bin.id);
-    engine.setActiveLayer(canvasId); engine.addShapeLayer(shape);
-    const newSource = engine.getActiveLayerId();
-    await engine.bins.returnToPage(); await engine.readyToRender();
-    const restored = engine.layerById(canvasId)!;
-    expect(layerChildren(restored)[0]).toBe(local);
-    expect(layerChildren(restored)).toContain(first);
-    expect(layerChildren(restored).some(id => engine.layerById(id)?.parameterLink?.source.layerId === newSource)).toBe(true);
-  });
-
-  it('follows bin additions, preserves occurrence IDs, and restores locally suppressed children with Undo', async () => {
-    await engine.newProject();
-    engine.selectToolInstance(useStore.getState().tools.find(tool => tool.kind === 'pen')!.id);
-    engine.addCanvasLayer();
-    const canvasId = engine.getActiveLayerId();
-    engine.addShapeLayer({kind: 'rect', x: 10, y: 10, width: 20, height: 20, color: '#f00', strokeWidth: 1, paintMode: 'fill-inside'});
-    const originalId = engine.getActiveLayerId();
-    await engine.bins.register(canvasId);
-    const bin = engine.bins.items[0];
-    await engine.bins.open(bin.id);
-    engine.setActiveLayer(canvasId);
-    engine.addShapeLayer({kind: 'rect', x: 40, y: 10, width: 20, height: 20, color: '#00f', strokeWidth: 1, paintMode: 'fill-inside'});
-    const addedSourceId = engine.getActiveLayerId();
-    await engine.bins.returnToPage();
-    await engine.readyToRender();
-    const canvas = engine.layerById(canvasId)!;
-    expect(layerChildren(canvas)).toHaveLength(2);
-    expect(layerChildren(canvas)[0]).toBe(originalId);
-    const addedId = layerChildren(canvas)[1];
-    expect(engine.layerById(addedId)?.parameterLink?.source.layerId).toBe(addedSourceId);
-    engine.removeLayer(addedId);
-    await engine.readyToRender();
-    expect(layerChildren(canvas)).toEqual([originalId]);
-    expect(canvas.parameterLink?.structure?.suppressed).toContain(addedSourceId);
-    engine.canvases.restoreChild(canvasId, addedSourceId);
-    await engine.readyToRender();
-    expect(layerChildren(canvas)).toEqual([originalId, addedId]);
-    await engine.undo();
-    expect(layerChildren(canvas)).toEqual([originalId]);
-    expect(engine.layerById(addedId)).toBeNull();
-    await engine.redo();
-    expect(layerChildren(canvas)).toEqual([originalId, addedId]);
-  });
-});
-
-
-describe('millimeter model values', () => {
-  it('keeps shape, image, and text layouts unchanged across PPI changes, save, and Undo', async () => {
-    await engine.newProject();
-    engine.selectToolInstance(useStore.getState().tools.find(tool => tool.kind === 'pen')!.id);
-    const ppi = engine.getPageSpec().ppi, mm = 25.4 / ppi;
-    engine.addShapeLayer({kind: 'rect', x: 100, y: 50, width: 80, height: 40, color: '#f00', strokeWidth: 3, paintMode: 'fill-inside'});
-    const shapeId = engine.getActiveLayerId();
-    const shape = engine.layerById(shapeId)!;
-    expect(shape.state).toMatchObject({shape: {x: 100 * mm, y: 50 * mm, width: 80 * mm, strokeWidth: 3 * mm}});
-    engine.addTextLayer({...newText(150, 100, '#000', 100, 40), content: 'mm'});
-    const textId = engine.getActiveLayerId();
-    engine.addImageLayer(document.createElement('canvas'), 200, 100, 120, 80);
-    const imageId = engine.getActiveLayerId();
-    const ids = [shapeId, textId, imageId];
-    const before = ids.map(id => structuredClone(engine.layerById(id)!.state));
-    await engine.resizePage({...engine.getPageSpec(), ppi: ppi * 2});
-    expect(ids.map(id => engine.layerById(id)!.state)).toEqual(before);
-    expect(engine.getShape(shapeId)).toMatchObject({x: 200, y: 100, width: 160, strokeWidth: 6});
-    await engine.flushSavePublic();
-    const {page} = await loadActivePersisted();
-    expect(ids.map(id => page!.layers.find(layer => layer.id === id)!.state)).toEqual(before);
-    await engine.undo();
-    expect(ids.map(id => engine.layerById(id)!.state)).toEqual(before);
-    expect(engine.getShape(shapeId)).toMatchObject({x: 100, y: 50, width: 80, strokeWidth: 3});
-  });
-});
-
-
-describe('physical raster transfer', () => {
-  it('transfers a shape into a moved raster with a different native PPI and restores both in one Undo', async () => {
-    await engine.newProject();
-    engine.selectToolInstance(useStore.getState().tools.find(tool => tool.kind === 'pen')!.id);
-    const raster = engine.activeRaster()!, ppi = engine.getPageSpec().ppi;
-    raster.runtime.surface.restore({...raster.runtime.surface.snapshot(), intrinsicPpi: ppi / 2});
-    raster.state.matrix = [1, 0, 20 * 25.4 / ppi, 0, 1, 0, 0, 0, 1];
-    engine.addShapeLayer({kind: 'rect', x: 40, y: 20, width: 10, height: 10, color: '#f00', strokeWidth: 0, paintMode: 'fill-inside'});
-    const shapeId = engine.getActiveLayerId();
-    engine.transferShapeLayer(raster.id);
-    await awaitHistoryReady();
-    expect(pixel(raster.id, 44, 24)).toEqual([255, 0, 0, 255]);
-    expect(pixel(raster.id, 84, 44)[3]).toBe(0);
-    expect([...raster.runtime.surface.imageData({x: 12, y: 12, w: 1, h: 1}).data]).toEqual([255, 0, 0, 255]);
-    await engine.undo();
-    expect(engine.layerById(shapeId)?.type).toBe('shape');
-    expect(engine.layerService.rasterById(raster.id)?.runtime.surface.tileCount).toBe(0);
-  });
-});
-
-
-describe('editable projective layout', () => {
-  const pt = (x: number, y: number) => ({x, y, pressure: 1});
-  it('keeps vector geometry in mm and samples the projective result without rasterizing', async () => {
-    await engine.newProject();
-    engine.selectToolInstance(useStore.getState().tools.find(tool => tool.kind === 'pen')!.id);
-    engine.addShapeLayer({kind: 'rect', x: 20, y: 20, width: 20, height: 20, color: '#f00', strokeWidth: 1, paintMode: 'fill-inside'});
-    const id = engine.getActiveLayerId(), original = structuredClone(engine.layerById(id)!.state);
-    const entries = engine.selectedObjectsInRect({minX: 0, minY: 0, maxX: 100, maxY: 100});
-    const from = [{x: 0, y: 0}, {x: 100, y: 0}, {x: 100, y: 100}, {x: 0, y: 100}];
-    const to = [{x: 0, y: 0}, {x: 200, y: 0}, {x: 150, y: 100}, {x: 0, y: 100}];
-    engine.previewObjectGroup(entries, from, to); engine.commitObjectGroup(entries);
-    const layer = engine.layerById(id)!;
-    if (layer.type !== 'shape') throw new Error('vector was replaced');
-    expect(layer.state.shape).toEqual((original as typeof layer.state).shape);
-    expect(layer.state.matrix?.[7]).not.toBe(0);
-    const {project} = await import('./geometry/homography');
-    const ppi = engine.getPageSpec().ppi, mm = 25.4 / ppi;
-    const center = project(layer.state.matrix!, {x: 30 * mm, y: 30 * mm})!;
-    expect([...engine.compositor.samplePixel(center.x / mm, center.y / mm, id)]).toEqual([255, 0, 0, 255]);
-    await engine.undo();
-    expect(engine.layerById(id)!.state).toEqual(original);
-    await engine.redo();
-    expect(engine.layerById(id)?.type).toBe('shape');
-    expect((engine.layerById(id)!.state as typeof layer.state).matrix?.[7]).not.toBe(0);
-  });
-
-  it('inverse maps handle edits through local and upper operators', async () => {
-    await engine.newProject();
-    engine.selectToolInstance(useStore.getState().tools.find(tool => tool.kind === 'pen')!.id);
-    engine.addShapeLayer({kind: 'rect', x: 20, y: 20, width: 40, height: 30, color: '#f00', strokeWidth: 1, paintMode: 'fill-inside'});
-    const id = engine.getActiveLayerId(), layer = engine.layerById(id)!;
-    if (layer.type !== 'shape') throw new Error();
-    layer.state.snapEnabled = false;
-    layer.state.matrix = [2, 0, 0, 0, 1, 0, 0, 0, 1];
-    engine.addTransformLayer();
-    const transform = engine.layerById(engine.getActiveLayerId())!;
-    if (transform.type !== 'transform') throw new Error();
-    transform.state.matrix = [1, 0, 10 * 25.4 / engine.getPageSpec().ppi, 0, 1, 0, 0, 0, 1];
-    engine.setActiveLayer(id);
-    expect(engine.beginShapeEdit(pt(50, 20))).toBe(true);
-    engine.updateShapeEdit(pt(70, 25)); engine.finishShapeEdit(pt(70, 25));
-    expect(engine.getShape(id)).toMatchObject({x: expect.closeTo(30), y: expect.closeTo(25), width: expect.closeTo(30), height: expect.closeTo(25)});
-    expect(layer.state.matrix).toEqual([2, 0, 0, 0, 1, 0, 0, 0, 1]);
-    await engine.undo();
-    expect(engine.getShape(id)).toMatchObject({x: 20, y: 20, width: 40, height: 30});
-  });
-});
-
-
-describe('deleted shared sources', () => {
-  it('materializes current fields and reconnects an untouched consumer on deletion Undo', async () => {
-    await engine.newProject();
-    engine.addShapeLayer({kind:'rect',x:10,y:10,width:20,height:20,color:'#f00',strokeWidth:1,paintMode:'fill-inside'});
-    const source=engine.getActiveLayerId();
-    engine.addShapeLayer({kind:'rect',x:0,y:0,width:10,height:10,color:'#000',strokeWidth:1,paintMode:'fill-inside'});
-    const target=engine.getActiveLayerId();
-    engine.links.createPasteLink(target,{document:engine.documentKey,layerId:source});
-    const before=engine.getShape(source)!;
-    engine.updateShapeParams(source,before,{...before,color:'#00f'});
-    engine.removeLayer(source);
-    await engine.canvases.flush();
-    expect(engine.getShape(target)?.color).toBe('#00f');
-    expect(engine.layerById(target)?.parameterLink).toBeUndefined();
-    await engine.undo();
-    expect(engine.layerById(target)?.parameterLink?.source.layerId).toBe(source);
-    expect(engine.getShape(target)?.color).toBe('#00f');
-  });
-});
-
-it('follows canvas additions through an unopened bin variant using stable lightweight occurrences', async () => {
-  await engine.newProject();
-  engine.selectToolInstance(useStore.getState().tools.find(tool=>tool.kind==='pen')!.id);
-  engine.addCanvasLayer();const root=engine.getActiveLayerId();
-  engine.addShapeLayer({kind:'rect',x:10,y:10,width:20,height:20,color:'#f00',strokeWidth:1,paintMode:'fill-inside'});
-  const first=engine.getActiveLayerId();
-  await engine.bins.register(root);const original=engine.bins.items[0].id;
-  await engine.bins.register(root);const variant=engine.bins.items.find(item=>item.id!==original)!.id;
-  engine.scheduleSave();await engine.flushSavePublic();
-  const stored=(await loadActivePersisted()).page!;
-  expect(stored.layers.find(layer=>layer.id===first)).toMatchObject({referenceOnly:true,state:{}});
-  expect(stored.layers.find(layer=>layer.id===first)?.content).toBeUndefined();
-  await engine.bins.open(original);engine.setActiveLayer(root);
-  engine.addShapeLayer({kind:'rect',x:50,y:50,width:10,height:10,color:'#00f',strokeWidth:1,paintMode:'fill-inside'});
-  await engine.bins.returnToPage();await engine.readyToRender();
-  const children=layerChildren(engine.layerById(root)!);
-  expect(children).toHaveLength(2);
-  const newId=children.find(id=>id!==first)!;
-  expect(engine.getShape(newId)?.color).toBe('#00f');
-  await engine.bins.open(variant);await engine.bins.returnToPage();await engine.readyToRender();
-  expect(layerChildren(engine.layerById(root)!)).toEqual(children);
-});
-
-it('preserves a bin source at deletion time and keeps the page history independent',async()=>{
-  await engine.newProject();const id=engine.getActiveLayerId();paintRaster(id,-10000,20000,2,2,'#00f');
-  await engine.bins.register(id);const bin=engine.bins.items[0];
-  const history=internalHistory().current.id;
-  await engine.bins.remove(bin.id);
-  expect(engine.bins.items).toHaveLength(0);
-  expect(engine.layerById(id)?.parameterLink).toBeUndefined();
-  const raster=engine.layerService.rasterById(id)!;
-  expect([...raster.runtime.surface.imageData({x:-10000,y:20000,w:1,h:1}).data]).toEqual([0,0,255,255]);
-  expect(internalHistory().current.id).toBe(history);
-  engine.scheduleSave();await engine.flushSavePublic();
-  const saved=(await loadActivePersisted()).page!;
-  await engine.restoreSavedPagePublic(saved);engine.links.reconcileAll();await engine.readyToRender();
-  expect([...engine.layerService.rasterById(id)!.runtime.surface.imageData({x:-10000,y:20000,w:1,h:1}).data]).toEqual([0,0,255,255]);
-});
-
-describe('bounded layer workloads',()=>{
-  it('keeps distant signed strokes sparse through archive and a region query',async()=>{
-    await engine.newProject();const id=engine.getActiveLayerId(),raster=engine.layerService.rasterById(id)!;
-    const start=performance.now();
-    paintRaster(id,-1e9,1e9,2,2,'#f00');paintRaster(id,1e9,-1e9,2,2,'#00f');
-    const content=await raster.runtime.surface.encode();
-    expect(raster.runtime.surface.tileCount).toBe(2);expect(content.size).toBeLessThan(4096);
-    const bounds=raster.runtime.surface.bounds()!;expect(bounds.w).toBeGreaterThan(1e9);
-    expect([...raster.runtime.surface.imageData({x:-1e9,y:1e9,w:1,h:1}).data]).toEqual([255,0,0,255]);
-    console.info(`遠隔描画: ${Math.round(performance.now()-start)}ms / ${raster.runtime.surface.tileCount} tiles / ${content.size} bytes`);
-  });
-  it('shares actual tile resources across twenty page occurrences',async()=>{
-    await engine.newProject();const id=engine.getActiveLayerId();paintRaster(id,10,10,16,16,'#f00');
-    await engine.bins.register(id);const bin=engine.bins.items[0],start=performance.now();
-    for(let index=0;index<20;index++)await engine.bins.addToPage(bin.id);
-    await engine.readyToRender();
-    const rasters=engine.allLayers().filter(layer=>layer.type==='raster');
-    const tiles=new Set(rasters.flatMap(layer=>[...layer.runtime.surface.snapshot().tiles.values()]));
-    expect(rasters).toHaveLength(21);expect(tiles.size).toBe(1);
-    console.info(`共有素材21配置: ${Math.round(performance.now()-start)}ms / ${tiles.size} unique tile`);
-  });
-  it('bounds intermediate allocations for nested canvases and effects',async()=>{
-    await engine.newProject();await engine.resizePage({...engine.getPageSpec(),widthMm:768,heightMm:768,ppi:25.4});
-    engine.addCanvasLayer();const outer=engine.getActiveLayerId();engine.addCanvasLayer();engine.addCanvasLayer();
-    engine.addShapeLayer({kind:'rect',x:250,y:250,width:40,height:40,color:'#f00',strokeWidth:1,paintMode:'fill-inside'});
-    engine.addOutlineLayer();const outline=engine.layerById(engine.getActiveLayerId())!;
-    if(outline.type==='outline')outline.state.outline.widthMm=2;
-    engine.setActiveLayer(outer);await engine.canvases.flush();
-    const borrow=vi.spyOn(engine.compositor,'borrowCanvas'),start=performance.now();
-    try {
-      const main=document.createElement('canvas'),overlay=document.createElement('canvas');main.width=main.height=overlay.width=overlay.height=768;
-      engine.compositor.attachCanvases(main,overlay);engine.requestRender();engine.ensureComposited();
-      expect(borrow.mock.calls.every(([width,height])=>(width??768)<=512&&(height??768)<=512)).toBe(true);
-      console.info(`入れ子キャンバスと効果: ${Math.round(performance.now()-start)}ms / intermediate side ≤512px`);
-    } finally {borrow.mockRestore();engine.compositor.detachCanvases();}
   });
 });

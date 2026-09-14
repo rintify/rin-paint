@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { canReparent, closestRasterOrRoot, flattenRenderOrder, structuralLowerId, validateLayerTree, type TreeLayerLike } from './layerTree';
 
 const layers: TreeLayerLike[] = [
-  { id: 'a', type: 'canvas', childIds: ['b', 'c'] },
-  { id: 'b', type: 'canvas', childIds: ['d'] },
-  { id: 'c', type: 'shape', childIds: [] },
-  { id: 'd', type: 'shape', childIds: [] },
-  { id: 'e', type: 'raster', childIds: [] },
+  { id: 'a', type: 'canvas', parentId: null, childIds: ['b', 'c'] },
+  { id: 'b', type: 'canvas', parentId: 'a', childIds: ['d'] },
+  { id: 'c', type: 'shape', parentId: 'a', childIds: [] },
+  { id: 'd', type: 'shape', parentId: 'b', childIds: [] },
+  { id: 'e', type: 'raster', parentId: null, childIds: [] },
 ];
 
 describe('layer tree', () => {
@@ -22,7 +22,7 @@ describe('layer tree', () => {
 
   it('validates ownership and rejects cycles', () => {
     expect(validateLayerTree(['e', 'a'], layers)).toBe(true);
-    expect(validateLayerTree(['a'], [{ id: 'a', type: 'canvas', childIds: ['b'] }, { id: 'b', type: 'shape', childIds: ['a'] }])).toBe(false);
+    expect(validateLayerTree(['a'], [{ id: 'a', type: 'canvas', parentId: null, childIds: ['b'] }, { id: 'b', type: 'shape', parentId: 'a', childIds: ['a'] }])).toBe(false);
   });
 
   it('finds the selected canvas or current scope', () => {

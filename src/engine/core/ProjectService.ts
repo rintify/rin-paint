@@ -1,4 +1,3 @@
-import { rebuildScopeOwnership } from '../layer-types/scopes';
 import { useStore } from '../../state/store';
 import {
   DEFAULT_PAGE,
@@ -9,7 +8,7 @@ import {
 import { HistoryTree, type PageSnapshot } from '../history/historyTree';
 import { isPersistedHistory } from '../persistence/schema';
 import { PROJECT_VERSION } from '../persistence/version';
-import { restoreLayerFrom, savedLayerFrom } from '../layer-types/registry';
+import { restoreLayerFrom, savedLayerFrom, scaleLayer } from '../layer-types/registry';
 import {
   canvasToBlob,
   createRasterLayer,
@@ -49,16 +48,14 @@ export class ProjectService {
     const ls = eng.layerService;
     ls.layers = [];
     ls.rootLayerIds = [...page.rootLayerIds];
-    eng.stacks.restore(page.layerStacks??[]);
     this.pageSpec = { ...page.pageSpec };
     const pixels = pagePixels(this.pageSpec);
     eng.artboard.resize(pixels.width, pixels.height);
     eng.compositor.syncWorkCanvases();
     for (const sl of page.layers) {
-      const layer = await restoreLayerFrom(sl, { artboard: eng.artboard, ppi: eng.getPageSpec().ppi });
+      const layer = await restoreLayerFrom(sl, { artboard: eng.artboard });
       if (layer) ls.layers.push(layer);
     }
-    rebuildScopeOwnership(ls.layers);
     if (!validateLayerTree(ls.rootLayerIds, ls.layers)) throw new Error('invalid layer tree');
     ls.activeLayerId = page.activeLayerId;
     eng.history = new HistoryTree();
@@ -70,8 +67,6 @@ export class ProjectService {
     eng.compositor.textRenderer.clear();
     ls.fixActive();
     eng.compositor.syncTextRenders();
-    if(page.selection) useStore.getState().set({selectedLayerIds:page.selection.selectedLayerIds.filter(id=>!!ls.byId(id)),multiSelectMode:page.selection.multiSelectMode});
-    else useStore.getState().set({selectedLayerIds:[ls.activeLayerId],multiSelectMode:false});
     eng.links.noteSavedPage(page);
   }
 
@@ -83,7 +78,6 @@ export class ProjectService {
     let restoreFailed = false;
     try {
       const meta = await loadProjectMeta();
-      eng.links.restoreDeletedSources(meta?.deletedSources);
       persistedDataFound = !!meta;
       if (meta?.version === PROJECT_VERSION && meta.pageOrder.length) {
         const restoredPages = await Promise.all(meta.pageOrder.map(loadPage));
@@ -98,7 +92,6 @@ export class ProjectService {
             fonts: meta.fonts,
           });
           await this.restoreSavedPage(page);
-          await eng.bins.load();
           await Promise.all([
             saveProjectMeta(meta),
             ...(restoredPages as SavedPage[]).map(saved => savePage(saved)),
@@ -112,7 +105,7 @@ export class ProjectService {
     }
     if (persistedDataFound && ls.layers.length === 0) restoreFailed = true;
     if (ls.layers.length === 0) {
-      const l = createRasterLayer('レイヤー 1', eng.getPageSpec().ppi, undefined);
+      const l = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
       ls.layers.push(l);
       ls.rootLayerIds = [l.id];
       ls.activeLayerId = l.id;
@@ -121,12 +114,6 @@ export class ProjectService {
       pages.pageOrder = [pages.activePageId];
       setPersistencePageId(pages.activePageId);
     }
-    await eng.bins.load();
-    await eng.links.refreshCatalog();
-    eng.links.reconcileAll();
-    if (!restoreFailed) await eng.canvases.reconcile();
-    const activeBinId = (await loadProjectMeta().catch(() => undefined))?.activeBinId;
-    if (!restoreFailed && activeBinId) await eng.bins.open(activeBinId);
     ls.fixActive();
     eng.setLastViewState(eng.view.snapshot());
     eng.autosave.initialized = !restoreFailed;
@@ -149,9 +136,8 @@ export class ProjectService {
     const ls = eng.layerService;
     return {
       spec: { ...this.pageSpec },
-      layers: ls.layers.map(l => ls.snapshotLayer(l, true)),
+      layers: ls.layers.map(l => ls.snapshotLayer(l, true, true)),
       roots: [...ls.rootLayerIds],
-      layerStacks: eng.stacks.snapshot(),
       activeId: ls.activeLayerId,
     };
   }
@@ -165,7 +151,6 @@ export class ProjectService {
     ls.layers = [];
     for (const layer of snapshot.layers) await ls.restoreLayer(layer);
     ls.rootLayerIds = [...snapshot.roots];
-    eng.stacks.restore(snapshot.layerStacks??[]);
     ls.activeLayerId = snapshot.activeId;
     eng.compositor.syncWorkCanvases();
     eng.compositor.textRenderer.clear();
@@ -188,18 +173,20 @@ export class ProjectService {
       const { width, height } = pagePixels(spec);
       const factor = spec.ppi / this.pageSpec.ppi;
       for (const layer of ls.layers) {
-        if (layer.type === 'raster') {
-          if (factor !== 1 && !eng.bins.activeId && !layer.parameterLink?.linkedContent && !eng.links.isRasterContentShared(layer.id)) {
-            layer.runtime.surface.resample(spec.ppi);
-          }
-        }
+        scaleLayer(layer, factor, { width, height });
         ls.bumpLayer(layer.id);
       }
       this.pageSpec = { ...spec };
       eng.artboard.resize(width, height);
       eng.compositor.syncWorkCanvases();
       const after = this.pageSnapshot();
-      eng.history.push({kind:'pageChange',before,after},'ページサイズ・解像度');
+      const node = eng.history.push({ kind: 'pageChange', before, after }, 'ページサイズ・解像度');
+      node.ready = Promise.all([...before.layers, ...after.layers].map(async snapshot => {
+        if (snapshot.canvas) {
+          try { snapshot.content = await canvasToBlob(snapshot.canvas); snapshot.canvas = undefined; }
+          catch { /* Keep the original canvas so undo remains lossless; persistence can retry. */ }
+        }
+      })).then(() => undefined);
       useStore.getState().set({ pageW: width, pageH: height, pageSpec: { ...spec } });
       eng.compositor.textRenderer.clear();
     } catch (error) {
@@ -226,7 +213,7 @@ export class ProjectService {
       await eng.recorderPublic().reset();
       if (eng.autosave.saveTimer !== null) { clearTimeout(eng.autosave.saveTimer); eng.autosave.saveTimer = null; }
       await eng.autosave.saving;
-      const layer = createRasterLayer('レイヤー 1', eng.getPageSpec().ppi, undefined);
+      const layer = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
       const history = new HistoryTree();
       const pageId = pages.newPageId();
       const meta: SavedProjectMeta = {
@@ -240,18 +227,15 @@ export class ProjectService {
         pageSpec: { ...this.pageSpec },
         rootLayerIds: [layer.id],
         activeLayerId: layer.id,
-        layers: [await savedLayerFrom(layer, { artboard: eng.artboard, ppi: eng.getPageSpec().ppi })],
-        history: await history.serialize(),
+        layers: [await savedLayerFrom(layer, { artboard: eng.artboard })],
+        history: await history.serialize(canvasToBlob),
         view: { x: 0, y: 0, scale: 1, rot: 0 },
         thumbnailVersion: 0,
       };
       await replaceProject(meta, [page]);
-      eng.links.restoreDeletedSources();
-      eng.bins.reset();
       pages.activePageId = pageId; pages.pageOrder = [pageId]; pages.thumbnailVersion = 0;
       await eng.links.refreshCatalog();
       setPersistencePageId(pageId);
-      eng.stacks.restore([]);
       ls.layers = [layer]; ls.rootLayerIds = [layer.id]; ls.activeLayerId = layer.id;
       ls.resetCountersFromLayers(); eng.history = history; ls.clearVersions();
       eng.compositor.textRenderer.clear();
@@ -304,7 +288,7 @@ export class ProjectService {
     if (!meta) throw new Error('プロジェクトを保存できませんでした');
     const pages = (await Promise.all(meta.pageOrder.map(loadPage))).filter((page): page is SavedPage => !!page);
     if (pages.length !== meta.pageOrder.length) throw new Error('一部のページを読み込めませんでした');
-    downloadBlob(await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages, bins: eng.bins.items }), `rin-paint-${new Date().toISOString().slice(0, 10)}.rinpaint`);
+    downloadBlob(await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages }), `rin-paint-${new Date().toISOString().slice(0, 10)}.rinpaint`);
   }
 
   async importProject(file: File): Promise<void> {
@@ -331,9 +315,7 @@ export class ProjectService {
         activePageId: proj.id,
         pageOrder: archive.pages.map(page => page.id),
       };
-      await replaceProject(meta, archive.pages, archive.bins ?? []);
-      eng.links.restoreDeletedSources(archive.meta.deletedSources);
-      eng.bins.reset(); await eng.bins.load();
+      await replaceProject(meta, archive.pages);
       pages.pageOrder = [...meta.pageOrder]; pages.activePageId = meta.activePageId; setPersistencePageId(pages.activePageId);
       await eng.links.refreshCatalog();
       this.pageSpec = { ...proj.pageSpec };
@@ -348,19 +330,17 @@ export class ProjectService {
       for (const pl of proj.layers) {
         const index = (counters.get(pl.type) ?? 0) + 1;
         counters.set(pl.type, index);
-        const layer = await restoreLayerFrom(pl, { artboard: eng.artboard, ppi: eng.getPageSpec().ppi }, index);
+        const layer = await restoreLayerFrom(pl, { artboard: eng.artboard }, index);
         if (layer) layers.push(layer);
       }
       if (!layers.some((l) => l.type === 'raster')) {
-        const fallback = createRasterLayer('レイヤー 1', eng.getPageSpec().ppi, undefined);
+        const fallback = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
         layers.push(fallback);
         proj.rootLayerIds.push(fallback.id);
       }
-      rebuildScopeOwnership(layers);
       if (!validateLayerTree(proj.rootLayerIds, layers)) throw new Error('invalid layer tree');
       ls.layers = layers;
       ls.rootLayerIds = [...proj.rootLayerIds];
-      eng.stacks.restore(proj.layerStacks??[]);
       ls.activeLayerId = proj.activeLayerId ?? '';
       ls.resetCountersFromLayers();
       eng.history = new HistoryTree();
@@ -376,7 +356,6 @@ export class ProjectService {
       });
       ls.fixActive();
       eng.links.reconcileAll();
-      await eng.canvases.reconcile();
       eng.compositor.syncTextRenders();
     } catch (error) {
       await loadFonts(previousFonts);

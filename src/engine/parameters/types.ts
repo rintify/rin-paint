@@ -5,6 +5,7 @@ export type LayerParameterValue = ParameterValue;
 export type ParameterSurface = 'single' | 'multi' | 'link';
 
 export type UnitSpec =
+  | { kind: 'canvas-mm' }
   | { kind: 'mm' }
   | { kind: 'percent' }
   | { kind: 'degree' }

@@ -1,5 +1,3 @@
-import {ImageAsset} from '../image/ImageAsset';
-import { RasterSurface } from '../raster/RasterSurface';
 import type { LayerCommon, LayerType } from '../../model';
 import { isLayerType } from '../../model';
 import type { Layer } from '../layers';
@@ -19,14 +17,16 @@ import {
 } from './definition';
 import { imageLayerType } from './image';
 import { outlineLayerType } from './outline';
-import { rasterLayerType } from './raster';
+import { rasterLayerType, scaleRasterRuntime } from './raster';
 import { shapeLayerType } from './shape';
 import { textLayerType } from './text';
 import { canvasLayerType } from './canvas';
 import { transformLayerType } from './transform';
 import type {
   LayerContentEnv,
+  LayerScaleEnv,
   LayerSnapshotEnv,
+  LayerStoredScaleEnv,
 } from './types';
 
 export type { LayerProps, LayerRecord, LayerSnapshot };
@@ -80,16 +80,21 @@ export function buildLayerSnapshot(layer: Layer, env: LayerSnapshotEnv): LayerSn
     id: layer.id,
     type: layer.type,
     common: commonRecordFrom(layer),
-    ...(layer.type === 'canvas' ? {scope: {id: layer.id, children: layer.childIds.map(id => ({id, entityId: id}))}} : {}),
-    unit: 'mm',
     state: def.codec.encode(layer.state as never),
   };
   if (!env.withContent) return snapshot;
-  if (layer.type === 'raster') {
-    snapshot.raster = layer.runtime.surface.snapshot();
-    return snapshot;
+  if (layer.type === 'raster' || layer.type === 'image') {
+    const source = layer.runtime.canvas;
+    const copy = makeCanvas(source.width, source.height);
+    copy.getContext('2d')!.drawImage(source, 0, 0);
+    snapshot.canvas = copy;
+    if (env.keepCanvas) return snapshot;
+    void (async () => {
+      snapshot.content = await def.codec.encodeContent?.(layer as never);
+      snapshot.canvas = undefined;
+      env.onEncoded();
+    })();
   }
-  if (layer.type === 'image') snapshot.image=layer.runtime.asset;
   return snapshot;
 }
 
@@ -100,17 +105,12 @@ export async function restoreLayerFrom(
 ): Promise<Layer | null> {
   if (!isLayerType(source.type)) return null;
   const def = layerDefinition(source.type);
-  const decoded = source.referenceOnly ? def.state.initial() : def.codec.decode(source.state);
-  const state = decoded;
+  const state = def.codec.decode(source.state);
   if (!state && source.type !== 'raster' && source.type !== 'adjust' && source.type !== 'outline' && source.type !== 'clip') {
     return null;
   }
-  const content=source.content;
-  const runtime = source.type === 'image' && 'image' in source && source.image ? {asset:source.image}
-    : source.type === 'image' && source.referenceOnly ? {asset:new ImageAsset(makeCanvas(1,1))}
-    : source.type === 'raster' && 'raster' in source && source.raster
-    ? {surface: new RasterSurface(source.raster.intrinsicPpi, source.raster)}
-    : def.codec.decodeRuntime
+  const content = 'canvas' in source && source.canvas ? source.canvas : source.content;
+  const runtime = def.codec.decodeRuntime
     ? await def.codec.decodeRuntime(content, env)
     : undefined;
   if ((source.type === 'raster' || source.type === 'image') && !runtime) return null;
@@ -121,8 +121,8 @@ export async function restoreLayerFrom(
     opacity: source.common.opacity ?? 1,
     blend: source.common.blend ?? 'source-over',
     visible: source.common.visible ?? true,
-    ...(source.type === 'canvas' ? {childIds: source.scope?.children.map(child => child.id) ?? []} : {}),
-    linkRecovery: source.common.linkRecovery ? structuredClone(source.common.linkRecovery) : undefined,
+    parentId: source.common.parentId,
+    childIds: [...source.common.childIds],
     parameterLink: source.common.parameterLink ? structuredClone(source.common.parameterLink) : undefined,
     state: def.state.normalize((state ?? def.state.initial()) as never),
     runtime,
@@ -136,8 +136,6 @@ export async function savedLayerFrom(layer: Layer, _env: LayerContentEnv): Promi
     id: layer.id,
     type: layer.type,
     common: commonRecordFrom(layer),
-    ...(layer.type === 'canvas' ? {scope: {id: layer.id, children: layer.childIds.map(id => ({id, entityId: id}))}} : {}),
-    unit: 'mm',
     state: def.codec.encode(layer.state as never),
     content: await def.codec.encodeContent?.(layer as never),
   };
@@ -151,7 +149,33 @@ export function objectTransformProps(layer: Layer): LayerProps {
   return layerHandler(layer).capabilities.objectTransform ? layerTypeProps(layer) : {};
 }
 
+export function scaleLayer(layer: Layer, factor: number, env: LayerScaleEnv): void {
+  const def = layerHandler(layer);
+  layer.state = def.state.scale(layer.state as never, factor, env);
+  if (layer.type === 'raster') scaleRasterRuntime(layer, factor, env.width, env.height);
+}
 
+export async function scaleStoredLayer(source: LayerRecord | LayerSnapshot, env: LayerStoredScaleEnv): Promise<void> {
+  if (!isLayerType(source.type)) return;
+  const def = layerDefinition(source.type);
+  if (def.codec.scaleStored) source.state = def.codec.scaleStored(source.state, env);
+  if (source.type === 'raster' && (source.content || ('canvas' in source && source.canvas))) {
+    const content = 'canvas' in source && source.canvas ? source.canvas : source.content;
+    if (content instanceof Blob) {
+      const bitmap = await createImageBitmap(content);
+      const canvas = makeCanvas(env.artboard.w, env.artboard.h);
+      canvas.getContext('2d')!.drawImage(bitmap, 0, 0, bitmap.width * env.factor, bitmap.height * env.factor);
+      bitmap.close();
+      (source as LayerSnapshot).canvas = canvas;
+      source.content = undefined;
+    } else if (content instanceof HTMLCanvasElement) {
+      const canvas = makeCanvas(env.artboard.w, env.artboard.h);
+      canvas.getContext('2d')!.drawImage(content, 0, 0, content.width * env.factor, content.height * env.factor);
+      (source as LayerSnapshot).canvas = canvas;
+      source.content = undefined;
+    }
+  }
+}
 
 export function canMaskLayerType(type: LayerType): boolean {
   return layerDefinition(type).info.canMask;
@@ -210,10 +234,8 @@ export function applyRecordProps(record: LayerRecord, props: LayerProps): void {
 
 export function remapRecordIds(record: LayerRecord, mapId: (id: string) => string | undefined): void {
   record.id = mapId(record.id) ?? record.id;
-  if (record.scope) record.scope = {id: record.id, children: record.scope.children.flatMap(child => {
-    const id = mapId(child.id), entityId = mapId(child.entityId);
-    return id && entityId ? [{id, entityId}] : [];
-  })};
+  record.common.parentId = record.common.parentId ? mapId(record.common.parentId) ?? null : null;
+  record.common.childIds = record.common.childIds.map(id => mapId(id)).filter((id): id is string => !!id);
   if (isLayerType(record.type) && layerDefinition(record.type).state.remapReferences) {
     const current = layerDefinition(record.type).codec.decode(record.state)
       ?? layerDefinition(record.type).state.initial();

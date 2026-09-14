@@ -1,19 +1,13 @@
-import { drawProjectedProcedure } from '../geometry/drawProjectedProcedure';
-import { layoutMatrixPixels, layoutBounds, readLayoutTransform } from '../geometry/layoutTransform';
-import { inverse, multiply } from '../geometry/homography';
-import { rasterToScope } from '../core/RasterCoordinates';
-import { paintProjectedDrawing } from '../raster/paintProjectedDrawing';
 import { cloneImageParams, normalizeImageParams, type ImageParams, type ImageState, type ShapeParams } from '../../model';
-import { makeCanvas } from '../layers';
+import { canvasToBlob, makeCanvas } from '../layers';
 import { imageFrameShape, imageFromFrameShape } from '../image/frame';
-import {ImageAsset} from '../image/ImageAsset';
+import { drawPlacedImage } from '../image/render';
 import { shapeBounds } from '../shapes';
 import { buildCatalog } from '../parameters/catalog';
 import type { LayerDefinition } from './definition';
 
 function cloneState(state: ImageState): ImageState {
   return {
-    ...readLayoutTransform(state),
     placement: cloneImageParams(state.placement),
     snapEnabled: state.snapEnabled,
     constrainAspect: state.constrainAspect,
@@ -22,18 +16,20 @@ function cloneState(state: ImageState): ImageState {
 
 function asImageState(value: unknown): ImageState | null {
   if (!value || typeof value !== 'object') return null;
-  const record = value as { placement?: ImageParams; snapEnabled?: unknown; constrainAspect?: unknown };
-  const placement = record.placement;
+  const record = value as { placement?: ImageParams; image?: ImageParams; snapEnabled?: unknown; constrainAspect?: unknown };
+  const placement = record.placement ?? record.image;
   if (!placement || typeof placement !== 'object') return null;
   return {
-    ...readLayoutTransform(value),
     placement: normalizeImageParams(cloneImageParams(placement)),
     snapEnabled: record.snapEnabled !== false,
     constrainAspect: record.constrainAspect !== false,
   };
 }
 
-async function canvasFromSource(source: Blob | undefined): Promise<HTMLCanvasElement | null> {
+async function canvasFromSource(source: HTMLCanvasElement | Blob | undefined): Promise<HTMLCanvasElement | null> {
+  if (source && typeof source === 'object' && 'getContext' in source && typeof (source as HTMLCanvasElement).getContext === 'function') {
+    return source as HTMLCanvasElement;
+  }
   if (!source) return null;
   const bitmap = await createImageBitmap(source);
   const copy = makeCanvas(bitmap.width, bitmap.height);
@@ -66,7 +62,6 @@ export const imageLayerType: LayerDefinition<'image'> = {
     initial: () => ({ placement: { x: 0, y: 0, width: 1, height: 1, rotation: 0 }, snapEnabled: true, constrainAspect: true }),
     clone: cloneState,
     normalize: state => ({
-      ...readLayoutTransform(state),
       placement: normalizeImageParams(cloneImageParams(state.placement)),
       snapEnabled: state.snapEnabled !== false,
       constrainAspect: state.constrainAspect !== false,
@@ -81,32 +76,34 @@ export const imageLayerType: LayerDefinition<'image'> = {
   codec: {
     encode: cloneState,
     decode: asImageState,
-    encodeContent: layer => layer.runtime.asset.encode(),
+    encodeContent: layer => canvasToBlob(layer.runtime.canvas),
     async decodeRuntime(content) {
       const canvas = await canvasFromSource(content);
       if (!canvas) return null;
-      return {asset:new ImageAsset(canvas,content instanceof Blob ? content : undefined)};
+      return { canvas, ctx: canvas.getContext('2d', { willReadFrequently: true })! };
     },
-
+    scaleStored(state, env) {
+      const decoded = asImageState(state);
+      return decoded ? { ...decoded, placement: scalePlacement(decoded.placement, env.factor) } : state;
+    },
   },
   renderer: {
-    draw(ctx, layer, env) {
+    draw(ctx, layer) {
       ctx.globalAlpha = layer.opacity;
       ctx.globalCompositeOperation = layer.blend;
-      const placement = scalePlacement(layer.state.placement, env.ppi / 25.4);
-      drawProjectedProcedure(ctx, shapeBounds(imageFrameShape(placement)), layoutMatrixPixels(layer.state, env.ppi), source => layer.runtime.asset.draw(source, placement));
+      drawPlacedImage(ctx, layer.runtime.canvas, layer.state.placement);
     },
-    drawMask(ctx, layer, env) {
-      const placement = scalePlacement(layer.state.placement, env.ppi / 25.4);
-      drawProjectedProcedure(ctx, shapeBounds(imageFrameShape(placement)), layoutMatrixPixels(layer.state, env.ppi), source => layer.runtime.asset.draw(source, placement));
+    drawMask(ctx, layer) {
+      drawPlacedImage(ctx, layer.runtime.canvas, layer.state.placement);
     },
-    bakeOnto(target, layer, env) {
-      const matrix = inverse(rasterToScope(target, env.ppi)); if (!matrix) return;
-      const placement = scalePlacement(layer.state.placement, env.ppi / 25.4);
-      const bounds = shapeBounds(imageFrameShape(placement));
-      paintProjectedDrawing(target.runtime.surface, [bounds], multiply(matrix, layoutMatrixPixels(layer.state, env.ppi)), ctx => layer.runtime.asset.draw(ctx, placement), layer.opacity, layer.blend);
+    bakeOnto(target, layer) {
+      target.runtime.ctx.save();
+      target.runtime.ctx.globalAlpha = layer.opacity;
+      target.runtime.ctx.globalCompositeOperation = layer.blend;
+      drawPlacedImage(target.runtime.ctx, layer.runtime.canvas, layer.state.placement);
+      target.runtime.ctx.restore();
     },
-    contentCanvas: layer => layer.runtime.asset.thumbnail(),
+    contentCanvas: layer => layer.runtime.canvas,
   },
   parameters: buildCatalog(
     [
@@ -129,19 +126,19 @@ export const imageLayerType: LayerDefinition<'image'> = {
       },
       {
         id: 'image.x', semanticId: 'frame.leftMm', groupId: 'frame', label: 'X',
-        editor: { kind: 'number', unit: { kind: 'mm' } }, surfaces: SURFACES,
+        editor: { kind: 'number', unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
         read: state => state.placement.x,
         write: (state, value) => ({ ...cloneState(state), placement: { ...state.placement, x: Number(value) } }),
       },
       {
         id: 'image.y', semanticId: 'frame.topMm', groupId: 'frame', label: 'Y',
-        editor: { kind: 'number', unit: { kind: 'mm' } }, surfaces: SURFACES,
+        editor: { kind: 'number', unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
         read: state => state.placement.y,
         write: (state, value) => ({ ...cloneState(state), placement: { ...state.placement, y: Number(value) } }),
       },
       {
         id: 'image.width', semanticId: 'frame.widthMm', groupId: 'frame', label: '幅',
-        editor: { kind: 'number', min: 0.1, unit: { kind: 'mm' } }, surfaces: SURFACES,
+        editor: { kind: 'number', min: 0.1, unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
         read: state => state.placement.width,
         write: (state, value) => {
           const width = Math.max(0.1, Number(value));
@@ -152,7 +149,7 @@ export const imageLayerType: LayerDefinition<'image'> = {
       },
       {
         id: 'image.height', semanticId: 'frame.heightMm', groupId: 'frame', label: '高さ',
-        editor: { kind: 'number', min: 0.1, unit: { kind: 'mm' } }, surfaces: SURFACES,
+        editor: { kind: 'number', min: 0.1, unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
         read: state => state.placement.height,
         write: (state, value) => {
           const height = Math.max(0.1, Number(value));
@@ -171,7 +168,7 @@ export const imageLayerType: LayerDefinition<'image'> = {
   ),
   capabilities: {
     objectTransform: {
-      bounds: (layer, env) => layoutBounds(layer.state, shapeBounds(imageFrameShape(scalePlacement(layer.state.placement, env.ppi / 25.4))), env.ppi),
+      bounds: layer => shapeBounds(imageFrameShape(layer.state.placement)),
       apply(layer, context) {
         const image = context.before.placement;
         const { transform, scale, angle } = context;
@@ -198,7 +195,7 @@ export const imageLayerType: LayerDefinition<'image'> = {
       drawOpacity: layer => layer.opacity,
     },
     transferToRaster: {
-      canTransfer: () => true,
+      canTransfer: layer => layer.childIds.length === 0 && !!layer.parentId,
     },
   },
 };

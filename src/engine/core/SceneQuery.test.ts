@@ -3,11 +3,11 @@ import { SceneQuery, type ScopedLayer } from './SceneQuery';
 
 describe('scene reference scope', () => {
   const layers: ScopedLayer[] = [
-    {id:'canvas',type:'canvas',childIds:['inner'],visible:true},
-    {id:'inner',type:'raster',childIds:[],visible:true},
-    {id:'mask',type:'raster',childIds:[],visible:false},
-    {id:'effect',type:'adjust',childIds:[],visible:true},
-    {id:'later',type:'raster',childIds:[],visible:true},
+    {id:'canvas',type:'canvas',parentId:null,childIds:['inner'],visible:true},
+    {id:'inner',type:'raster',parentId:'canvas',childIds:[],visible:true},
+    {id:'mask',type:'raster',parentId:null,childIds:[],visible:false},
+    {id:'effect',type:'adjust',parentId:null,childIds:[],visible:true},
+    {id:'later',type:'raster',parentId:null,childIds:[],visible:true},
   ];
   it('exposes a canvas as one object and distinguishes invalid reference reasons', () => {
     const query = new SceneQuery(['canvas','mask','effect','later'],layers);

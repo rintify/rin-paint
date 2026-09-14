@@ -1,11 +1,6 @@
-import {ImageAsset} from '../image/ImageAsset';
 /// <reference types="node" />
 // @vitest-environment happy-dom
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import {RasterSurface} from '../raster/RasterSurface';
-// This file checks record semantics; real image pixels are covered by projectLifecycle.
-beforeAll(()=>vi.spyOn(RasterSurface.prototype,'paint').mockImplementation(()=>{}));
-afterAll(()=>vi.restoreAllMocks());
+import { describe, expect, it } from 'vitest';
 import { createImageLayer } from '../layers';
 import { restoreLayerFrom, savedLayerFrom, buildLayerSnapshot } from './registry';
 
@@ -19,9 +14,8 @@ function sampleCanvas(width = 8, height = 4): HTMLCanvasElement {
 }
 
 describe('image layer persistence', () => {
-  const env = { artboard: { w: 100, h: 80 }, withContent: false };
+  const env = { artboard: { w: 100, h: 80 }, withContent: false, keepCanvas: false, onEncoded() {} };
   const frame = { x: 2, y: 3, width: 16, height: 8, rotation: 0.2 };
-
   const common = {
     name: '画像',
     opacity: 1,
@@ -35,7 +29,7 @@ describe('image layer persistence', () => {
     const layer = createImageLayer('画像', sampleCanvas(), frame, 'img', false);
     const snapshot = buildLayerSnapshot(layer, env);
     expect(snapshot.state).toMatchObject({ placement: frame, snapEnabled: false });
-    const restored = await restoreLayerFrom({ ...snapshot, image: new ImageAsset(sampleCanvas()) }, env);
+    const restored = await restoreLayerFrom({ ...snapshot, canvas: sampleCanvas() }, env);
     expect(restored && restored.type === 'image' && restored.state.snapEnabled).toBe(false);
     if (!restored || restored.type !== 'image') return;
     expect(restored.state.placement).toEqual(frame);
@@ -47,18 +41,17 @@ describe('image layer persistence', () => {
     const off = createImageLayer('画像', sampleCanvas(), frame, 'img', true, false);
     const snapshot = buildLayerSnapshot(off, env);
     expect(snapshot.state).toMatchObject({ constrainAspect: false });
-    const restored = await restoreLayerFrom({ ...snapshot, image: new ImageAsset(sampleCanvas()) }, env);
+    const restored = await restoreLayerFrom({ ...snapshot, canvas: sampleCanvas() }, env);
     expect(restored && restored.type === 'image' && restored.state.constrainAspect).toBe(false);
   });
 
   it('restores missing constrainAspect as true', async () => {
     const restored = await restoreLayerFrom({
-      id: 'defaults',
-      unit: 'mm',
+      id: 'old',
       type: 'image',
       common,
       state: { placement: frame },
-      image: new ImageAsset(sampleCanvas()),
+      canvas: sampleCanvas(),
     }, { artboard: { w: 100, h: 80 } });
     expect(restored && restored.type === 'image' && restored.state.snapEnabled).toBe(true);
     expect(restored && restored.type === 'image' && restored.state.constrainAspect).toBe(true);

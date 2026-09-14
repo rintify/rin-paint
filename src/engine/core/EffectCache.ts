@@ -1,4 +1,3 @@
-import {hasPendingWarp} from '../geometry/asyncWarp';
 import type { EffectCacheStore } from '../layer-types/types';
 
 interface Entry { value: unknown; bytes: number; dispose?: () => void }
@@ -10,7 +9,7 @@ export class EffectCache implements EffectCacheStore {
   hits = 0;
   misses = 0;
 
-  constructor(private readonly limitBytes = 24 * 1024 * 1024) {}
+  constructor(private readonly limitBytes = 96 * 1024 * 1024) {}
 
   get<T>(key: string): T | undefined {
     const entry = this.entries.get(key);
@@ -22,17 +21,15 @@ export class EffectCache implements EffectCacheStore {
   }
 
   set<T>(key: string, value: T, bytes: number, dispose?: () => void): void {
-    if (hasPendingWarp()) return;
     const previous = this.entries.get(key);
     if (previous) {
       this.bytes -= previous.bytes;
       previous.dispose?.();
       this.entries.delete(key);
     }
-    if (bytes > this.limitBytes) return;
     this.entries.set(key, { value, bytes: Math.max(0, bytes), dispose });
     this.bytes += Math.max(0, bytes);
-    while (this.bytes > this.limitBytes && this.entries.size > 0) {
+    while (this.bytes > this.limitBytes && this.entries.size > 1) {
       const oldest = this.entries.entries().next().value as [string, Entry] | undefined;
       if (!oldest) break;
       this.entries.delete(oldest[0]);

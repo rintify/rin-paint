@@ -1,4 +1,3 @@
-import { scopeOwner } from '../layerTree';
 // @vitest-environment happy-dom
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createCanvas, type Canvas } from '@napi-rs/canvas';
@@ -45,9 +44,9 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 
-function raster(id: string, paint: (ctx: CanvasRenderingContext2D) => void, size = 16, ppi = 25.4): RasterLayer {
-  const layer = createRasterLayer(id, ppi, id);
-  layer.runtime.surface.paint({x: 0, y: 0, w: size, h: size}, paint);
+function raster(id: string, paint: (ctx: CanvasRenderingContext2D) => void, size = 16): RasterLayer {
+  const layer = createRasterLayer(id, size, size, id);
+  paint(layer.runtime.ctx);
   return layer;
 }
 
@@ -61,7 +60,7 @@ function createRenderer(layers: Layer[], roots: string[], ppi = 25.4, size = 16)
   const engine = {
     artboard: { w: size, h: size },
     allLayers: () => layers,
-    getActiveLayerId: () => layers.find(layer => scopeOwner(layers, layer.id) === null)?.id ?? '',
+    getActiveLayerId: () => layers.find(layer => layer.parentId === null)?.id ?? '',
     layerById: (id: string) => byId.get(id) ?? null,
     getRootLayerIds: () => roots,
     getPageSpec: () => ({ widthMm: size, heightMm: size, ppi }),
@@ -80,7 +79,7 @@ function createRenderer(layers: Layer[], roots: string[], ppi = 25.4, size = 16)
   main.height = overlay.height = size;
   compositor.attachCanvases(main, overlay);
   compositor.composite();
-  return { main, overlay, compositor, revisions, engine };
+  return { main, overlay, compositor, revisions };
 }
 
 function rgba(canvas: HTMLCanvasElement, x: number, y: number): number[] {
@@ -119,7 +118,7 @@ describe('effect scopes', () => {
     const clip = createClipLayer('クリップ', 'clip');
     clip.state.maskLayerIds = [mask.id];
     const later = raster('later', ctx => { ctx.fillStyle = '#00ff00'; ctx.fillRect(10, 0, 1, 1); });
-
+    for (const child of [content,mask,clip,later]) child.parentId = parent.id;
     parent.childIds = [content.id,mask.id,clip.id,later.id];
     const result = render([lower,parent,content,mask,clip,later],[lower.id,parent.id]);
     expect(rgba(result, 2, 2)).toEqual([255, 0, 0, 255]);
@@ -135,7 +134,7 @@ describe('effect scopes', () => {
     const adjust = createAdjustLayer('adjust','adjust');
     adjust.state.params.brightness = 0;
     adjust.state.maskLayerIds = [mask.id];
-
+    content.parentId = adjust.parentId = canvas.id;
     canvas.childIds = [content.id,adjust.id];
     expect(rgba(render([mask,canvas,content,adjust],[mask.id,canvas.id]),4,4)).toEqual([255,0,0,255]);
   });
@@ -145,7 +144,7 @@ describe('effect scopes', () => {
     canvas.opacity = .5;
     const a = raster('a',ctx => {ctx.fillStyle='#f00';ctx.fillRect(0,0,16,16);});
     const b = raster('b',ctx => {ctx.fillStyle='#00f';ctx.fillRect(0,0,8,16);});
-
+    a.parentId = b.parentId = canvas.id;
     canvas.childIds = [a.id,b.id];
     expect(rgba(render([canvas,a,b],[canvas.id]),4,4)).toEqual([127,127,255,255]);
   });
@@ -157,41 +156,11 @@ describe('effect scopes', () => {
     expect(rgba(render([shape,transform],[shape.id,transform.id]),4,4)).toEqual([255,0,0,255]);
   });
 
-  it('uses transformed coverage for picking an off-page source brought into the page', () => {
-    const shape=createShapeLayer('shape',{kind:'rect',x:-20,y:0,width:8,height:8,color:'#f00',strokeWidth:0,paintMode:'fill-inside'},'shape');
-    const transform=createTransformLayer('transform','transform');
-    transform.state.matrix=[1,0,22,0,1,0,0,0,1];
-    const {compositor}=createRenderer([shape,transform],[shape.id,transform.id]);
-    const hit=compositor.renderLayerHitMask(shape.id,{x:3,y:3,w:10,h:2});
-    expect(rgba(hit.canvas,1,0)[3]).toBe(255);
-    expect(rgba(hit.canvas,9,0)[3]).toBe(0);
-    hit.release();
-  });
-
-  it('maps inner scope queries through outer transforms without including outer opacity', () => {
-    const canvas=createCanvasLayer('canvas','canvas');canvas.opacity=.25;
-    const shape=createShapeLayer('shape',{kind:'rect',x:-20,y:0,width:8,height:8,color:'#f00',strokeWidth:0,paintMode:'fill-inside'},'shape');
-
-    const transform=createTransformLayer('transform','transform');transform.state.matrix=[1,0,22,0,1,0,0,0,1];
-    canvas.childIds = [shape.id];
-    const {compositor,engine}=createRenderer([canvas,shape,transform],[canvas.id,transform.id]);
-    engine.getActiveLayerId=()=>shape.id;
-    expect([...compositor.samplePixel(4,4,null)]).toEqual([255,0,0,255]);
-    expect([...compositor.samplePixel(4,4,shape.id)]).toEqual([255,0,0,255]);
-    expect([...compositor.samplePixel(4,4,canvas.id)]).toEqual([0,0,0,0]);
-    expect([...compositor.samplePixel(14,4,null)]).toEqual([0,0,0,0]);
-    const hit=compositor.renderLayerHitMask(shape.id,{x:3,y:3,w:10,h:2});
-    expect(rgba(hit.canvas,1,0)[3]).toBe(255);
-    expect(rgba(hit.canvas,9,0)[3]).toBe(0);
-    hit.release();
-  });
-
   it('invalidates a canvas mask when a nested child changes visibility', () => {
     const source = raster('source',ctx => {ctx.fillStyle='#f00';ctx.fillRect(0,0,16,16);});
     const canvas = createCanvasLayer('canvas','canvas'); canvas.visible = false;
     const mask = raster('mask',ctx => {ctx.fillStyle='#000';ctx.fillRect(0,0,8,16);});
-
-    canvas.childIds = [mask.id];
+    mask.parentId = canvas.id; canvas.childIds = [mask.id];
     const clip = createClipLayer('clip','clip'); clip.state.maskLayerIds = [canvas.id];
     const {main,compositor} = createRenderer([source,canvas,mask,clip],[source.id,canvas.id,clip.id]);
     expect(rgba(main,4,4)).toEqual([255,0,0,255]);
@@ -262,7 +231,6 @@ describe('effect scopes', () => {
     outline.state.outline = { color: '#000000', widthMm: 1, alphaThreshold: .5 };
     const low = render([source, outline], [source.id, outline.id], 25.4);
     expect(rgba(low, 6, 8)).toEqual([255, 255, 255, 255]);
-    source.runtime.surface.restore({...source.runtime.surface.snapshot(), intrinsicPpi: 50.8});
     const high = render([source, outline], [source.id, outline.id], 50.8);
     expect(rgba(high, 6, 8)[0]).toBeLessThan(200);
   });
@@ -352,7 +320,7 @@ describe('effect scopes', () => {
       for (const vertex of vertices.slice(1)) ctx.lineTo(vertex.x, vertex.y);
       ctx.closePath();
       ctx.fill();
-    }, size, ppi);
+    }, size);
     const outline = createOutlineLayer('縁どり', 'outline');
     outline.state.outline = {
       color: '#000000', widthMm: outlineWidthMm, alphaThreshold: .5, cornerStyle: 'sharp',
@@ -390,7 +358,8 @@ describe('effect scopes', () => {
   it('recomposites only the invalidated pixels when no spatial effect expands them', () => {
     const source = raster('source', ctx => { ctx.fillStyle = '#ff0000'; ctx.fillRect(0, 0, 16, 16); });
     const { main, compositor, revisions } = createRenderer([source], [source.id]);
-    source.runtime.surface.paint({x: 0, y: 0, w: 256, h: 256}, ctx => {ctx.fillStyle = '#0000ff'; ctx.fillRect(3, 4, 1, 1);});
+    source.runtime.ctx.fillStyle = '#0000ff';
+    source.runtime.ctx.fillRect(3, 4, 1, 1);
     revisions.set(source.id, 1);
     compositor.invalidateLayer(source.id, { minX: 3, minY: 4, maxX: 4, maxY: 5 });
     compositor.ensureComposited();
@@ -406,7 +375,8 @@ describe('effect scopes', () => {
     const clip = createClipLayer('クリップ', 'clip');
     clip.state.maskLayerIds = [mask.id];
     const { main, compositor, revisions } = createRenderer([source, mask, clip], [source.id, mask.id, clip.id]);
-    source.runtime.surface.paint({x: 0, y: 0, w: 256, h: 256}, ctx => {ctx.fillStyle = '#00ff00'; ctx.fillRect(3, 4, 1, 1);});
+    source.runtime.ctx.fillStyle = '#00ff00';
+    source.runtime.ctx.fillRect(3, 4, 1, 1);
     revisions.set(source.id, 1);
     compositor.invalidateLayer(source.id, { minX: 3, minY: 4, maxX: 4, maxY: 5 });
     compositor.ensureComposited();
@@ -451,7 +421,8 @@ describe('effect scopes', () => {
     const source = raster('source', ctx => { ctx.fillStyle = '#fff'; ctx.fillRect(8, 8, 1, 1); });
     const outline = createOutlineLayer('縁どり', 'outline');
     const { main, compositor, revisions } = createRenderer([source, outline], [source.id, outline.id]);
-    source.runtime.surface.paint({x: 0, y: 0, w: 256, h: 256}, ctx => {ctx.fillStyle = '#fff'; ctx.fillRect(3, 3, 1, 1);});
+    source.runtime.ctx.fillStyle = '#fff';
+    source.runtime.ctx.fillRect(3, 3, 1, 1);
     revisions.set(source.id, 1);
     compositor.invalidateLayer(source.id, { minX: 3, minY: 3, maxX: 4, maxY: 4 });
     compositor.ensureComposited();
@@ -464,13 +435,14 @@ describe('effect scopes', () => {
     const parent = createCanvasLayer('parent','parent');
     const content = raster('content', ctx => { ctx.fillStyle = '#fff'; ctx.fillRect(12, 12, 1, 1); });
     const outline = createOutlineLayer('縁どり', 'outline');
-
+    content.parentId = outline.parentId = parent.id;
     parent.childIds = [content.id,outline.id];
     const { main, compositor, revisions } = createRenderer(
       [source, parent, content, outline],
       [source.id, parent.id],
     );
-    source.runtime.surface.paint({x: 0, y: 0, w: 256, h: 256}, ctx => {ctx.fillStyle = '#00f'; ctx.fillRect(3, 4, 1, 1);});
+    source.runtime.ctx.fillStyle = '#00f';
+    source.runtime.ctx.fillRect(3, 4, 1, 1);
     revisions.set(source.id, 1);
     compositor.invalidateLayer(source.id, { minX: 3, minY: 4, maxX: 4, maxY: 5 });
     compositor.ensureComposited();
@@ -534,23 +506,5 @@ describe('effect scopes', () => {
     } finally {
       vi.unstubAllGlobals();
     }
-  });
-});
-
-
-describe('spatial effect coordinate frame', () => {
-  it('evaluates an anisotropic outline in its local frame before projecting the result', () => {
-    const shape = createShapeLayer('shape', {kind: 'rect', x: 5, y: 5, width: 5, height: 5, color: '#ff0000', strokeWidth: 0, paintMode: 'fill-inside'}, 's');
-    shape.state.matrix = [2,0,0,0,1,0,0,0,1];
-    const outline = createOutlineLayer('outline', 'o');
-    outline.state.outline = {...outline.state.outline, widthMm: 2, color: '#0000ff'};
-    outline.state.matrix = [2,0,0,0,1,0,0,0,1];
-    const canvas = render([shape, outline], ['s','o'], 25.4, 32);
-    expect(rgba(canvas, 7, 7)[0]).toBeLessThan(128);
-    expect(rgba(canvas, 7, 7)[2]).toBe(255);
-    expect(rgba(canvas, 12, 3)[0]).toBeLessThan(128);
-    expect(rgba(canvas, 12, 3)[2]).toBe(255);
-    expect(rgba(canvas, 12, 1)).toEqual([255,255,255,255]);
-    expect(rgba(canvas, 12, 7)).toEqual([255,0,0,255]);
   });
 });

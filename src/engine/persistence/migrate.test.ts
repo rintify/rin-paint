@@ -13,12 +13,12 @@ const common = {
   childIds: [],
 };
 
-describe('v11 project load', () => {
-  it('accepts a valid v11 page and keeps history version 9', () => {
+describe('v10 project load', () => {
+  it('accepts a valid v10 page and keeps history version 8', () => {
     const page = migrateSavedPage({
       id: 'p', pageSpec: { widthMm: 10, heightMm: 10, ppi: 300 }, rootLayerIds: ['l'], activeLayerId: 'l',
       layers: [{
-        id: 'l', unit: 'mm', type: 'shape', common: { ...common },
+        id: 'l', type: 'shape', common: { ...common },
         state: { shape: line(), snapEnabled: true },
       }],
       history: {
@@ -29,7 +29,7 @@ describe('v11 project load', () => {
       },
       view: { x: 0, y: 0, scale: 1, rot: 0 }, thumbnailVersion: 0,
     });
-    expect(page.history.version).toBe(9);
+    expect(page.history.version).toBe(8);
     expect(page.layers[0].state).toMatchObject({ shape: { kind: 'line', strokeWidth: 5 } });
   });
 
@@ -46,11 +46,11 @@ describe('v11 project load', () => {
     const meta = migrateProjectMeta({
       version: PROJECT_VERSION, pageOrder: ['p'], activePageId: 'p', fonts: [],
     });
-    expect(meta.version).toBe(11);
+    expect(meta.version).toBe(10);
     const clipboard = migrateClipboard({
-      version: CLIPBOARD_VERSION, sourceDocument: { kind: 'page', id: 'p' }, sourcePageIndex: 0, sourcePpi: 300, rootIds: ['l'],
+      version: CLIPBOARD_VERSION, sourcePageId: 'p', sourcePageIndex: 0, sourcePpi: 300, rootIds: ['l'],
       layers: [{
-        id: 'l', unit: 'mm', type: 'shape', common: { ...common, name: '四角形' },
+        id: 'l', type: 'shape', common: { ...common, name: '四角形' },
         state: { shape: rect(), snapEnabled: true },
       }],
     });

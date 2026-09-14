@@ -4,11 +4,11 @@ import { formatRange, isEmptyText, newText, replaceText, resizeTextBox, setRuby,
 describe('rich text edits', () => {
   it('keeps partial formatting and ruby when inserting elsewhere', () => {
     let text = { ...newText(10, 20, '#123456'), content: '東京へ\n行こう' };
-    text = formatRange(text, 0, 2, { sizeMm: 24, fontId: 'serif' });
+    text = formatRange(text, 0, 2, { sizePt: 24, fontId: 'serif' });
     text = setRuby(text, 0, 2, 'とうきょう');
     const next = replaceText(text, '新東京へ\n行こう', text.style);
     expect(next.ruby).toEqual([{ start: 1, end: 3, text: 'とうきょう' }]);
-    expect(styleAt(next, 1)).toMatchObject({ sizeMm: 24, fontId: 'serif' });
+    expect(styleAt(next, 1)).toMatchObject({ sizePt: 24, fontId: 'serif' });
     expect(styleAt(next, 0)).toEqual(text.style);
   });
   it('removes only ruby whose base was changed', () => {
@@ -40,7 +40,7 @@ describe('rich text edits', () => {
   });
   it('applies tool defaults and treats whitespace-only content as empty', () => {
     const text = newText(4, 8, '#abcdef', 120, 80, { fontId: 'serif', sizePt: 26, direction: 'vertical', horizontalAlign: 'right', verticalAlign: 'bottom', lineHeight: 2 });
-    expect(text).toMatchObject({ style: { fontId: 'serif', sizeMm: 26 * 25.4 / 72, color: '#abcdef' }, direction: 'vertical', horizontalAlign: 'right', verticalAlign: 'bottom', lineHeight: 2 });
+    expect(text).toMatchObject({ style: { fontId: 'serif', sizePt: 26, color: '#abcdef' }, direction: 'vertical', horizontalAlign: 'right', verticalAlign: 'bottom', lineHeight: 2 });
     expect(isEmptyText({ ...text, content: ' \n\t　' })).toBe(true);
     expect(isEmptyText({ ...text, content: ' \n字' })).toBe(false);
   });

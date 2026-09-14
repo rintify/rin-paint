@@ -1,4 +1,3 @@
-import { RasterTileResource, alphaBounds } from './RasterTileResource';
 import type { PointMm, RectMm } from '../geometry/homography';
 
 export const RASTER_TILE_SIZE = 256;
@@ -33,7 +32,7 @@ export class SparseRaster {
   }
   static from(snapshot: SparseRasterSnapshot): SparseRaster {
     const raster = new SparseRaster(snapshot.intrinsicPpi, { ...snapshot.originMm });
-    raster.tiles = new Map([...snapshot.tiles].map(([key, tile]) => [key, RasterTileResource.from(tile)]));
+    raster.tiles = new Map(snapshot.tiles);
     return raster;
   }
   begin(): void {
@@ -66,31 +65,20 @@ export class SparseRaster {
     for (let i = 0; i < 4; i++) data[offset + i] = rgba[i] ?? 0;
   }
   /** Visits occupied tiles only, including for a request covering a vast empty coordinate range. */
-  tile(key: TileKey): RasterTile | undefined { return this.tiles.get(key); }
   *occupied(region?: RectMm): IterableIterator<{ key: TileKey; x: number; y: number; pixels: Uint8ClampedArray }> {
-    const count = this.tiles.size + (this.pending?.size ?? 0);
-    let keys: Iterable<TileKey>;
-    if (region) {
-      const x0 = Math.floor(region.x / RASTER_TILE_SIZE), y0 = Math.floor(region.y / RASTER_TILE_SIZE);
-      const x1 = Math.ceil((region.x + region.w) / RASTER_TILE_SIZE), y1 = Math.ceil((region.y + region.h) / RASTER_TILE_SIZE);
-      if ((x1 - x0) * (y1 - y0) <= count) {
-        keys = (function* () { for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) yield tileKey(x, y); })();
-      } else keys = new Set([...this.tiles.keys(), ...(this.pending?.keys() ?? [])]);
-    } else keys = this.pending ? new Set([...this.tiles.keys(), ...this.pending.keys()]) : this.tiles.keys();
+    const keys = new Set([...this.tiles.keys(), ...(this.pending?.keys() ?? [])]);
     for (const key of keys) {
       const [tx, ty] = tileCoordinates(key), x = tx * RASTER_TILE_SIZE, y = ty * RASTER_TILE_SIZE;
       if (region && (x >= region.x + region.w || y >= region.y + region.h || x + RASTER_TILE_SIZE <= region.x || y + RASTER_TILE_SIZE <= region.y)) continue;
-      const pixels = this.pending?.get(key)?.pixels ?? this.tiles.get(key)?.pixels;
-      if (pixels) yield {key, x, y, pixels};
+      yield { key, x, y, pixels: this.pending?.get(key)?.pixels ?? this.tiles.get(key)!.pixels };
     }
   }
   commit(): RasterTileChange[] {
     if (!this.pending) return [];
     const changes: RasterTileChange[] = [];
     for (const [key, { before, pixels }] of this.pending) {
-      const previous = before?.pixels;
-      if (previous && pixels.every((v, i) => v === previous[i])) continue;
-      const after = transparent(pixels) ? null : new RasterTileResource(crypto.randomUUID(), pixels);
+      if (before && pixels.every((v, i) => v === before.pixels[i])) continue;
+      const after = transparent(pixels) ? null : { id: crypto.randomUUID(), pixels };
       if (!before && !after) continue;
       if (after) this.tiles.set(key, after); else this.tiles.delete(key);
       changes.push({ key, before, after });
@@ -103,18 +91,17 @@ export class SparseRaster {
     if (this.pending) throw new Error('編集中に履歴を適用できません');
     for (const change of changes) {
       const tile = change[side];
-      if (tile) this.tiles.set(change.key, RasterTileResource.from(tile)); else this.tiles.delete(change.key);
+      if (tile) this.tiles.set(change.key, tile); else this.tiles.delete(change.key);
     }
   }
   contentBoundsPx(): RectMm | null {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    const keys=new Set([...this.tiles.keys(),...this.pending?.keys() ?? []]);
-    for (const key of keys) {
-      const pixels=this.pending?.get(key)?.pixels,tile=this.tiles.get(key);
-      const bounds=pixels?alphaBounds(pixels):tile?RasterTileResource.from(tile).boundsPx:null;
-      if(!bounds)continue;
-      const [tx,ty]=tileCoordinates(key),x=tx*256+bounds.x,y=ty*256+bounds.y;
-      x0=Math.min(x0,x);y0=Math.min(y0,y);x1=Math.max(x1,x+bounds.w);y1=Math.max(y1,y+bounds.h);
+    for (const tile of this.occupied()) {
+      for (let y = 0; y < RASTER_TILE_SIZE; y++) for (let x = 0; x < RASTER_TILE_SIZE; x++) {
+        if (!tile.pixels[(y * RASTER_TILE_SIZE + x) * 4 + 3]) continue;
+        x0 = Math.min(x0, tile.x + x); y0 = Math.min(y0, tile.y + y);
+        x1 = Math.max(x1, tile.x + x + 1); y1 = Math.max(y1, tile.y + y + 1);
+      }
     }
     return x0 === Infinity ? null : { x: x0, y: y0, w: x1-x0, h: y1-y0 };
   }

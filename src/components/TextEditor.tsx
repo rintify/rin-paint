@@ -1,9 +1,7 @@
-import { ScopeTransforms } from '../engine/core/ScopeTransforms';
-import { around, cssMatrix, inverse, multiply, project, rotation, scaling, translation, transformBounds, type Homography } from '../engine/geometry/homography';
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useEngine } from './EngineContext';
 import { populateText } from '../engine/text/render';
-import { replaceText, resizeTextBox, styleAt, type TextResizeCorner } from '../engine/text/model';
+import { replaceText, resizeTextBox, styleAt, textEditorFrameOrigin, type TextResizeCorner } from '../engine/text/model';
 import { editorSelection, plainEditorText, restoreEditorSelection, useTextSession } from '../engine/text/session';
 import { useStore } from '../state/store';
 import type { TextParams } from '../types';
@@ -18,7 +16,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   const viewScale = useStore(s => s.viewScale);
   const found = layers.find(l => l.id === activeId);
   const layer = found?.type === 'text' ? found : undefined;
-  const text = layer ? engine.getText(layer.id) : null;
+  const text = layer?.state.text;
   const editor = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
   const before = useRef<TextParams | null>(null);
@@ -40,8 +38,6 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
     before: TextParams;
     capture: HTMLElement;
     snapLines?: SnapLines;
-    geometry: Homography;
-    inverse: Homography;
   } | null>(null);
   const editing = editingId === activeId && !!text;
 
@@ -141,21 +137,17 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   const width = text.width ?? Math.max(30, measured.width || Number(canvas?.dataset.textWidth ?? 100));
   const height = text.height ?? Math.max(30, measured.height || Number(canvas?.dataset.textHeight ?? 60));
   const displayScale = Math.max(0.0001, fitScale * viewScale);
-  const geometry = new ScopeTransforms(engine.getRootLayerIds(), engine.allLayers(), ppi).geometryToPage(activeId);
-  const frameMatrix = multiply(scaling(fitScale), multiply(geometry,
-    multiply(translation(text.x, text.y), around(rotation(text.rotation ?? 0), {x: width / 2, y: height / 2}))));
+  const frameOrigin = textEditorFrameOrigin(text.x, text.y, width, height, fitScale);
   const begin = (event: ReactPointerEvent<HTMLDivElement>, mode: 'move' | 'resize' | 'rotate', corner?: TextResizeCorner) => {
     if (composing.current) return;
     if (event.button !== 0) return;
     commit();
     event.preventDefault(); event.stopPropagation();
-    const inv = inverse(geometry);
-    const point = inv && project(inv, engine.view.clientToArt(event.clientX, event.clientY));
-    if (!point || !inv) return;
+    const point = engine.view.clientToArt(event.clientX, event.clientY);
     const capture = event.currentTarget;
     drag.current = {
       pointerId: event.pointerId, mode, corner, x: point.x, y: point.y, width, height,
-      before: structuredClone(text), capture, geometry, inverse: inv,
+      before: structuredClone(text), capture,
       snapLines: mode === 'move' && layer.state.snapEnabled !== false
         ? collectSnapLines(engine.artboard, engine.visibleObjectBounds(activeId), layer.parentId === null)
         : undefined,
@@ -166,20 +158,16 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   const move = (event: ReactPointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || d.pointerId !== event.pointerId) return;
-    const p = project(d.inverse, engine.view.clientToArt(event.clientX, event.clientY));
-    if (!p) return;
+    const p = engine.view.clientToArt(event.clientX, event.clientY);
     const dx = p.x - d.x;
     const dy = p.y - d.y;
     let next: TextParams;
     if (d.mode === 'move') {
       if (d.snapLines) {
-        const moved = {x: d.before.x + dx, y: d.before.y + dy};
-        const bounds = transformBounds(d.geometry, rotatedRectBounds({...moved, w: d.width, h: d.height}, d.before.rotation ?? 0));
-        const anchor = project(d.geometry, moved);
-        const snapped = bounds && snapTranslation(bounds, 0, 0, d.snapLines, 8 * engine.uiScale());
-        const corrected = snapped && anchor && project(d.inverse, {x: anchor.x + snapped.dx, y: anchor.y + snapped.dy});
-        next = {...d.before, ...(corrected ?? moved)};
-        setSnapGuides({x: snapped?.xGuide ?? null, y: snapped?.yGuide ?? null});
+        const bounds = rotatedRectBounds({ x: d.before.x, y: d.before.y, w: d.width, h: d.height }, d.before.rotation ?? 0);
+        const snapped = snapTranslation(bounds, dx, dy, d.snapLines, 8 * engine.uiScale());
+        next = { ...d.before, x: d.before.x + snapped.dx, y: d.before.y + snapped.dy };
+        setSnapGuides({ x: snapped.xGuide, y: snapped.yGuide });
       } else next = { ...d.before, x: d.before.x + dx, y: d.before.y + dy };
     } else if (d.mode === 'rotate') {
       const angle = Math.atan2(p.y - (d.before.y + d.height / 2), p.x - (d.before.x + d.width / 2)) + Math.PI / 2;
@@ -207,13 +195,13 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
       data-canvas-ui
       className={`text-frame${editing ? ' editing' : ''}`}
       style={{
-        left: 0,
-        top: 0,
+        left: frameOrigin.left,
+        top: frameOrigin.top,
         width,
         height,
         opacity: layer.opacity,
-        transform: cssMatrix(frameMatrix),
-        transformOrigin: '0 0',
+        transform: `scale(${fitScale}) rotate(${text.rotation ?? 0}rad)`,
+        transformOrigin: 'center',
         '--text-handle-size': `${10 / displayScale}px`,
         '--text-hit-size': `${8 / displayScale}px`,
         '--text-outline-size': `${1.5 / displayScale}px`,

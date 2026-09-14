@@ -1,8 +1,3 @@
-import {withAsyncWarp, hasPendingWarp} from '../geometry/asyncWarp';
-import { rasterToScope } from './RasterCoordinates';
-import { RasterSurface } from '../raster/RasterSurface';
-import { layoutMatrixPixels } from '../geometry/layoutTransform';
-import { scopeOwner } from '../layerTree';
 import { layerHandler } from '../layer-types/registry';
 import type { CanvasLease, LayerDrawEnv, LayerMeasureEnv } from '../layer-types/types';
 import { makeCanvas, type Layer, type RasterLayer } from '../layers';
@@ -13,10 +8,8 @@ import { MaskRenderer } from './MaskRenderer';
 import { unionRect, type DirtyRect } from '../brush';
 import { EffectCache } from './EffectCache';
 import { SceneQuery } from './SceneQuery';
-import { ScopeTransforms } from './ScopeTransforms';
-import { inverse, multiply, scaling, transformBounds, IDENTITY, type Homography } from '../geometry/homography';
+import { inverse, multiply, scaling, transformBounds } from '../geometry/homography';
 import { warpCanvas } from '../geometry/warpCanvas';
-import { warpRegions } from '../geometry/warpRegions';
 
 interface RenderRect { x: number; y: number; w: number; h: number }
 
@@ -49,6 +42,21 @@ function asRenderRect(rect: DirtyRect): RenderRect {
   return { x: rect.minX, y: rect.minY, w: rect.maxX - rect.minX, h: rect.maxY - rect.minY };
 }
 
+function unionBounds(a: RenderRect | null, b: RenderRect | null): RenderRect | null {
+  if (!a) return b;
+  if (!b) return a;
+  const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+  const right = Math.max(a.x + a.w, b.x + b.w), bottom = Math.max(a.y + a.h, b.y + b.h);
+  return { x, y, w: right - x, h: bottom - y };
+}
+
+function intersectBounds(a: RenderRect | null, b: RenderRect): RenderRect | null {
+  if (!a) return null;
+  const x = Math.max(a.x, b.x), y = Math.max(a.y, b.y);
+  const right = Math.min(a.x + a.w, b.x + b.w), bottom = Math.min(a.y + a.h, b.y + b.h);
+  return right > x && bottom > y ? { x, y, w: right - x, h: bottom - y } : null;
+}
+
 function mixRevision(current: number, token: string | number): number {
   const value = String(token);
   let hash = current >>> 0;
@@ -65,13 +73,15 @@ export class Compositor {
   private overlayArea: HTMLElement | null = null;
 
   /** ストローク開始時のレイヤー内容 (履歴パッチの before 側) */
+  scratch = makeCanvas(1600, 1200);
+  scratchCtx = this.scratch.getContext('2d', { willReadFrequently: true })!;
   fillReference = makeCanvas(1600, 1200);
   fillReferenceCtx = this.fillReference.getContext('2d', { willReadFrequently: true })!;
   private readonly artCache = makeCanvas(1600, 1200);
   private artCacheCtx = this.artCache.getContext('2d')!;
 
   private readonly canvasPool = new CanvasPool();
-  private readonly readbackCanvasPool = new CanvasPool(true, 2, 2 * 1024 * 1024);
+  private readonly readbackCanvasPool = new CanvasPool(true, 2, 16 * 1024 * 1024);
   private readonly effectCache = new EffectCache();
   private readonly maskRenderer = new MaskRenderer(this.effectCache);
 
@@ -133,12 +143,12 @@ export class Compositor {
   }
 
   ensureComposited(): void {
-    if (this.dirty) withAsyncWarp(()=>this.requestRender(),()=>this.composite());
+    if (this.dirty) this.composite();
   }
 
   syncWorkCanvases(): void {
     const { w, h } = this.engine.artboard;
-    for (const c of [this.fillReference, this.artCache]) {
+    for (const c of [this.scratch, this.fillReference, this.artCache]) {
       if (c.width !== w || c.height !== h) {
         c.width = w;
         c.height = h;
@@ -256,17 +266,20 @@ export class Compositor {
   renderLayerHitMask(layerId: string, region?: RenderRect): CanvasLease {
     const { w, h } = this.engine.artboard;
     const bounds = region ?? { x: 0, y: 0, w, h };
-    const {art,contribution}=this.renderScopeInPage(bounds,scopeOwner(this.engine.allLayers(), layerId),layerId);
+    const hit: LayerHitCapture = { layerId, contribution: null, target: null };
+    const source = this.engine.layerById(layerId);
+    const roots = new SceneQuery(this.engine.getRootLayerIds(), this.engine.allLayers()).members(source?.parentId ?? null).map(layer => layer.id);
+    const art = this.renderArt(bounds, null, false, undefined, hit, roots);
     art.release();
-    return contribution ?? this.borrowCanvas(bounds.w,bounds.h);
+    return hit.contribution ?? this.borrowCanvas(bounds.w, bounds.h);
   }
 
   samplePixel(x: number, y: number, includedLayerId: string | null): Uint8ClampedArray {
-    const cx = this.engine.bins?.activeId ? Math.round(x) : Math.max(0, Math.min(this.engine.artboard.w - 1, Math.round(x)));
-    const cy = this.engine.bins?.activeId ? Math.round(y) : Math.max(0, Math.min(this.engine.artboard.h - 1, Math.round(y)));
-    if (includedLayerId === null && (this.engine.bins?.activeId || scopeOwner(this.engine.allLayers(), this.engine.getActiveLayerId()))) {
-      const scopeId = scopeOwner(this.engine.allLayers(), this.engine.getActiveLayerId());
-      const {art} = this.renderScopeInPage({ x: cx, y: cy, w: 1, h: 1 },scopeId);
+    const cx = Math.max(0, Math.min(this.engine.artboard.w - 1, Math.round(x)));
+    const cy = Math.max(0, Math.min(this.engine.artboard.h - 1, Math.round(y)));
+    if (includedLayerId === null && this.engine.layerById(this.engine.getActiveLayerId())?.parentId) {
+      const scopeId = this.engine.layerById(this.engine.getActiveLayerId())!.parentId;
+      const art = this.renderArt({ x: cx, y: cy, w: 1, h: 1 }, null, false, undefined, undefined, new SceneQuery(this.engine.getRootLayerIds(), this.engine.allLayers()).members(scopeId).map(layer => layer.id));
       const data = art.ctx.getImageData(0,0,1,1).data;
       art.release(); return data;
     }
@@ -274,17 +287,20 @@ export class Compositor {
       this.ensureComposited();
       return this.artCacheCtx.getImageData(cx, cy, 1, 1).data;
     }
-    const eng=this.engine;
-    const layer=eng.layerById(includedLayerId);
-    const query=new SceneQuery(eng.getRootLayerIds(),eng.allLayers());
-    if (!layer || query.scopeOf(layer.id) !== query.scopeOf(eng.getActiveLayerId())) return new Uint8ClampedArray(4);
-    const roots=query.members(query.scopeOf(layer.id)).map(item=>item.id);
-    const matrix=new ScopeTransforms(eng.getRootLayerIds(),eng.allLayers(),eng.getPageSpec().ppi).layerToPage(layer.id);
-    const effect=layerHandler(layer).renderer.effect;
-    const {art}=this.renderTransformed({x:cx,y:cy,w:1,h:1},roots,matrix,null,false,undefined,
-      input=>effect ? this.renderEffectContribution(layer.id,input)
-        : this.renderArt(input,new Set([layer.id]),false,undefined,undefined,roots));
-    const data=art.ctx.getImageData(0,0,1,1).data;
+    const layer = this.engine.layerById(includedLayerId);
+    const padding = layer
+      ? Math.max(0, layerHandler(layer).renderer.effect?.paddingPx?.(layer as never, this.drawEnv(false)) ?? 0)
+      : 0;
+    const region = {
+      x: Math.max(0, cx - padding),
+      y: Math.max(0, cy - padding),
+      w: Math.min(this.engine.artboard.w, cx + padding + 1) - Math.max(0, cx - padding),
+      h: Math.min(this.engine.artboard.h, cy + padding + 1) - Math.max(0, cy - padding),
+    };
+    const art = layer && layerHandler(layer).renderer.effect
+      ? this.renderEffectContribution(includedLayerId, region)
+      : this.renderArt(region, new Set([includedLayerId]), false, undefined, undefined, new SceneQuery(this.engine.getRootLayerIds(), this.engine.allLayers()).members(layer?.parentId ?? null).map(item => item.id));
+    const data = art.ctx.getImageData(cx - region.x, cy - region.y, 1, 1).data;
     art.release();
     return data;
   }
@@ -320,7 +336,7 @@ export class Compositor {
 
   private loop = (): void => {
     this.raf = 0;
-    if (this.dirty) withAsyncWarp(()=>this.requestRender(),()=>this.composite());
+    if (this.dirty) this.composite();
     if (this.overlayDirty || this.engine.overlayAnimated?.() || this.engine.activeTool().overlayAnimated?.()) {
       this.drawOverlayFrame();
       this.overlayDirty = false;
@@ -337,7 +353,6 @@ export class Compositor {
     this.syncWorkCanvases();
     if (this.fullDirty || !this.damageByLayer.size) this.compositeFull(ctx, true);
     else this.compositePartial(ctx, this.damageByLayer);
-    if (hasPendingWarp()) {this.dirty=true;this.fullDirty=true;return;}
     this.dirty = false;
     this.fullDirty = false;
     this.damageByLayer.clear();
@@ -349,51 +364,49 @@ export class Compositor {
     const query = new SceneQuery(this.engine.getRootLayerIds(), this.engine.allLayers());
     const scope = query.scopeOf(this.engine.getActiveLayerId());
     const roots = query.members(scope).map(layer => layer.id);
-    const allowed = new Set(roots.filter(id => ids.has(id) || this.engine.layerById(id)?.type === 'transform'));
-    const matrix = new ScopeTransforms(this.engine.getRootLayerIds(), this.engine.allLayers(), this.engine.getPageSpec().ppi).scopeToPage(scope);
-    const {art} = this.renderTransformed({x: 0, y: 0, w, h}, roots, matrix, allowed, false);
-    this.fillReferenceCtx.clearRect(0, 0, w, h);
-    this.fillReferenceCtx.drawImage(art.canvas, 0, 0);
+    const allowed = new Set(roots.filter(id => ids.has(id)));
+    const art = this.renderArt({ x: 0, y: 0, w, h }, allowed, false, undefined, undefined, roots);
+    this.present(this.fillReferenceCtx, art.canvas, { x: 0, y: 0, w, h }, true);
     art.release();
     return this.fillReference;
   }
 
-  private renderTransformed(
-    region: RenderRect, roots: string[], matrix: Homography, included: Set<string> | null,
-    drawToolOverlay: boolean, hitId?: string, renderInput?: (region:RenderRect)=>CanvasLease,
-  ): {art:CanvasLease; contribution:CanvasLease|null} {
-    const art=this.borrowCanvas(region.w,region.h);
-    const contribution=hitId ? this.borrowCanvas(region.w,region.h) : null;
-    for (const request of warpRegions(matrix,region)) {
-      const hit:LayerHitCapture|undefined=hitId ? {layerId:hitId,contribution:null,target:null} : undefined;
-      const input=renderInput ? renderInput(request.input) : this.renderArt(request.input,included,drawToolOverlay,undefined,hit,roots);
-      const output=this.borrowCanvas(request.output.w,request.output.h);
-      try {
-        warpCanvas(input.canvas,output.ctx,matrix,request.input,request.output,request.output.w,request.output.h);
-        const x=request.output.x-region.x,y=request.output.y-region.y;
-        art.ctx.drawImage(output.canvas,x,y);
-        if (hit?.contribution && contribution) {
-          output.ctx.clearRect(0,0,output.canvas.width,output.canvas.height);
-          warpCanvas(hit.contribution.canvas,output.ctx,matrix,request.input,request.output,request.output.w,request.output.h);
-          contribution.ctx.drawImage(output.canvas,x,y);
-        }
-      } finally {
-        hit?.contribution?.release();output.release();input.release();
-      }
+  private ownVisibleBounds(layer: Layer): RenderRect | null {
+    if (!layer.visible) return null;
+    if (layer.type === 'raster') {
+      const known = layer.runtime.contentBounds;
+      if (known === null) return null;
+      return known ?? { x: 0, y: 0, w: this.engine.artboard.w, h: this.engine.artboard.h };
     }
-    return {art,contribution};
+    const capability = layerHandler(layer).capabilities.objectTransform;
+    const bounds = capability?.bounds(layer as never, this.measureEnv());
+    return bounds ? { x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h } : null;
   }
 
-  private renderScopeInPage(region:RenderRect,scopeId:string|null,hitId?:string): {art:CanvasLease;contribution:CanvasLease|null} {
-    const engine=this.engine;
-    const roots=new SceneQuery(engine.getRootLayerIds(),engine.allLayers()).members(scopeId).map(layer=>layer.id);
-    if (scopeId !== null) {
-      const matrix=new ScopeTransforms(engine.getRootLayerIds(),engine.allLayers(),engine.getPageSpec().ppi).scopeToPage(scopeId);
-      return this.renderTransformed(region,roots,matrix,null,false,hitId);
+  private sequenceVisibleBounds(ids: string[], initial: RenderRect | null = null): RenderRect | null {
+    let current = initial;
+    const env = this.drawEnv(false);
+    for (const id of ids) {
+      const layer = this.engine.layerById(id);
+      if (!layer) continue;
+      const effect = layerHandler(layer).renderer.effect;
+      if (effect) {
+        if (layer.type === 'transform' && layer.visible && current) {
+          const px = this.engine.getPageSpec().ppi / 25.4;
+          const matrix = multiply(scaling(px), multiply(layer.state.matrix, scaling(1/px)));
+          current = transformBounds(matrix, current);
+        }
+        if (layer.visible && current) {
+          const padding = Math.max(0, effect.paddingPx?.(layer as never, env) ?? 0);
+          if (padding) current = { x: current.x - padding, y: current.y - padding, w: current.w + padding * 2, h: current.h + padding * 2 };
+        }
+      } else {
+        let subtree = this.ownVisibleBounds(layer);
+        if (layer.type === 'canvas' && layer.visible) subtree = this.sequenceVisibleBounds(layer.childIds);
+        current = unionBounds(current, subtree);
+      }
     }
-    const hit:LayerHitCapture|undefined=hitId ? {layerId:hitId,contribution:null,target:null} : undefined;
-    const art=this.renderArt(region,null,false,undefined,hit,roots);
-    return {art,contribution:hit?.contribution??null};
+    return current;
   }
 
   private renderArt(
@@ -500,14 +513,17 @@ export class Compositor {
           const inv = inverse(matrix);
           if (!inv) continue;
           const prefix = ids.slice(0,layerIndex);
-          const transformHit = !!hit?.contribution && hit.target === targetCanvas;
-          const transformed=this.renderTransformed(activeRegion,prefix,matrix,included,drawToolOverlay,transformHit ? hit!.layerId : undefined);
+          const sourceBounds = this.sequenceVisibleBounds(prefix);
+          const requested = transformBounds(inv, activeRegion);
+          const needed = sourceBounds && requested ? intersectBounds(sourceBounds, requested) : sourceBounds;
           resetTarget(target); target.clearRect(0,0,targetCanvas.width,targetCanvas.height);
-          target.drawImage(transformed.art.canvas,0,0);
-          transformed.art.release();
-          if (transformHit) {
-            hit!.contribution!.release();
-            hit!.contribution=transformed.contribution;
+          if (needed) {
+            const inputRegion = { x: Math.floor(needed.x), y: Math.floor(needed.y),
+              w: Math.max(1,Math.ceil(needed.x+needed.w)-Math.floor(needed.x)),
+              h: Math.max(1,Math.ceil(needed.y+needed.h)-Math.floor(needed.y)) };
+            const input = this.renderArt(inputRegion, included, drawToolOverlay, undefined, undefined, prefix);
+            warpCanvas(input.canvas,target,matrix,inputRegion,activeRegion,activeRegion.w,activeRegion.h);
+            input.release();
           }
           state.revision = mixRevision(state.revision, `${layer.id}:${eng.getRenderRevision?.(layer.id) ?? 0}`);
           continue;
@@ -519,40 +535,8 @@ export class Compositor {
             const capturingDifference = capturingEyedropper || capturingHitEffect;
             const before = capturingDifference ? this.borrowCanvas(region.w, region.h) : null;
             before?.ctx.drawImage(targetCanvas, 0, 0);
-            // A small halo bucket lets width edits reuse the same input distance-field cache.
-            const padding=Math.ceil(Math.max(0,handler.renderer.effect.paddingPx?.(layer,activeEnv)??0)/16)*16;
-            const frame = layer.type === 'outline' ? layoutMatrixPixels(layer.state, eng.getPageSpec().ppi) : null;
-            const framed = frame && frame.some((value, index) => Math.abs(value - (index % 4 === 0 ? 1 : 0)) > 1e-10);
-            if (frame && framed) {
-              const undoFrame = inverse(frame)!;
-              const prefix = ids.slice(0, layerIndex);
-              const transformed = this.renderTransformed(activeRegion, prefix, frame, included, drawToolOverlay, undefined, local => {
-                const expanded = {x: local.x-padding, y: local.y-padding, w: local.w+2*padding, h: local.h+2*padding};
-                const input = this.renderTransformed(expanded, prefix, undoFrame, included, drawToolOverlay).art;
-                const result = this.borrowCanvas(local.w, local.h);
-                try {
-                  const localEnv = this.drawEnv(drawToolOverlay, expanded.w, expanded.h, expanded.x, expanded.y);
-                  handler.renderer.effect!.apply(effectScope(input.canvas, mixRevision(state.revision, JSON.stringify(frame)), expanded), layer, localEnv);
-                  result.ctx.drawImage(input.canvas, -padding, -padding);
-                  return result;
-                } catch (error) {result.release(); throw error;} finally {input.release();}
-              });
-              resetTarget(target); target.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
-              target.drawImage(transformed.art.canvas, 0, 0); transformed.art.release();
-            } else if (padding) {
-              const expanded={x:activeRegion.x-padding,y:activeRegion.y-padding,w:activeRegion.w+padding*2,h:activeRegion.h+padding*2};
-              const input=this.renderArt(expanded,included,drawToolOverlay,undefined,undefined,ids.slice(0,layerIndex));
-              try {
-                const localEnv=this.drawEnv(drawToolOverlay,expanded.w,expanded.h,expanded.x,expanded.y);
-                const effectEnv={...localEnv,maskCanvas:(ids:string[])=>localEnv.maskCanvas(query.masks(layer.id,ids).valid)};
-                handler.renderer.effect.apply(effectScope(input.canvas,state.revision,expanded),layer,effectEnv);
-                resetTarget(target);target.clearRect(0,0,targetCanvas.width,targetCanvas.height);
-                target.drawImage(input.canvas,-padding,-padding);
-              } finally { input.release(); }
-            } else {
-              const effectEnv = { ...activeEnv, maskCanvas: (ids: string[]) => activeEnv.maskCanvas(query.masks(layer.id, ids).valid) };
-              handler.renderer.effect.apply(effectScope(targetCanvas, state.revision, activeRegion), layer, effectEnv);
-            }
+            const effectEnv = { ...activeEnv, maskCanvas: (ids: string[]) => activeEnv.maskCanvas(query.masks(layer.id, ids).valid) };
+            handler.renderer.effect.apply(effectScope(targetCanvas, state.revision, activeRegion), layer, effectEnv);
             resetTarget(target);
             state.revision = mixRevision(state.revision, `${layer.id}:${eng.getRenderRevision?.(layer.id) ?? 0}`);
             if (capturingDifference && before) {
@@ -611,7 +595,8 @@ export class Compositor {
 
   private renderEffectContribution(layerId: string, region: RenderRect): CanvasLease {
     const capture = { effectId: layerId, contribution: null as CanvasLease | null };
-    const roots = new SceneQuery(this.engine.getRootLayerIds(), this.engine.allLayers()).members(scopeOwner(this.engine.allLayers(), layerId)).map(item => item.id);
+    const layer = this.engine.layerById(layerId);
+    const roots = new SceneQuery(this.engine.getRootLayerIds(), this.engine.allLayers()).members(layer?.parentId ?? null).map(item => item.id);
     const art = this.renderArt(region, null, false, capture, undefined, roots);
     art.release();
     return capture.contribution ?? this.borrowCanvas(region.w, region.h);
@@ -620,21 +605,12 @@ export class Compositor {
   private compositeFull(ctx: CanvasRenderingContext2D, drawToolOverlay: boolean): void {
     const { w, h } = this.engine.artboard;
     const region = { x: 0, y: 0, w, h };
-    this.renderOutputTiles(region,drawToolOverlay);
-    if (!hasPendingWarp()) this.present(ctx,this.artCache,region,true);
-    this.lastCompositedPixels=w*h;
-  }
-
-  private renderOutputTiles(region:RenderRect,drawToolOverlay:boolean,padding=0):void {
-    for(let y=region.y;y<region.y+region.h;y+=256)for(let x=region.x;x<region.x+region.w;x+=256){
-      const width=Math.min(256,region.x+region.w-x),height=Math.min(256,region.y+region.h-y);
-      const art=this.renderArt({x:x-padding,y:y-padding,w:width+padding*2,h:height+padding*2},null,drawToolOverlay);
-      try {
-        if(hasPendingWarp())continue;
-        this.artCacheCtx.clearRect(x,y,width,height);
-        this.artCacheCtx.drawImage(art.canvas,padding,padding,width,height,x,y,width,height);
-      } finally {art.release();}
-    }
+    const art = this.renderArt(region, null, drawToolOverlay);
+    this.artCacheCtx.clearRect(0, 0, w, h);
+    this.artCacheCtx.drawImage(art.canvas, 0, 0);
+    this.present(ctx, this.artCache, region, true);
+    this.lastCompositedPixels = w * h;
+    art.release();
   }
 
   private effectPaddingByLayer(env: LayerDrawEnv): Map<string, number> {
@@ -674,9 +650,6 @@ export class Compositor {
   }
 
   private compositePartial(ctx: CanvasRenderingContext2D, damages: Map<string, DirtyRect>): void {
-    if (this.engine.allLayers().some(layer => layer.type === 'outline' && layer.state.matrix?.some((value, index) => Math.abs(value - (index % 4 === 0 ? 1 : 0)) > 1e-10))) {
-      this.compositeFull(ctx, true); return;
-    }
     const { w, h } = this.engine.artboard;
     const env = this.drawEnv(true);
     const paddingByLayer = this.effectPaddingByLayer(env);
@@ -692,9 +665,19 @@ export class Compositor {
     const evaluation = expandDirty(output, evaluationPadding, w, h);
     const outputRegion = asRenderRect(output);
     const evaluationRegion = asRenderRect(evaluation);
-    this.renderOutputTiles(outputRegion,true,evaluationPadding);
-    if(!hasPendingWarp())this.present(ctx,this.artCache,outputRegion,false);
-    this.lastCompositedPixels=evaluationRegion.w*evaluationRegion.h;
+    const art = this.renderArt(evaluationRegion, null, true);
+    const sx = outputRegion.x - evaluationRegion.x;
+    const sy = outputRegion.y - evaluationRegion.y;
+
+    this.artCacheCtx.clearRect(outputRegion.x, outputRegion.y, outputRegion.w, outputRegion.h);
+    this.artCacheCtx.drawImage(
+      art.canvas,
+      sx, sy, outputRegion.w, outputRegion.h,
+      outputRegion.x, outputRegion.y, outputRegion.w, outputRegion.h,
+    );
+    this.present(ctx, this.artCache, outputRegion, false);
+    this.lastCompositedPixels = evaluationRegion.w * evaluationRegion.h;
+    art.release();
   }
 
   private present(
@@ -712,7 +695,6 @@ export class Compositor {
     ctx.filter = 'none';
     if (clearAll) ctx.clearRect(0, 0, w, h);
     else ctx.clearRect(region.x, region.y, region.w, region.h);
-    if (this.engine.bins?.activeId) {ctx.restore(); return;}
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(region.x, region.y, region.w, region.h);
     ctx.drawImage(
@@ -766,17 +748,9 @@ export class Compositor {
       centerY - b * eng.artboard.w / 2 - d * eng.artboard.h / 2,
     );
     ctx.save();
-    if (eng.bins?.activeId) {
-      ctx.strokeStyle = '#9aa4b2'; ctx.lineWidth = 1 / (displayScale * dpr);
-      ctx.setLineDash([6 / displayScale, 4 / displayScale]);
-      ctx.strokeRect(0, 0, eng.artboard.w, eng.artboard.h); ctx.setLineDash([]);
-      const view = ctx.getTransform();
-      const matrix: Homography = [view.a, view.c, view.e, view.b, view.d, view.f, 0, 0, 1];
-      const result = this.renderTransformed({x: 0, y: 0, w: pixelWidth, h: pixelHeight}, eng.getRootLayerIds(), matrix, null, true);
-      ctx.save(); ctx.resetTransform(); ctx.drawImage(result.art.canvas, 0, 0); ctx.restore(); result.art.release();
-    } else {
-      ctx.beginPath(); ctx.rect(0, 0, eng.artboard.w, eng.artboard.h); ctx.clip();
-    }
+    ctx.beginPath();
+    ctx.rect(0, 0, eng.artboard.w, eng.artboard.h);
+    ctx.clip();
     this.paintToolOverlays(eng, ctx);
     eng.drawActiveShapeHandles(ctx);
     eng.drawLoupeIfAny(ctx);
@@ -788,14 +762,16 @@ export class Compositor {
     else eng.activeTool().drawOverlay?.(ctx);
   }
 
-  rasterBefore: import('../raster/SparseRaster').SparseRasterSnapshot | null = null;
   captureBefore(layer: RasterLayer): void {
-    this.rasterBefore = layer.runtime.surface.snapshot();
+    const { w, h } = this.engine.artboard;
+    this.scratchCtx.clearRect(0, 0, w, h);
+    this.scratchCtx.drawImage(layer.runtime.canvas, 0, 0);
   }
 
   restoreBefore(layer: RasterLayer, rect?: DirtyRect): void {
-    if (this.rasterBefore) layer.runtime.surface.restore(this.rasterBefore);
-    this.engine.links?.resolveLayer(layer);
+    const { w, h } = this.engine.artboard;
+    layer.runtime.ctx.clearRect(0, 0, w, h);
+    layer.runtime.ctx.drawImage(this.scratch, 0, 0);
     this.engine.bumpLayer(layer.id, rect);
   }
 
@@ -803,33 +779,14 @@ export class Compositor {
     const handler = layerHandler(source);
     const env = this.drawEnv(false);
     if (handler.renderer.effect) {
-      const placement = rasterToScope(target, env.ppi), undoPlacement = inverse(placement);
-      if (!undoPlacement) return;
-      const frame = source.type === 'outline' ? layoutMatrixPixels(source.state, env.ppi) : IDENTITY;
-      const undoFrame = inverse(frame); if (!undoFrame) return;
-      const padding = handler.renderer.effect.paddingPx?.(source as never, env) ?? 0;
-      const nativeToEffect = multiply(undoFrame, placement), effectToNative = multiply(undoPlacement, frame);
-      const destinations = new Set<string>();
-      for (const key of target.runtime.surface.snapshot().tiles.keys()) {
-        const [x, y] = key.split(',').map(Number);
-        const local = transformBounds(nativeToEffect, {x:x*256, y:y*256, w:256, h:256});
-        if (!local) continue;
-        const affected = transformBounds(effectToNative, {x:local.x-padding, y:local.y-padding, w:local.w+padding*2, h:local.h+padding*2});
-        if (!affected) continue;
-        for (let ty=Math.floor(affected.y/256); ty<Math.ceil((affected.y+affected.h)/256); ty++) {
-          for (let tx=Math.floor(affected.x/256); tx<Math.ceil((affected.x+affected.w)/256); tx++) destinations.add(`${tx},${ty}`);
-        }
-      }
-      const original = target.runtime.surface;
-      const result = new RasterSurface(original.intrinsicPpi, {...original.snapshot(), tiles:new Map()});
-      {
-        for (const key of destinations) {
-          const [x,y]=key.split(',').map(Number), region={x:x*256,y:y*256,w:256,h:256};
-          const rendered=this.renderTransformed(region,[target.id,source.id],undoPlacement,null,false).art;
-          try {result.paint(region, ctx=>ctx.drawImage(rendered.canvas,region.x,region.y));} finally {rendered.release();}
-        }
-      }
-      original.restore(result.snapshot());
+      const borrowed = this.borrowCanvas();
+      const scope = borrowed.ctx;
+      const { w, h } = this.engine.artboard;
+      if (target.visible) layerHandler(target).renderer.draw(scope, target, env);
+      handler.renderer.effect.apply({ canvas: borrowed.canvas, coverage: borrowed.canvas, x: 0, y: 0, width: w, height: h, inputRevision: 0 }, source, env);
+      target.runtime.ctx.clearRect(0, 0, w, h);
+      target.runtime.ctx.drawImage(scope.canvas, 0, 0);
+      borrowed.release();
       return;
     }
     handler.renderer.bakeOnto(target, source, env);

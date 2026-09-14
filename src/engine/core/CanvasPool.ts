@@ -9,7 +9,7 @@ export class CanvasPool {
   constructor(
     private readonly willReadFrequently = false,
     private readonly maxIdle = 4,
-    private readonly maxIdlePixels = 2 * 1024 * 1024,
+    private readonly maxIdlePixels = 32 * 1024 * 1024,
   ) {}
 
   acquire(width: number, height: number): CanvasLease {

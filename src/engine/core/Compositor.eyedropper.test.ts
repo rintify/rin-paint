@@ -1,4 +1,3 @@
-import { scopeOwner } from '../layerTree';
 // @vitest-environment happy-dom
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createCanvas, type Canvas } from '@napi-rs/canvas';
@@ -47,9 +46,9 @@ function compositorFor(layers: Layer[]): Compositor {
   const engine = {
     artboard: { w: 16, h: 16 },
     allLayers: () => layers,
-    getActiveLayerId: () => layers.find(layer => scopeOwner(layers, layer.id) === null)?.id ?? '',
+    getActiveLayerId: () => layers.find(layer => layer.parentId === null)?.id ?? '',
     layerById: (id: string) => byId.get(id) ?? null,
-    getRootLayerIds: () => layers.filter((layer) => scopeOwner(layers, layer.id) === null).map((layer) => layer.id),
+    getRootLayerIds: () => layers.filter((layer) => layer.parentId === null).map((layer) => layer.id),
     getPageSpec: () => ({ widthMm: 16, heightMm: 16, ppi: 25.4 }),
     getRenderRevision: () => 0,
     getMaskRevision: () => 0,
@@ -66,8 +65,9 @@ function compositorFor(layers: Layer[]): Compositor {
 
 describe('Compositor eyedropper sampling', () => {
   it('samples vector shapes from the selected layer and the final composite independently', () => {
-    const raster = createRasterLayer('背景', 25.4, 'background');
-    raster.runtime.surface.paint({x: 0, y: 0, w: 256, h: 256}, ctx => {ctx.fillStyle = '#0000ff'; ctx.fillRect(0, 0, 16, 16);});
+    const raster = createRasterLayer('背景', 16, 16, 'background');
+    raster.runtime.ctx.fillStyle = '#0000ff';
+    raster.runtime.ctx.fillRect(0, 0, 16, 16);
     const shape = createShapeLayer('図形', {
       kind: 'rect', x: 2, y: 2, width: 8, height: 8, color: '#ff0000',
       strokeWidth: 1, paintMode: 'fill-inside',
@@ -83,7 +83,7 @@ describe('Compositor eyedropper sampling', () => {
     const text = createTextLayer('文字', {
       content: 'A', x: 0, y: 0, width: null, height: null, direction: 'horizontal',
       horizontalAlign: 'left', verticalAlign: 'top', lineHeight: 1.2,
-      style: { fontId: 'sans-serif', sizeMm: 12 * 25.4 / 72, color: '#00ff00' }, ranges: [], ruby: [],
+      style: { fontId: 'sans-serif', sizePt: 12, color: '#00ff00' }, ranges: [], ruby: [],
     }, 'text');
     const compositor = compositorFor([text]);
     vi.spyOn(compositor.textRenderer, 'draw').mockImplementation((ctx) => {
@@ -95,8 +95,9 @@ describe('Compositor eyedropper sampling', () => {
   });
 
   it('samples only the generated border from a selected outline layer', () => {
-    const raster = createRasterLayer('元画像', 25.4, 'source');
-    raster.runtime.surface.paint({x: 0, y: 0, w: 256, h: 256}, ctx => {ctx.fillStyle = '#ff0000'; ctx.fillRect(5, 5, 4, 4);});
+    const raster = createRasterLayer('元画像', 16, 16, 'source');
+    raster.runtime.ctx.fillStyle = '#ff0000';
+    raster.runtime.ctx.fillRect(5, 5, 4, 4);
     const outline = createOutlineLayer('縁どり', 'outline');
     outline.state.outline = { color: '#00ff00', widthMm: 2, alphaThreshold: .5, cornerStyle: 'round' };
     const compositor = compositorFor([raster, outline]);
@@ -106,8 +107,9 @@ describe('Compositor eyedropper sampling', () => {
   });
 
   it('uses an outline layer contribution as a clip mask', () => {
-    const raster = createRasterLayer('元画像', 25.4, 'source');
-    raster.runtime.surface.paint({x: 0, y: 0, w: 256, h: 256}, ctx => {ctx.fillStyle = '#ff0000'; ctx.fillRect(5, 5, 4, 4);});
+    const raster = createRasterLayer('元画像', 16, 16, 'source');
+    raster.runtime.ctx.fillStyle = '#ff0000';
+    raster.runtime.ctx.fillRect(5, 5, 4, 4);
     const outline = createOutlineLayer('縁どり', 'outline');
     outline.state.outline = { color: '#00ff00', widthMm: 2, alphaThreshold: .5, cornerStyle: 'round' };
     const clip = createClipLayer('クリップ', 'clip');

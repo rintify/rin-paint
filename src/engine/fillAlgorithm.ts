@@ -61,16 +61,12 @@ export function analyzeFill(input: FillAnalysisInput): FillAnalysisResult {
   const sy = Math.max(0, Math.min(height - 1, Math.floor(input.seedY)));
   const seedIndex = (sy * width + sx) * 4;
   const seed = oklab(pixels[seedIndex], pixels[seedIndex + 1], pixels[seedIndex + 2]);
-  const seedAlpha = pixels[seedIndex + 3] / 255;
   const threshold = Math.max(0, Math.min(100, input.tolerance));
   const boundary = new Uint8Array(count);
   for (let i = 0; i < count; i++) {
     const offset = i * 4;
     const color = oklab(pixels[offset], pixels[offset + 1], pixels[offset + 2]);
-    const alpha = pixels[offset + 3] / 255;
-    const distance = Math.min(100, Math.hypot(color[0] * alpha - seed[0] * seedAlpha,
-      color[1] * alpha - seed[1] * seedAlpha, color[2] * alpha - seed[2] * seedAlpha,
-      alpha - seedAlpha) * 100);
+    const distance = Math.min(100, Math.hypot(color[0] - seed[0], color[1] - seed[1], color[2] - seed[2]) * 100);
     boundary[i] = Number(distance > threshold + 1e-7);
   }
   input.progress?.(.35);

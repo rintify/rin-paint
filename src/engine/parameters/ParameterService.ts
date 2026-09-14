@@ -45,7 +45,7 @@ export class ParameterService {
     if (this.engine.isBusy()) return;
     for (const { layer } of this.hosts(this.selectedIds())) {
       this.writeState(layer, parameterId, value);
-      this.engine.links.propagateFrom({ document: this.engine.documentKey, layerId: layer.id }, true);
+      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id }, true);
     }
     this.engine.requestRender();
     this.engine.syncStore();
@@ -90,7 +90,7 @@ export class ParameterService {
     if (!ops.length) return;
     this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, label);
     for (const { layer } of this.hosts(this.selectedIds())) {
-      this.engine.links.propagateFrom({ document: this.engine.documentKey, layerId: layer.id });
+      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });
     }
     this.engine.committed();
   }

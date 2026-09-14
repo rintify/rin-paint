@@ -1,4 +1,3 @@
-import type { LayerStack } from '../model/layerStack';
 import { create } from 'zustand';
 import { DEFAULT_PAGE, type PageSpec } from '../model/page';
 import { type LayerMeta } from '../model/layer';
@@ -113,9 +112,6 @@ export interface PaintState {
 
   layers: LayerMeta[];
   rootLayerIds: string[];
-  layerStacks: LayerStack[];
-  activeBinId: string | null;
-  binItems: {id: string; name: string}[];
   activeLayerId: string;
   selectedLayerIds: string[];
   multiSelectMode: boolean;
@@ -197,9 +193,6 @@ export const useStore = create<PaintState>((set) => ({
 
   layers: [],
   rootLayerIds: [],
-  layerStacks: [],
-  activeBinId: null,
-  binItems: [],
   activeLayerId: '',
   selectedLayerIds: [],
   multiSelectMode: false,

@@ -1,16 +1,8 @@
-import {drawProjectedProcedure} from '../../engine/geometry/drawProjectedProcedure';
-import {finiteProjection} from '../../engine/geometry/finiteProjection';
-import { rasterToPage } from '../../engine/core/RasterCoordinates';
-import { ScopeTransforms } from '../../engine/core/ScopeTransforms';
-import { projectedSelectionMask } from '../../engine/raster/projectedSelectionMask';
-import { layerTypeProps } from '../../engine/layer-types/registry';
-import { RasterSurface } from '../../engine/raster/RasterSurface';
 import type { StrokePoint } from '../../model';
 import { unionRect, type DirtyRect } from '../../engine/brush';
 import type { RasterLayer } from '../../engine/layers';
 import type { PaintEngine, SelectedObjectTransform } from '../../engine/PaintEngine';
 import type { Tool } from '../types';
-import { corners, fromQuads, project, translation, multiply, inverse, transformBounds, type Homography } from '../../engine/geometry/homography';
 
 export interface Pt {
   x: number;
@@ -20,18 +12,18 @@ export interface Pt {
 /**
  * 浮動選択。corners は TL, TR, BR, BL のアートボード座標。
  * 通常モードでは移動/拡縮/回転 (クアッドは平行四辺形のまま)、
- * 自由変形モードでは角を個別に動かせる (ホモグラフィで描画)。
+ * 自由変形モードでは角を個別に動かせる (双一次ワープで描画)。
  */
 interface Float {
+  canvas: HTMLCanvasElement;
   w: number;
   h: number;
   corners: [Pt, Pt, Pt, Pt];
-  matrix: Homography;
   /** 切り出し輪郭 (切り出し画像のローカル座標) */
   outline: Pt[];
 }
 
-interface RasterFloat { layer: RasterLayer; surface: RasterSurface; nativeToPage: Homography; pageToNative: Homography; pageToScope: Homography; before: import("../../engine/raster/SparseRaster").SparseRasterSnapshot }
+interface RasterFloat { layer: RasterLayer; canvas: HTMLCanvasElement; before: HTMLCanvasElement }
 
 type DragMode = 'move' | 'scale' | 'rotate' | 'corner';
 
@@ -46,7 +38,6 @@ interface Drag {
 }
 
 export interface FloatExtractInput {
-  wholeLayers?: boolean;
   trace(ctx: CanvasRenderingContext2D): void;
   outline: Pt[];
   minX: number;
@@ -81,6 +72,62 @@ function pointInPolygon(pts: Pt[], x: number, y: number): boolean {
   return inside;
 }
 
+/** 3点の対応から src → dst のアフィン変換を ctx.transform に適用して描く */
+function drawTriangle(
+  ctx: CanvasRenderingContext2D,
+  img: CanvasImageSource,
+  s0: Pt,
+  s1: Pt,
+  s2: Pt,
+  d0: Pt,
+  d1: Pt,
+  d2: Pt,
+): void {
+  const den =
+    s0.x * (s1.y - s2.y) + s1.x * (s2.y - s0.y) + s2.x * (s0.y - s1.y);
+  if (Math.abs(den) < 1e-8) return;
+  const a =
+    (d0.x * (s1.y - s2.y) + d1.x * (s2.y - s0.y) + d2.x * (s0.y - s1.y)) / den;
+  const b =
+    (d0.y * (s1.y - s2.y) + d1.y * (s2.y - s0.y) + d2.y * (s0.y - s1.y)) / den;
+  const c =
+    (s0.x * (d1.x - d2.x) + s1.x * (d2.x - d0.x) + s2.x * (d0.x - d1.x)) / den;
+  const d =
+    (s0.x * (d1.y - d2.y) + s1.x * (d2.y - d0.y) + s2.x * (d0.y - d1.y)) / den;
+  const e =
+    (s0.x * (s1.y * d2.x - s2.y * d1.x) +
+      s0.y * (s2.x * d1.x - s1.x * d2.x) +
+      d0.x * (s1.x * s2.y - s2.x * s1.y)) /
+    den;
+  const f =
+    (s0.x * (s1.y * d2.y - s2.y * d1.y) +
+      s0.y * (s2.x * d1.y - s1.x * d2.y) +
+      d0.y * (s1.x * s2.y - s2.x * s1.y)) /
+    den;
+
+  // 継ぎ目が見えないよう、クリップ領域を重心方向へ僅かに膨らませる
+  const gx = (d0.x + d1.x + d2.x) / 3;
+  const gy = (d0.y + d1.y + d2.y) / 3;
+  const grow = (p: Pt): Pt => ({
+    x: gx + (p.x - gx) * 1.03,
+    y: gy + (p.y - gy) * 1.03,
+  });
+  const g0 = grow(d0);
+  const g1 = grow(d1);
+  const g2 = grow(d2);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(g0.x, g0.y);
+  ctx.lineTo(g1.x, g1.y);
+  ctx.lineTo(g2.x, g2.y);
+  ctx.closePath();
+  ctx.clip();
+  ctx.transform(a, b, c, d, e, f);
+  ctx.drawImage(img, 0, 0);
+  ctx.restore();
+}
+
 export function isFloatTool(tool: Tool): tool is Tool & { floatSelection: FloatSelection } {
   return 'floatSelection' in tool && (tool as { floatSelection?: FloatSelection }).floatSelection instanceof FloatSelection;
 }
@@ -102,6 +149,7 @@ export class FloatSelection {
   ) {}
 
   setFreeTransform(on: boolean): void {
+    if (on && this.objectTransforms.length) return;
     if (this.free === on) return;
     this.free = on;
     this.drag = null;
@@ -138,7 +186,7 @@ export class FloatSelection {
     return this.extract({ trace, outline: pts, minX, minY, maxX, maxY, preferredLayerId });
   }
 
-  extractFromRect(rect: DirtyRect, preferredLayerId?: string, wholeLayers = false): boolean {
+  extractFromRect(rect: DirtyRect, preferredLayerId?: string): boolean {
     const minX = rect.minX;
     const minY = rect.minY;
     const maxX = rect.maxX;
@@ -153,14 +201,15 @@ export class FloatSelection {
       { x: maxX, y: maxY },
       { x: minX, y: maxY },
     ];
-    return this.extract({ trace, outline, minX, minY, maxX, maxY, preferredLayerId, wholeLayers });
+    return this.extract({ trace, outline, minX, minY, maxX, maxY, preferredLayerId });
   }
 
   extract(input: FloatExtractInput): boolean {
-    const minX = Math.floor(input.minX);
-    const minY = Math.floor(input.minY);
-    const maxX = Math.ceil(input.maxX);
-    const maxY = Math.ceil(input.maxY);
+    const { w: artW, h: artH } = this.eng.artboard;
+    const minX = Math.max(0, Math.floor(input.minX));
+    const minY = Math.max(0, Math.floor(input.minY));
+    const maxX = Math.min(artW, Math.ceil(input.maxX));
+    const maxY = Math.min(artH, Math.ceil(input.maxY));
     const w = maxX - minX;
     const h = maxY - minY;
     if (w < 3 || h < 3) {
@@ -169,30 +218,21 @@ export class FloatSelection {
       return false;
     }
 
-    const transformTargets = this.eng.transforms.targets();
-    const selected = this.eng.transforms.rasters(transformTargets);
-    const scopes = new ScopeTransforms(this.eng.getRootLayerIds(), this.eng.allLayers(), this.eng.getPageSpec().ppi);
-    this.rasterFloats = (input.wholeLayers ? [] : selected).flatMap((item): RasterFloat[] => {
-      const nativeToPage = rasterToPage(this.eng, item), pageToNative = inverse(nativeToPage);
-      const pageToScope = inverse(scopes.layerToPage(item.id));
-      if (!pageToNative || !pageToScope) return [];
-      const before = item.runtime.surface.snapshot();
-      const surface = new RasterSurface(before.intrinsicPpi);
-      for (const key of before.tiles.keys()) {
-        const [tx, ty] = key.split(',').map(Number), x = tx * 256, y = ty * 256;
-        const region = {x, y, w: 256, h: 256};
-        const display = transformBounds(nativeToPage, region);
-        if (display && (display.x >= maxX || display.y >= maxY || display.x + display.w <= minX || display.y + display.h <= minY)) continue;
-        const mask = projectedSelectionMask(region, pageToNative, input.trace);
-        const tile = item.runtime.surface.read(region), ctx = tile.getContext('2d')!;
-        ctx.globalCompositeOperation = 'destination-in'; ctx.drawImage(mask, 0, 0);
-        surface.paint(region, target => target.drawImage(tile, x, y));
-        item.runtime.surface.paint(region, target => {target.globalCompositeOperation = 'destination-out'; target.drawImage(mask, x, y);});
-        tile.width = tile.height = mask.width = mask.height = 0;
-      }
-      return [{layer: item, surface, before, nativeToPage, pageToNative, pageToScope}];
+    const selected = this.eng.selectedRasters();
+    this.rasterFloats = selected.map(item => {
+      const before = document.createElement('canvas'); before.width = artW; before.height = artH; before.getContext('2d')!.drawImage(item.runtime.canvas, 0, 0);
+      const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+      const cc = canvas.getContext('2d')!; cc.translate(-minX, -minY); input.trace(cc); cc.clip(); cc.drawImage(item.runtime.canvas, 0, 0);
+      item.runtime.ctx.save(); item.runtime.ctx.globalCompositeOperation = 'destination-out'; input.trace(item.runtime.ctx); item.runtime.ctx.fill(); item.runtime.ctx.restore();
+      return { layer: item, canvas, before };
     });
+    const canvas = (input.preferredLayerId
+      ? this.rasterFloats.find(item => item.layer.id === input.preferredLayerId)?.canvas
+      : undefined) ?? this.rasterFloats[0]?.canvas ?? document.createElement('canvas');
+    if (!canvas.width) { canvas.width = w; canvas.height = h; }
+
     this.float = {
+      canvas,
       w,
       h,
       corners: [
@@ -201,12 +241,10 @@ export class FloatSelection {
         { x: maxX, y: maxY },
         { x: minX, y: maxY },
       ],
-      matrix: translation(minX,minY),
       outline: input.outline.map((pt) => ({ x: pt.x - minX, y: pt.y - minY })),
     };
     this.origRect = { minX: minX - 2, minY: minY - 2, maxX: maxX + 2, maxY: maxY + 2 };
     this.objectTransforms = this.eng.selectedObjectsInRect(this.origRect, input.outline);
-    if (input.wholeLayers) this.objectTransforms.push(...selected.map(layer => ({...transformTargets.find(target => target.id === layer.id)!, before: layerTypeProps(layer)})));
     this.sourceCorners = this.float.corners.map(point => ({ ...point }));
     this.phase = 'float';
     this.free = false;
@@ -238,7 +276,6 @@ export class FloatSelection {
     if (this.phase !== 'float' || !this.drag || !this.float) return;
     const f = this.float;
     const beforeRect = this.transformedRect(4);
-    const previousCorners = f.corners.map(point => ({ ...point })) as Float['corners'];
     const d = this.drag;
     const c = centroid(d.startCorners);
     if (d.mode === 'move') {
@@ -265,12 +302,6 @@ export class FloatSelection {
         y: c.y + (q.x - c.x) * sin + (q.y - c.y) * cos,
       })) as Float['corners'];
     }
-    const matrix = fromQuads(corners({x:0,y:0,w:f.w,h:f.h}), f.corners);
-    if (!matrix) {
-      f.corners = previousCorners;
-      return;
-    }
-    f.matrix = matrix;
     const damage = unionRect(beforeRect, this.transformedRect(4));
     if (this.objectTransforms.length) this.eng.previewObjectGroup(this.objectTransforms, this.sourceCorners, f.corners);
     for (const item of this.rasterFloats) this.eng.bumpLayer(item.layer.id, damage);
@@ -303,7 +334,7 @@ export class FloatSelection {
   cancelSelection(): void {
     if (this.phase === 'float') {
       for (const item of this.rasterFloats) {
-        item.layer.runtime.surface.restore(item.before);
+        item.layer.runtime.ctx.clearRect(0, 0, this.eng.artboard.w, this.eng.artboard.h); item.layer.runtime.ctx.drawImage(item.before, 0, 0);
         this.eng.bumpLayer(item.layer.id);
       }
       this.eng.restoreObjectGroup(this.objectTransforms);
@@ -328,7 +359,7 @@ export class FloatSelection {
   drawAboveLayer(ctx: CanvasRenderingContext2D, layerId: string): void {
     if (this.phase !== 'float') return;
     const item = this.rasterFloats.find(value => value.layer.id === layerId);
-    if (item) this.drawRasterFloat(ctx, item);
+    if (item) this.drawFloatImage(ctx, item.canvas);
   }
 
   drawOverlay(ctx: CanvasRenderingContext2D): void {
@@ -400,34 +431,72 @@ export class FloatSelection {
 
   private toWorld(lx: number, ly: number): Pt {
     const f = this.float!;
-    return project(f.matrix, {x:lx,y:ly}) ?? f.corners[0];
+    const u = lx / f.w;
+    const v = ly / f.h;
+    const [c0, c1, c2, c3] = f.corners;
+    const topX = c0.x + (c1.x - c0.x) * u;
+    const topY = c0.y + (c1.y - c0.y) * u;
+    const botX = c3.x + (c2.x - c3.x) * u;
+    const botY = c3.y + (c2.y - c3.y) * u;
+    return { x: topX + (botX - topX) * v, y: topY + (botY - topY) * v };
   }
 
-  private floatMatrix(): Homography {
-    return multiply(this.float!.matrix, translation(-this.sourceCorners[0].x, -this.sourceCorners[0].y));
+  private isParallelogram(): boolean {
+    const [c0, c1, c2, c3] = this.float!.corners;
+    return (
+      Math.abs(c0.x + c2.x - c1.x - c3.x) < 0.01 &&
+      Math.abs(c0.y + c2.y - c1.y - c3.y) < 0.01
+    );
   }
 
-  private drawRasterFloat(ctx: CanvasRenderingContext2D, item: RasterFloat, native = false): void {
-    const matrix = multiply(native ? item.pageToNative : item.pageToScope, multiply(this.floatMatrix(), item.nativeToPage));
-    const bounds=item.surface.bounds();if(!bounds)return;
-    drawProjectedProcedure(ctx,bounds,matrix,source=>item.surface.drawTo(source));
+  private drawFloatImage(ctx: CanvasRenderingContext2D, image: HTMLCanvasElement): void {
+    const f = this.float!;
+    const [c0, c1, , c3] = f.corners;
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    if (this.isParallelogram()) {
+      ctx.transform(
+        (c1.x - c0.x) / f.w,
+        (c1.y - c0.y) / f.w,
+        (c3.x - c0.x) / f.h,
+        (c3.y - c0.y) / f.h,
+        c0.x,
+        c0.y,
+      );
+      ctx.drawImage(image, 0, 0);
+    } else {
+      let maxEdge = 0;
+      for (let i = 0; i < 4; i++) {
+        const a = f.corners[i];
+        const b = f.corners[(i + 1) % 4];
+        maxEdge = Math.max(maxEdge, Math.hypot(b.x - a.x, b.y - a.y));
+      }
+      const n = Math.max(4, Math.min(32, Math.ceil(maxEdge / 48)));
+      for (let j = 0; j < n; j++) {
+        for (let i = 0; i < n; i++) {
+          const sx0 = (f.w * i) / n;
+          const sx1 = (f.w * (i + 1)) / n;
+          const sy0 = (f.h * j) / n;
+          const sy1 = (f.h * (j + 1)) / n;
+          const s00 = { x: sx0, y: sy0 };
+          const s10 = { x: sx1, y: sy0 };
+          const s11 = { x: sx1, y: sy1 };
+          const s01 = { x: sx0, y: sy1 };
+          const d00 = this.toWorld(sx0, sy0);
+          const d10 = this.toWorld(sx1, sy0);
+          const d11 = this.toWorld(sx1, sy1);
+          const d01 = this.toWorld(sx0, sy1);
+          drawTriangle(ctx, image, s00, s10, s11, d00, d10, d11);
+          drawTriangle(ctx, image, s00, s11, s01, d00, d11, d01);
+        }
+      }
+    }
+    ctx.restore();
   }
 
   private stamp(): void {
-    for (const item of this.rasterFloats) {
-      const matrix = multiply(item.pageToNative, multiply(this.floatMatrix(), item.nativeToPage));
-      const outputTiles = new Set<string>();
-      for (const key of item.surface.snapshot().tiles.keys()) {
-        const [x, y] = key.split(',').map(Number);
-        for (const region of finiteProjection(matrix,{x:x*256,y:y*256,w:256,h:256})) for (let ty = Math.floor(region.y / 256); ty < Math.ceil((region.y + region.h) / 256); ty++) {
-          for (let tx = Math.floor(region.x / 256); tx < Math.ceil((region.x + region.w) / 256); tx++) outputTiles.add(`${tx},${ty}`);
-        }
-      }
-      for (const key of outputTiles) {
-        const [x, y] = key.split(',').map(Number);
-        item.layer.runtime.surface.paint({x: x * 256, y: y * 256, w: 256, h: 256}, ctx => this.drawRasterFloat(ctx, item, true));
-      }
-    }
+    for (const item of this.rasterFloats) this.drawFloatImage(item.layer.runtime.ctx, item.canvas);
   }
 
   private rotateHandlePos(): Pt {

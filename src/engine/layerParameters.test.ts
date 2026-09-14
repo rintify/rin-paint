@@ -20,7 +20,7 @@ const rect = {
 const textParams = {
   content: 'ab', x: 0, y: 0, width: null, height: null, rotation: 0, direction: 'horizontal' as const,
   horizontalAlign: 'left' as const, verticalAlign: 'top' as const, lineHeight: 1.5,
-  style: { fontId: 'sans', color: '#222222', sizeMm: 12 * 25.4 / 72 }, ranges: [] as { start: number; end: number; fontId: string; color: string; sizeMm: number }[], ruby: [] as { start: number; end: number; text: string }[],
+  style: { fontId: 'sans', color: '#222222', sizePt: 12 }, ranges: [] as { start: number; end: number; fontId: string; color: string; sizePt: number }[], ruby: [] as { start: number; end: number; text: string }[],
 };
 
 describe('generic layer parameters', () => {
@@ -34,7 +34,7 @@ describe('generic layer parameters', () => {
       state: {
         text: {
           ...textParams,
-          ranges: [{ start: 0, end: 1, fontId: 'serif', color: '#333333', sizeMm: 8 * 25.4 / 72 }],
+          ranges: [{ start: 0, end: 1, fontId: 'serif', color: '#333333', sizePt: 8 }],
         },
         snapEnabled: true,
       },
@@ -74,18 +74,18 @@ describe('generic layer parameters', () => {
     expect(commonLayerParameterDescriptors([on, text]).some(value => value.semanticId === 'interaction.snap')).toBe(true);
   });
 
-  it('exposes native millimeter values without pixel codecs', () => {
+  it('marks canvas lengths so UI can convert with page ppi', () => {
     const layer: LayerMeta = {
       ...base, id: 'r', type: 'shape', name: 'R',
       state: { snapEnabled: true, shape: { ...rect, x: 1, y: 2 } },
     };
     const descriptors = commonLayerParameterDescriptors([layer]);
-    expect(descriptors.find(value => value.key === 'strokeWidth')?.physicalLength).toBe(true);
-    expect(descriptors.find(value => value.key === 'rect.x')?.physicalLength).toBe(true);
-    expect(descriptors.find(value => value.key === 'rotation')?.physicalLength).toBeFalsy();
+    expect(descriptors.find(value => value.key === 'strokeWidth')?.canvasLength).toBe(true);
+    expect(descriptors.find(value => value.key === 'rect.x')?.canvasLength).toBe(true);
+    expect(descriptors.find(value => value.key === 'rotation')?.canvasLength).toBeFalsy();
   });
 
-  it('shares physical dimensions without PPI conversion', () => {
+  it('normalizes pixel geometry through millimeters across different PPI values', () => {
     const source: LayerMeta = {
       ...base, id: 's', type: 'shape', name: 'S',
       state: { snapEnabled: true, shape: { kind: 'rect', x: 100, y: 20, width: 200, height: 100, color: '#111111', strokeWidth: 10, paintMode: 'stroke' } },
@@ -97,8 +97,8 @@ describe('generic layer parameters', () => {
     const sourceDescriptor = linkableParameterMap(source).get('frame.widthMm')!;
     const targetDescriptor = linkableParameterMap(target).get('frame.widthMm')!;
     const widthMm = readCanonicalParameter(sourceDescriptor, source, 254)!;
-    expect(widthMm).toBeCloseTo(200);
+    expect(widthMm).toBeCloseTo(20);
     const props = writeCanonicalParameter(targetDescriptor, target, widthMm, 127) as { state: { shape: { kind: string; width: number } } };
-    expect(props.state.shape.kind === 'rect' && props.state.shape.width).toBeCloseTo(200);
+    expect(props.state.shape.kind === 'rect' && props.state.shape.width).toBeCloseTo(100);
   });
 });

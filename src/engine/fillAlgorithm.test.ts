@@ -11,12 +11,6 @@ function pixels(rows: string[]): Uint8ClampedArray {
 }
 
 describe('fill analysis', () => {
-  it('distinguishes transparent pixels from black boundaries without adding a background', () => {
-    const result = analyzeFill({pixels: new Uint8ClampedArray([255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255]),
-      width: 3, height: 1, seedX: 0, seedY: 0, tolerance: 0, gapClosePx: 0});
-    expect([...result.mask]).toEqual([1, 1, 0]);
-  });
-
   it('uses a fixed OKLab seed color and four-way connectivity', () => {
     const data = pixels(['WKW', 'KWK', 'WKW']);
     const result = analyzeFill({ pixels: data, width: 3, height: 3, seedX: 0, seedY: 0, tolerance: 0, gapClosePx: 0 });

@@ -1,6 +1,4 @@
-import {sampleWarp} from './sampleWarp';
-import {deferredWarp} from './asyncWarp';
-import { inverse, type Homography } from './homography';
+import { inverse, project, type Homography } from './homography';
 
 interface GpuSampler {
   canvas: HTMLCanvasElement;
@@ -82,7 +80,7 @@ export function warpCanvas(
     target.drawImage(source,sourceOrigin.x,sourceOrigin.y); target.restore(); return;
   }
   const backend = sampler();
-  if (backend && (source.width*source.height+width*height*2)*4<=5*1024*1024 && Math.max(source.width, source.height, width, height) <= backend.gl.getParameter(backend.gl.MAX_TEXTURE_SIZE)) {
+  if (backend && Math.max(source.width, source.height, width, height) <= backend.gl.getParameter(backend.gl.MAX_TEXTURE_SIZE)) {
     const { gl, program, texture, canvas } = backend;
     canvas.width = width; canvas.height = height;
     gl.viewport(0,0,width,height); gl.useProgram(program); gl.disable(gl.BLEND);
@@ -104,8 +102,22 @@ export function warpCanvas(
     return;
   }
   const pixels = source.getContext('2d', { willReadFrequently: true })!.getImageData(0,0,source.width,source.height).data;
-  const request={pixels,sourceWidth:source.width,sourceHeight:source.height,inverse:inv,sourceOrigin,targetOrigin,width,height};
-  if (deferredWarp(request,target)) return;
-  const output=target.createImageData(width,height);output.data.set(sampleWarp(request));
+  const output = target.createImageData(width,height);
+  for (let y=0;y<height;y++) for (let x=0;x<width;x++) {
+    const point = project(inv,{x:x+.5+targetOrigin.x,y:y+.5+targetOrigin.y});
+    if (!point) continue;
+    const sx=point.x-sourceOrigin.x-.5, sy=point.y-sourceOrigin.y-.5;
+    const ix=Math.floor(sx), iy=Math.floor(sy), dx=sx-ix, dy=sy-iy;
+    let alpha=0, r=0, g=0, b=0;
+    for(let j=0;j<2;j++) for(let i=0;i<2;i++) {
+      const px=ix+i,py=iy+j;
+      if(px<0||py<0||px>=source.width||py>=source.height) continue;
+      const offset=(py*source.width+px)*4;
+      const a=pixels[offset+3]/255*(i?dx:1-dx)*(j?dy:1-dy);
+      alpha+=a; r+=pixels[offset]*a; g+=pixels[offset+1]*a; b+=pixels[offset+2]*a;
+    }
+    const offset=(y*width+x)*4;
+    if(alpha) { output.data[offset]=r/alpha; output.data[offset+1]=g/alpha; output.data[offset+2]=b/alpha; output.data[offset+3]=alpha*255; }
+  }
   target.putImageData(output,0,0);
 }
