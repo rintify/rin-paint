@@ -43,6 +43,54 @@ function mixRevision(current: number, token: string | number): number {
 export class RegionRenderer {
   constructor(private host: RegionHost) {}
 
+  private hasActiveDirectEffect(
+    layer: Layer,
+    active: (layer: Layer) => boolean,
+  ): boolean {
+    const inChain = (id: string): boolean => {
+      const child = this.host.engine.layerById(id);
+      return (
+        !!child && !!layerHandler(child).renderer.effect &&
+        (active(child) || child.childIds.some(inChain))
+      );
+    };
+    return layer.childIds.some(inChain);
+  }
+
+  /** Layers contributing to the scope immediately before an effect. */
+  effectInputLayers(effectId: string, withTools: boolean): Layer[] {
+    const eng = this.host.engine;
+    const editingTextId = withTools ? eng.getTextEditingId?.() : null;
+    const visible = (layer: Layer) =>
+      layer.visible &&
+      !(layer.type === 'text' && layer.id === editingTextId);
+    let result: Layer[] = [];
+    const visit = (ids: string[], scope: Layer[]): boolean => {
+      for (const id of ids) {
+        const layer = eng.layerById(id);
+        if (!layer) continue;
+        if (id === effectId) {
+          result = scope;
+          return true;
+        }
+        if (
+          !layerHandler(layer).renderer.effect &&
+          this.hasActiveDirectEffect(layer, visible)
+        ) {
+          const local = visible(layer) ? [layer] : [];
+          if (visit(layer.childIds, local)) return true;
+          scope.push(...local);
+        } else {
+          if (visible(layer)) scope.push(layer);
+          if (visit(layer.childIds, scope)) return true;
+        }
+      }
+      return false;
+    };
+    visit(eng.getRootLayerIds(), []);
+    return result;
+  }
+
   private drawLayer(
     target: CanvasRenderingContext2D,
     layer: Layer,
@@ -125,19 +173,6 @@ export class RegionRenderer {
       layer.visible &&
       !(layer.type === 'text' && layer.id === editingTextId) &&
       (included === null || included.has(layer.id));
-    const activeEffectInChain = (layer: Layer): boolean => {
-      if (!layerHandler(layer).renderer.effect) return false;
-      if (
-        participates(layer) ||
-        capture?.effectId === layer.id ||
-        hit?.layerId === layer.id
-      )
-        return true;
-      return layer.childIds.some((id) => {
-        const child = eng.layerById(id);
-        return !!child && activeEffectInChain(child);
-      });
-    };
     const resetTarget = (target: CanvasRenderingContext2D) => {
       target.setTransform(1, 0, 0, 1, 0, 0);
       target.globalAlpha = 1;
@@ -359,10 +394,10 @@ export class RegionRenderer {
           continue;
         }
 
-        const hasActiveDirectEffect = layer.childIds.some((childId) => {
-          const child = eng.layerById(childId);
-          return !!child && activeEffectInChain(child);
-        });
+        const hasActiveDirectEffect = this.hasActiveDirectEffect(
+          layer,
+          child => participates(child) || capture?.effectId === child.id || hit?.layerId === child.id,
+        );
         if (hasActiveDirectEffect) {
           const measured =
             !capture &&

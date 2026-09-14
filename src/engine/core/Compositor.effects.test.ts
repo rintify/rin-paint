@@ -748,6 +748,59 @@ describe('effect scopes', () => {
     });
   });
 
+  it.each(['round', 'sharp'] as const)('matches a full render after moving a shape under a %s outline across tiles', (cornerStyle) => {
+    const source = createShapeLayer('source', {
+      kind: 'rect', x: 240, y: 240, width: 40, height: 32,
+      color: '#ff0000', strokeWidth: 0, paintMode: 'fill-inside',
+    });
+    const outline = createOutlineLayer('outline');
+    outline.state.outline.widthMm = 2.3;
+    outline.state.outline.cornerStyle = cornerStyle;
+    const layers = [source, outline], roots = layers.map(layer => layer.id);
+    const { main, compositor, revisions } = createRenderer(layers, roots, 25.4, 600);
+    if (source.state.shape.kind !== 'rect') throw new Error('Expected a rectangle');
+    source.state.shape = { ...source.state.shape, x: 270, y: 255 };
+    revisions.set(source.id, 1);
+    compositor.invalidateLayer(source.id, { minX: 240, minY: 240, maxX: 310, maxY: 287 });
+    compositor.ensureComposited();
+    const partial = main.getContext('2d')!.getImageData(0, 0, 600, 600).data;
+    compositor.requestRender();
+    compositor.ensureComposited();
+    expect(partial).toEqual(main.getContext('2d')!.getImageData(0, 0, 600, 600).data);
+    expect(rgba(main, 240, 240)).toEqual([255, 255, 255, 255]);
+    expect(rgba(main, 280, 265)).toEqual([255, 0, 0, 255]);
+  });
+
+  it.each([false, true])('extracts sharp contours only from their input scope (isolated: %s)', isolated => {
+    const source = createShapeLayer('source', {
+      kind: 'rect', x: 100, y: 100, width: 20, height: 20,
+      color: '#ff0000', strokeWidth: 0, paintMode: 'fill-inside',
+    });
+    const other = createShapeLayer('other', {
+      kind: 'rect', x: 400, y: 400, width: 900, height: 900,
+      color: '#0000ff', strokeWidth: 0, paintMode: 'fill-inside',
+    });
+    const outline = createOutlineLayer('outline');
+    outline.state.outline.cornerStyle = 'sharp';
+    outline.state.outline.widthMm = 3;
+    if (isolated) {
+      source.childIds = [outline.id];
+      outline.parentId = source.id;
+    }
+    const roots = isolated ? [other.id, source.id] : [source.id, outline.id, other.id];
+    const { main, compositor, revisions } = createRenderer([source, outline, other], roots, 25.4, 600);
+    expect(compositor.renderStats().cpuReadbackPixels).toBe(256 * 256);
+    expect(rgba(main, 98, 110)[0]).toBeLessThan(100);
+    if (source.state.shape.kind !== 'rect') throw new Error('Expected a rectangle');
+    source.state.shape.x += 5;
+    revisions.set(source.id, 1);
+    compositor.invalidateLayer(source.id, { minX: 100, minY: 100, maxX: 125, maxY: 120 });
+    compositor.ensureComposited();
+    expect(compositor.renderStats().cpuReadbackPixels).toBe(256 * 256);
+    expect(rgba(main, 98, 110)).toEqual([255, 255, 255, 255]);
+    expect(rgba(main, 103, 110)[0]).toBeLessThan(100);
+  });
+
   it('expands local damage by the outline radius without recompositing the whole page', () => {
     const source = raster('source', (ctx) => {
       ctx.fillStyle = '#fff';

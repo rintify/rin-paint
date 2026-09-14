@@ -1,14 +1,8 @@
+import { outlineSquaredDistances } from './outlineDistance';
 import { ContourIndex } from '../raster/ContourIndex';
 import type { RasterSurface } from '../raster/RasterSurface';
-import {
-  TILE_SIZE,
-  intersect,
-  union,
-  type PixelRect,
-  tileKey,
-  tileCoordinates,
-  tileRect,
-} from '../raster/geometry';
+import { TILE_SIZE } from '../raster/geometry';
+import { SparseAlphaTiles } from '../raster/SparseAlphaTiles';
 import { mmToPx, SIZE_MM_MAX } from '../units';
 import type {
   CanvasLease,
@@ -141,40 +135,6 @@ export function applyClip(
   ctx.drawImage(clipped.canvas, 0, 0);
   ctx.restore();
   clipped.release();
-}
-
-function distanceTransform1d(
-  input: Float64Array,
-  output: Float64Array,
-  length: number,
-  sites: Int32Array,
-  bounds: Float64Array,
-): void {
-  let k = 0;
-  sites[0] = 0;
-  bounds[0] = -Infinity;
-  bounds[1] = Infinity;
-  for (let q = 1; q < length; q++) {
-    let site = sites[k];
-    let split =
-      (input[q] + q * q - (input[site] + site * site)) / (2 * (q - site));
-    while (split <= bounds[k] && k > 0) {
-      k--;
-      site = sites[k];
-      split =
-        (input[q] + q * q - (input[site] + site * site)) / (2 * (q - site));
-    }
-    k++;
-    sites[k] = q;
-    bounds[k] = split;
-    bounds[k + 1] = Infinity;
-  }
-  k = 0;
-  for (let q = 0; q < length; q++) {
-    while (bounds[k + 1] < q) k++;
-    const delta = q - sites[k];
-    output[q] = delta * delta + input[sites[k]];
-  }
 }
 
 function parseHex(color: string): [number, number, number] {
@@ -366,42 +326,22 @@ export function traceSparseAlphaContours(
   surface: RasterSurface,
   limit: number,
 ): Array<Array<{ x: number; y: number }>> {
-  const pixels = new Map<string, Uint8ClampedArray>(),
-    candidates = new Map<string, PixelRect>();
-  for (const t of surface.entries()) {
-    pixels.set(
-      tileKey(t.tx, t.ty),
-      t.asset.canvas!.getContext('2d')!.getImageData(0, 0, TILE_SIZE, TILE_SIZE)
-        .data,
+  const tiles = new SparseAlphaTiles();
+  for (const t of surface.entries())
+    tiles.setRgba(
+      t.tx, t.ty,
+      t.asset.canvas!.getContext('2d')!.getImageData(0, 0, TILE_SIZE, TILE_SIZE).data,
     );
-    const r = {
-      x: t.tx * TILE_SIZE + t.asset.bounds.x,
-      y: t.ty * TILE_SIZE + t.asset.bounds.y,
-      w: t.asset.bounds.w + 1,
-      h: t.asset.bounds.h + 1,
-    };
-    for (const c of tileCoordinates(r)) {
-      const key = tileKey(c.tx, c.ty),
-        part = intersect(r, tileRect(c.tx, c.ty))!;
-      candidates.set(key, union(candidates.get(key) ?? null, part));
-    }
-  }
-  const sample = (gx: number, gy: number) => {
-    const x = gx - 1,
-      y = gy - 1,
-      tx = Math.floor(x / TILE_SIZE),
-      ty = Math.floor(y / TILE_SIZE),
-      p = pixels.get(tileKey(tx, ty));
-    return (
-      p?.[((y - ty * TILE_SIZE) * TILE_SIZE + x - tx * TILE_SIZE) * 4 + 3] ?? 0
-    );
-  };
-  function* cells() {
-    for (const rect of candidates.values())
-      for (let y = rect.y; y < rect.y + rect.h; y++)
-        for (let x = rect.x; x < rect.x + rect.w; x++) yield { x, y };
-  }
-  return traceContours(sample, cells(), limit);
+  return traceAlphaTileContours(tiles, limit);
+}
+
+export function traceAlphaTileContours(
+  tiles: SparseAlphaTiles,
+  limit: number,
+): Array<Array<{ x: number; y: number }>> {
+  return traceContours(
+    (x, y) => tiles.sample(x, y), tiles.boundaryCells(limit), limit,
+  );
 }
 
 function traceContours(
@@ -680,31 +620,10 @@ function buildOutlineDistanceField(
     y1 = Math.min(height - 1, seedMaxY + maxPad);
   const boxW = x1 - x0 + 1,
     boxH = y1 - y0 + 1;
-  let squared: Float32Array | null = null;
-  if (cornerStyle !== 'sharp') {
-    const infinity = 1e20;
-    squared = new Float32Array(boxW * boxH);
-    for (let y = 0; y < boxH; y++)
-      for (let x = 0; x < boxW; x++) {
-        const alpha = pixels[((y + y0) * width + x + x0) * 4 + 3];
-        squared[y * boxW + x] = alpha > 0 && alpha >= limit ? 0 : infinity;
-      }
-    const lineLength = Math.max(boxW, boxH);
-    const inputLine = new Float64Array(lineLength);
-    const outputLine = new Float64Array(lineLength);
-    const sites = new Int32Array(lineLength);
-    const bounds = new Float64Array(lineLength + 1);
-    for (let y = 0; y < boxH; y++) {
-      inputLine.set(squared.subarray(y * boxW, (y + 1) * boxW), 0);
-      distanceTransform1d(inputLine, outputLine, boxW, sites, bounds);
-      squared.set(outputLine.subarray(0, boxW), y * boxW);
-    }
-    for (let x = 0; x < boxW; x++) {
-      for (let y = 0; y < boxH; y++) inputLine[y] = squared[y * boxW + x];
-      distanceTransform1d(inputLine, outputLine, boxH, sites, bounds);
-      for (let y = 0; y < boxH; y++) squared[y * boxW + x] = outputLine[y];
-    }
-  }
+  const squared =
+    cornerStyle === 'sharp'
+      ? null
+      : outlineSquaredDistances(pixels, width, x0, y0, boxW, boxH, limit);
   const contours =
     cornerStyle === 'sharp'
       ? traceAlphaContours(pixels, width, height, limit)
@@ -851,26 +770,25 @@ export function applyOutline(
   const [red, green, blue] = parseHex(color);
   const maxDistance = radius + 0.5;
   const innerDistance = Math.max(0, radius - 0.5);
-  for (let x = 0; x < boxW; x++) {
-    for (let y = 0; y < boxH; y++) {
-      const fieldX = minX + x - field.x;
-      const fieldY = minY + y - field.y;
-      const stored = squared[fieldY * field.width + fieldX];
-      const distance = Math.sqrt(stored);
-      const coverage =
-        distance <= innerDistance
-          ? 1
-          : distance <= maxDistance
-            ? Math.max(0, Math.min(1, maxDistance - distance))
-            : 0;
+  const innerSquared = innerDistance * innerDistance;
+  const maxSquared = maxDistance * maxDistance;
+  const alpha = 255 * clampUnit(opacity);
+  for (let y = 0; y < boxH; y++) {
+    const fieldOffset = (minY + y - field.y) * field.width + minX - field.x;
+    for (let x = 0; x < boxW; x++) {
+      const stored = squared[fieldOffset + x];
+      // Only the antialiased edge needs a square root. Read/write rows in order.
+      const coverage = stored <= innerSquared
+        ? 1
+        : stored <= maxSquared
+          ? Math.max(0, Math.min(1, maxDistance - Math.sqrt(stored)))
+          : 0;
       if (!coverage) continue;
       const offset = (y * boxW + x) * 4;
       image.data[offset] = red;
       image.data[offset + 1] = green;
       image.data[offset + 2] = blue;
-      image.data[offset + 3] = Math.round(
-        255 * coverage * Math.max(0, Math.min(1, opacity)),
-      );
+      image.data[offset + 3] = Math.round(alpha * coverage);
     }
   }
   outline.ctx.putImageData(image, 0, 0);

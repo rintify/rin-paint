@@ -1,9 +1,9 @@
 import { effectDamage } from './EffectDamage';
 import type { EffectPreview } from '../layer-types/types';
 import { shapeVisualPadding } from '../shapes';
-import { RasterSurface, RasterEditSession } from '../raster/RasterSurface';
+import { SparseAlphaTiles } from '../raster/SparseAlphaTiles';
 import { tileCoordinates, tileKey, tileRect } from '../raster/geometry';
-import { traceSparseAlphaContours } from '../layer-types/effectUtils';
+import { traceAlphaTileContours } from '../layer-types/effectUtils';
 import { RegionRenderer, type LayerHitCapture } from './RegionRenderer';
 import { layerHandler } from '../layer-types/registry';
 import type {
@@ -659,7 +659,13 @@ export class Compositor {
       this.effectCache.get<Array<Array<{ x: number; y: number }>>>(key);
     if (cached) return cached;
     const candidates = new Map<string, { tx: number; ty: number }>(),
-      layers = this.engine.allLayers();
+      inputs = this.regions.effectInputLayers(id, tools);
+    // Source-remapping effects retain the conservative world-space candidate path.
+    const layers = inputs.some(
+      layer => layerHandler(layer).renderer.effect?.sourceRegion,
+    )
+      ? this.engine.allLayers()
+      : inputs;
     const pad = layers.reduce(
       (n, l) =>
         n +
@@ -691,8 +697,7 @@ export class Compositor {
         if (bounds) add(bounds);
       }
     }
-    const surface = new RasterSurface(),
-      edit = new RasterEditSession(surface);
+    const alphaTiles = new SparseAlphaTiles();
     for (const { tx, ty } of candidates.values()) {
       const out = tileRect(tx, ty),
         input = {
@@ -713,28 +718,25 @@ export class Compositor {
       art.release();
       if (capture.result) {
         try {
-          edit.mutateRegion(out, (ctx) =>
-            ctx.drawImage(
-              capture.result!.canvas,
-              pad,
-              pad,
-              out.w,
-              out.h,
-              out.x,
-              out.y,
-              out.w,
-              out.h,
-            ),
-          );
+          const readback = this.borrowReadbackCanvas(out.w, out.h);
+          try {
+            readback.ctx.drawImage(
+              capture.result.canvas, pad, pad, out.w, out.h, 0, 0, out.w, out.h,
+            );
+            this.frameStats.cpuReadbackPixels += out.w * out.h;
+            alphaTiles.setRgba(
+              tx, ty, readback.ctx.getImageData(0, 0, out.w, out.h).data,
+            );
+          } finally {
+            readback.release();
+          }
         } finally {
           capture.result.release();
         }
       }
     }
-    edit.commit(false);
-    this.frameStats.cpuReadbackPixels += surface.tileCount * 256 * 256;
-    const contours = traceSparseAlphaContours(
-      surface,
+    const contours = traceAlphaTileContours(
+      alphaTiles,
       Math.max(0, Math.min(1, threshold)) * 255,
     );
     this.effectCache.set(
