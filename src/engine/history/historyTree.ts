@@ -78,8 +78,18 @@ export type AtomicOp =
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
   | { kind: 'layerAdd'; location: LayerLocation; snapshot: LayerSnapshot }
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: LayerSnapshot[] }
-  | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
-  | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
+  | {
+      kind: 'layerMove';
+      layerId: string;
+      from: LayerLocation;
+      to: LayerLocation;
+    }
+  | {
+      kind: 'layerProps';
+      layerId: string;
+      before: LayerProps;
+      after: LayerProps;
+    }
   | LayerParameterOp
   | LayerLinkOp
   | LayerReplaceOp
@@ -101,7 +111,9 @@ export interface HistoryNode {
 }
 
 export interface PersistedLayerSnapshot extends Omit<LayerSnapshot, 'canvas'> {
-  content?: Blob;
+  content?:
+    | import('../raster/RasterAssetRepository').StoredRasterContent
+    | Blob;
 }
 
 export interface PageSnapshot {
@@ -126,29 +138,60 @@ export interface PersistedTileLayerMergeOp {
   maskChanges?: { layerId: string; before: string[]; after: string[] }[];
 }
 
-export interface PersistedLayerReplaceSide extends Omit<LayerReplaceSide, 'entries'> {
+export interface PersistedLayerReplaceSide
+  extends Omit<LayerReplaceSide, 'entries'> {
   entries: { location: LayerLocation; snapshot: PersistedLayerSnapshot }[];
 }
 
-export interface PersistedLayerReplaceOp extends Omit<LayerReplaceOp, 'before' | 'after'> {
+export interface PersistedLayerReplaceOp
+  extends Omit<LayerReplaceOp, 'before' | 'after'> {
   before: PersistedLayerReplaceSide;
   after: PersistedLayerReplaceSide;
 }
 
 export type PersistedAtomicOp =
-  | { kind: 'pageChange'; before: PersistedPageSnapshot; after: PersistedPageSnapshot }
+  | {
+      kind: 'pageChange';
+      before: PersistedPageSnapshot;
+      after: PersistedPageSnapshot;
+    }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
-  | { kind: 'layerAdd'; location: LayerLocation; snapshot: PersistedLayerSnapshot }
-  | { kind: 'layerRemove'; location: LayerLocation; snapshots: PersistedLayerSnapshot[] }
-  | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
-  | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
+  | {
+      kind: 'layerAdd';
+      location: LayerLocation;
+      snapshot: PersistedLayerSnapshot;
+    }
+  | {
+      kind: 'layerRemove';
+      location: LayerLocation;
+      snapshots: PersistedLayerSnapshot[];
+    }
+  | {
+      kind: 'layerMove';
+      layerId: string;
+      from: LayerLocation;
+      to: LayerLocation;
+    }
+  | {
+      kind: 'layerProps';
+      layerId: string;
+      before: LayerProps;
+      after: LayerProps;
+    }
   | LayerParameterOp
   | LayerLinkOp
   | PersistedLayerReplaceOp
   | PersistedTileLayerMergeOp
-  | { kind: 'layerContent'; layerId: string; before: PersistedLayerSnapshot; after: PersistedLayerSnapshot };
+  | {
+      kind: 'layerContent';
+      layerId: string;
+      before: PersistedLayerSnapshot;
+      after: PersistedLayerSnapshot;
+    };
 
-export type PersistedOp = PersistedAtomicOp | { kind: 'batch'; ops: PersistedAtomicOp[] };
+export type PersistedOp =
+  | PersistedAtomicOp
+  | { kind: 'batch'; ops: PersistedAtomicOp[] };
 
 export interface PersistedHistory {
   version: typeof HISTORY_VERSION;
@@ -206,11 +249,14 @@ export class HistoryTree {
       lastChild: node.lastChild,
     }));
 
-    const snapshot = async (value: LayerSnapshot): Promise<PersistedLayerSnapshot> => {
+    const snapshot = async (
+      value: LayerSnapshot,
+    ): Promise<PersistedLayerSnapshot> => {
       const { canvas, ...rest } = value;
       return {
         ...rest,
-        content: value.content ?? (canvas ? await canvasToBlob(canvas) : undefined),
+        content:
+          value.content ?? (canvas ? await canvasToBlob(canvas) : undefined),
       };
     };
     const persistAtomic = async (op: AtomicOp): Promise<PersistedAtomicOp> => {
@@ -218,15 +264,24 @@ export class HistoryTree {
         case 'pageChange':
           return {
             ...op,
-            before: { ...op.before, layers: await Promise.all(op.before.layers.map(snapshot)) },
-            after: { ...op.after, layers: await Promise.all(op.after.layers.map(snapshot)) },
+            before: {
+              ...op.before,
+              layers: await Promise.all(op.before.layers.map(snapshot)),
+            },
+            after: {
+              ...op.after,
+              layers: await Promise.all(op.after.layers.map(snapshot)),
+            },
           };
         case 'raster':
           return { ...op, tiles: op.tiles.map((tile) => ({ ...tile })) };
         case 'layerAdd':
           return { ...op, snapshot: await snapshot(op.snapshot) };
         case 'layerRemove':
-          return { ...op, snapshots: await Promise.all(op.snapshots.map(snapshot)) };
+          return {
+            ...op,
+            snapshots: await Promise.all(op.snapshots.map(snapshot)),
+          };
         case 'layerMove':
           return { ...op };
         case 'layerProps':
@@ -236,20 +291,31 @@ export class HistoryTree {
         case 'layerLink':
           return structuredClone(op);
         case 'layerReplace': {
-          const side = async (value: LayerReplaceSide): Promise<PersistedLayerReplaceSide> => ({
+          const side = async (
+            value: LayerReplaceSide,
+          ): Promise<PersistedLayerReplaceSide> => ({
             ...value,
             rootIds: [...value.rootIds],
-            selection: { ...value.selection, selectedLayerIds: [...value.selection.selectedLayerIds] },
-            entries: await Promise.all(value.entries.map(async entry => ({
-              location: { ...entry.location },
-              snapshot: await snapshot(entry.snapshot),
-            }))),
+            selection: {
+              ...value.selection,
+              selectedLayerIds: [...value.selection.selectedLayerIds],
+            },
+            entries: await Promise.all(
+              value.entries.map(async (entry) => ({
+                location: { ...entry.location },
+                snapshot: await snapshot(entry.snapshot),
+              })),
+            ),
           });
           return {
             ...op,
             before: await side(op.before),
             after: await side(op.after),
-            maskChanges: op.maskChanges?.map(change => ({ ...change, before: [...change.before], after: [...change.after] })),
+            maskChanges: op.maskChanges?.map((change) => ({
+              ...change,
+              before: [...change.before],
+              after: [...change.after],
+            })),
           };
         }
         case 'layerMerge':
@@ -261,7 +327,10 @@ export class HistoryTree {
             },
             tiles: op.tiles.map((tile) => ({ ...tile })),
             targetProps: op.targetProps
-              ? { before: { ...op.targetProps.before }, after: { ...op.targetProps.after } }
+              ? {
+                  before: { ...op.targetProps.before },
+                  after: { ...op.targetProps.after },
+                }
               : undefined,
             maskChanges: op.maskChanges?.map((change) => ({
               ...change,
@@ -277,7 +346,9 @@ export class HistoryTree {
           };
       }
     };
-    const persistOp = async (node: HistoryNode): Promise<PersistedOp | null> => {
+    const persistOp = async (
+      node: HistoryNode,
+    ): Promise<PersistedOp | null> => {
       await node.ready;
       const op = node.op;
       if (!op) return null;
@@ -308,7 +379,11 @@ export class HistoryTree {
     // schema 検証は呼び出し側 (PaintEngine / schema.ts) でも行うが、ここでも version と木構造を見る。
     if (!value || typeof value !== 'object') return false;
     const saved = value as Partial<PersistedHistory>;
-    if (saved.version !== HISTORY_VERSION || !Array.isArray(saved.nodes) || saved.nodes.length === 0) {
+    if (
+      saved.version !== HISTORY_VERSION ||
+      !Array.isArray(saved.nodes) ||
+      saved.nodes.length === 0
+    ) {
       return false;
     }
     try {
@@ -363,7 +438,8 @@ export class HistoryTree {
         }
       };
       verify(root);
-      if (reachable.size !== nodes.size || !reachable.has(current)) return false;
+      if (reachable.size !== nodes.size || !reachable.has(current))
+        return false;
       this.root = root;
       this.current = current;
       this.seq = Math.max(...nodes.keys()) + 1;
@@ -406,7 +482,10 @@ export class HistoryTree {
   redo(childIndex?: number): HistoryNode | null {
     const parent = this.current;
     if (parent.children.length === 0) return null;
-    const i = Math.min(childIndex ?? parent.lastChild, parent.children.length - 1);
+    const i = Math.min(
+      childIndex ?? parent.lastChild,
+      parent.children.length - 1,
+    );
     parent.lastChild = i;
     this.current = parent.children[i];
     return this.current;
@@ -418,7 +497,10 @@ export class HistoryTree {
     const parent = node.parent!;
     const i = parent.children.indexOf(node);
     parent.children.splice(i, 1);
-    parent.lastChild = Math.max(0, Math.min(parent.lastChild, parent.children.length - 1));
+    parent.lastChild = Math.max(
+      0,
+      Math.min(parent.lastChild, parent.children.length - 1),
+    );
     this.current = parent;
     return node;
   }
@@ -437,8 +519,9 @@ export class HistoryTree {
 
   retainedBytes(): number {
     let bytes = 0;
+    const assets = new Set<string>();
     const visit = (node: HistoryNode) => {
-      bytes += opBytes(node.op);
+      bytes += opBytes(node.op, assets);
       for (const child of node.children) visit(child);
     };
     visit(this.root);
@@ -447,15 +530,23 @@ export class HistoryTree {
 
   prunableCount(limit: number): number {
     let depth = 0;
-    for (let node = this.current; node !== this.root; node = node.parent!) depth++;
-    return Math.max(0, this.nodeCount() - Math.min(depth, Math.max(0, Math.floor(limit))));
+    for (let node = this.current; node !== this.root; node = node.parent!)
+      depth++;
+    return Math.max(
+      0,
+      this.nodeCount() - Math.min(depth, Math.max(0, Math.floor(limit))),
+    );
   }
 
   pruneToRecent(limit: number): number {
     const before = this.nodeCount();
     const keep = Math.max(0, Math.floor(limit));
     const path: HistoryNode[] = [];
-    for (let node: HistoryNode | null = this.current; node; node = node.parent) {
+    for (
+      let node: HistoryNode | null = this.current;
+      node;
+      node = node.parent
+    ) {
       path.push(node);
     }
     path.reverse();

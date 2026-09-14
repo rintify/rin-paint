@@ -1,7 +1,16 @@
+import {
+  RasterEditSession,
+  RasterSurface,
+} from '../../engine/raster/RasterSurface';
+import { RasterSelectionContent } from '../../engine/raster/RasterSelectionContent';
+import { RasterResampler } from '../../engine/raster/RasterResampler';
 import type { StrokePoint } from '../../model';
 import { unionRect, type DirtyRect } from '../../engine/brush';
 import type { RasterLayer } from '../../engine/layers';
-import type { PaintEngine, SelectedObjectTransform } from '../../engine/PaintEngine';
+import type {
+  PaintEngine,
+  SelectedObjectTransform,
+} from '../../engine/PaintEngine';
 import type { Tool } from '../types';
 
 export interface Pt {
@@ -15,7 +24,6 @@ export interface Pt {
  * 自由変形モードでは角を個別に動かせる (双一次ワープで描画)。
  */
 interface Float {
-  canvas: HTMLCanvasElement;
   w: number;
   h: number;
   corners: [Pt, Pt, Pt, Pt];
@@ -23,7 +31,11 @@ interface Float {
   outline: Pt[];
 }
 
-interface RasterFloat { layer: RasterLayer; canvas: HTMLCanvasElement; before: HTMLCanvasElement }
+interface RasterFloat {
+  layer: RasterLayer;
+  content: RasterSelectionContent;
+  edit: RasterEditSession;
+}
 
 type DragMode = 'move' | 'scale' | 'rotate' | 'corner';
 
@@ -65,71 +77,22 @@ function pointInPolygon(pts: Pt[], x: number, y: number): boolean {
   for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
     const a = pts[i];
     const b = pts[j];
-    if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) {
+    if (
+      a.y > y !== b.y > y &&
+      x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x
+    ) {
       inside = !inside;
     }
   }
   return inside;
 }
 
-/** 3点の対応から src → dst のアフィン変換を ctx.transform に適用して描く */
-function drawTriangle(
-  ctx: CanvasRenderingContext2D,
-  img: CanvasImageSource,
-  s0: Pt,
-  s1: Pt,
-  s2: Pt,
-  d0: Pt,
-  d1: Pt,
-  d2: Pt,
-): void {
-  const den =
-    s0.x * (s1.y - s2.y) + s1.x * (s2.y - s0.y) + s2.x * (s0.y - s1.y);
-  if (Math.abs(den) < 1e-8) return;
-  const a =
-    (d0.x * (s1.y - s2.y) + d1.x * (s2.y - s0.y) + d2.x * (s0.y - s1.y)) / den;
-  const b =
-    (d0.y * (s1.y - s2.y) + d1.y * (s2.y - s0.y) + d2.y * (s0.y - s1.y)) / den;
-  const c =
-    (s0.x * (d1.x - d2.x) + s1.x * (d2.x - d0.x) + s2.x * (d0.x - d1.x)) / den;
-  const d =
-    (s0.x * (d1.y - d2.y) + s1.x * (d2.y - d0.y) + s2.x * (d0.y - d1.y)) / den;
-  const e =
-    (s0.x * (s1.y * d2.x - s2.y * d1.x) +
-      s0.y * (s2.x * d1.x - s1.x * d2.x) +
-      d0.x * (s1.x * s2.y - s2.x * s1.y)) /
-    den;
-  const f =
-    (s0.x * (s1.y * d2.y - s2.y * d1.y) +
-      s0.y * (s2.x * d1.y - s1.x * d2.y) +
-      d0.y * (s1.x * s2.y - s2.x * s1.y)) /
-    den;
-
-  // 継ぎ目が見えないよう、クリップ領域を重心方向へ僅かに膨らませる
-  const gx = (d0.x + d1.x + d2.x) / 3;
-  const gy = (d0.y + d1.y + d2.y) / 3;
-  const grow = (p: Pt): Pt => ({
-    x: gx + (p.x - gx) * 1.03,
-    y: gy + (p.y - gy) * 1.03,
-  });
-  const g0 = grow(d0);
-  const g1 = grow(d1);
-  const g2 = grow(d2);
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(g0.x, g0.y);
-  ctx.lineTo(g1.x, g1.y);
-  ctx.lineTo(g2.x, g2.y);
-  ctx.closePath();
-  ctx.clip();
-  ctx.transform(a, b, c, d, e, f);
-  ctx.drawImage(img, 0, 0);
-  ctx.restore();
-}
-
-export function isFloatTool(tool: Tool): tool is Tool & { floatSelection: FloatSelection } {
-  return 'floatSelection' in tool && (tool as { floatSelection?: FloatSelection }).floatSelection instanceof FloatSelection;
+export function isFloatTool(
+  tool: Tool,
+): tool is Tool & { floatSelection: FloatSelection } {
+  return (
+    'floatSelection' in tool && tool.floatSelection instanceof FloatSelection
+  );
 }
 
 export class FloatSelection {
@@ -183,7 +146,15 @@ export class FloatSelection {
       maxX = Math.max(maxX, pt.x);
       maxY = Math.max(maxY, pt.y);
     }
-    return this.extract({ trace, outline: pts, minX, minY, maxX, maxY, preferredLayerId });
+    return this.extract({
+      trace,
+      outline: pts,
+      minX,
+      minY,
+      maxX,
+      maxY,
+      preferredLayerId,
+    });
   }
 
   extractFromRect(rect: DirtyRect, preferredLayerId?: string): boolean {
@@ -201,38 +172,59 @@ export class FloatSelection {
       { x: maxX, y: maxY },
       { x: minX, y: maxY },
     ];
-    return this.extract({ trace, outline, minX, minY, maxX, maxY, preferredLayerId });
+    return this.extract({
+      trace,
+      outline,
+      minX,
+      minY,
+      maxX,
+      maxY,
+      preferredLayerId,
+    });
   }
 
   extract(input: FloatExtractInput): boolean {
-    const { w: artW, h: artH } = this.eng.artboard;
-    const minX = Math.max(0, Math.floor(input.minX));
-    const minY = Math.max(0, Math.floor(input.minY));
-    const maxX = Math.min(artW, Math.ceil(input.maxX));
-    const maxY = Math.min(artH, Math.ceil(input.maxY));
+    const minX = Math.floor(input.minX);
+    const minY = Math.floor(input.minY);
+    const maxX = Math.ceil(input.maxX);
+    const maxY = Math.ceil(input.maxY);
     const w = maxX - minX;
     const h = maxY - minY;
-    if (w < 3 || h < 3) {
+    if (w < 1 || h < 1) {
       this.reset();
       this.emitSelectionState();
       return false;
     }
 
     const selected = this.eng.selectedRasters();
-    this.rasterFloats = selected.map(item => {
-      const before = document.createElement('canvas'); before.width = artW; before.height = artH; before.getContext('2d')!.drawImage(item.runtime.canvas, 0, 0);
-      const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
-      const cc = canvas.getContext('2d')!; cc.translate(-minX, -minY); input.trace(cc); cc.clip(); cc.drawImage(item.runtime.canvas, 0, 0);
-      item.runtime.ctx.save(); item.runtime.ctx.globalCompositeOperation = 'destination-out'; input.trace(item.runtime.ctx); item.runtime.ctx.fill(); item.runtime.ctx.restore();
-      return { layer: item, canvas, before };
-    });
-    const canvas = (input.preferredLayerId
-      ? this.rasterFloats.find(item => item.layer.id === input.preferredLayerId)?.canvas
-      : undefined) ?? this.rasterFloats[0]?.canvas ?? document.createElement('canvas');
-    if (!canvas.width) { canvas.width = w; canvas.height = h; }
-
+    this.rasterFloats = [];
+    try {
+      for (const layer of selected) {
+        const edit = new RasterEditSession(layer.runtime.surface);
+        const item = {
+          layer,
+          edit,
+          content: new RasterSelectionContent(new RasterSurface(), {
+            x: minX,
+            y: minY,
+            w,
+            h,
+          }),
+        };
+        this.rasterFloats.push(item);
+        item.content = RasterSelectionContent.extract(
+          layer.runtime.surface,
+          { x: minX, y: minY, w, h },
+          input.trace,
+          edit,
+        );
+      }
+    } catch (error) {
+      for (const item of this.rasterFloats) item.edit.cancel();
+      this.reset();
+      throw error;
+    }
     this.float = {
-      canvas,
       w,
       h,
       corners: [
@@ -243,13 +235,22 @@ export class FloatSelection {
       ],
       outline: input.outline.map((pt) => ({ x: pt.x - minX, y: pt.y - minY })),
     };
-    this.origRect = { minX: minX - 2, minY: minY - 2, maxX: maxX + 2, maxY: maxY + 2 };
-    this.objectTransforms = this.eng.selectedObjectsInRect(this.origRect, input.outline);
-    this.sourceCorners = this.float.corners.map(point => ({ ...point }));
+    this.origRect = {
+      minX: minX - 2,
+      minY: minY - 2,
+      maxX: maxX + 2,
+      maxY: maxY + 2,
+    };
+    this.objectTransforms = this.eng.selectedObjectsInRect(
+      this.origRect,
+      input.outline,
+    );
+    this.sourceCorners = this.float.corners.map((point) => ({ ...point }));
     this.phase = 'float';
     this.free = false;
     this.drag = null;
-    for (const item of this.rasterFloats) this.eng.bumpLayer(item.layer.id, this.origRect);
+    for (const item of this.rasterFloats)
+      this.eng.bumpLayer(item.layer.id, this.origRect);
     this.emitSelectionState();
     this.eng.requestOverlayRender();
     return true;
@@ -281,7 +282,10 @@ export class FloatSelection {
     if (d.mode === 'move') {
       const dx = p.x - d.sx;
       const dy = p.y - d.sy;
-      f.corners = d.startCorners.map((q) => ({ x: q.x + dx, y: q.y + dy })) as Float['corners'];
+      f.corners = d.startCorners.map((q) => ({
+        x: q.x + dx,
+        y: q.y + dy,
+      })) as Float['corners'];
     } else if (d.mode === 'corner') {
       const q = d.startCorners[d.corner];
       f.corners[d.corner] = { x: q.x + (p.x - d.sx), y: q.y + (p.y - d.sy) };
@@ -303,8 +307,14 @@ export class FloatSelection {
       })) as Float['corners'];
     }
     const damage = unionRect(beforeRect, this.transformedRect(4));
-    if (this.objectTransforms.length) this.eng.previewObjectGroup(this.objectTransforms, this.sourceCorners, f.corners);
-    for (const item of this.rasterFloats) this.eng.bumpLayer(item.layer.id, damage);
+    if (this.objectTransforms.length)
+      this.eng.previewObjectGroup(
+        this.objectTransforms,
+        this.sourceCorners,
+        f.corners,
+      );
+    for (const item of this.rasterFloats)
+      this.eng.bumpLayer(item.layer.id, damage);
     this.eng.requestOverlayRender();
   }
 
@@ -317,14 +327,17 @@ export class FloatSelection {
     if (this.phase !== 'float' || !this.float) return;
     this.stamp();
     this.origRect = unionRect(this.origRect!, this.transformedRect(4));
-    for (const item of this.rasterFloats) this.eng.bumpLayer(item.layer.id, this.transformedRect(4));
+    for (const item of this.rasterFloats)
+      this.eng.bumpLayer(item.layer.id, this.transformedRect(4));
   }
 
   commit(): void {
     if (this.phase !== 'float' || !this.float) return;
     this.stamp();
-    const rect = unionRect(this.origRect!, this.transformedRect(4));
-    const entries = this.rasterFloats.map(item => ({ layer: item.layer, before: item.before, rect }));
+    const entries = this.rasterFloats.map((item) => ({
+      layer: item.layer,
+      change: item.edit.commit(),
+    }));
     const objects = this.objectTransforms;
     this.reset();
     this.eng.commitRasterBatch(entries, this.historyLabel, objects);
@@ -334,7 +347,7 @@ export class FloatSelection {
   cancelSelection(): void {
     if (this.phase === 'float') {
       for (const item of this.rasterFloats) {
-        item.layer.runtime.ctx.clearRect(0, 0, this.eng.artboard.w, this.eng.artboard.h); item.layer.runtime.ctx.drawImage(item.before, 0, 0);
+        item.edit.cancel();
         this.eng.bumpLayer(item.layer.id);
       }
       this.eng.restoreObjectGroup(this.objectTransforms);
@@ -358,8 +371,26 @@ export class FloatSelection {
 
   drawAboveLayer(ctx: CanvasRenderingContext2D, layerId: string): void {
     if (this.phase !== 'float') return;
-    const item = this.rasterFloats.find(value => value.layer.id === layerId);
-    if (item) this.drawFloatImage(ctx, item.canvas);
+    const item = this.rasterFloats.find((value) => value.layer.id === layerId);
+    if (item && this.float) {
+      const transform = ctx.getTransform();
+      const region = {
+        x: -transform.e,
+        y: -transform.f,
+        w: ctx.canvas.width,
+        h: ctx.canvas.height,
+      };
+      const surface = new RasterSurface(),
+        edit = new RasterEditSession(surface);
+      RasterResampler.draw(
+        item.content.surface,
+        item.content.rect,
+        this.float.corners,
+        edit,
+        region,
+      );
+      surface.drawRegion(ctx, region);
+    }
   }
 
   drawOverlay(ctx: CanvasRenderingContext2D): void {
@@ -441,62 +472,37 @@ export class FloatSelection {
     return { x: topX + (botX - topX) * v, y: topY + (botY - topY) * v };
   }
 
-  private isParallelogram(): boolean {
-    const [c0, c1, c2, c3] = this.float!.corners;
-    return (
-      Math.abs(c0.x + c2.x - c1.x - c3.x) < 0.01 &&
-      Math.abs(c0.y + c2.y - c1.y - c3.y) < 0.01
-    );
-  }
-
-  private drawFloatImage(ctx: CanvasRenderingContext2D, image: HTMLCanvasElement): void {
-    const f = this.float!;
-    const [c0, c1, , c3] = f.corners;
-    ctx.save();
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    if (this.isParallelogram()) {
-      ctx.transform(
-        (c1.x - c0.x) / f.w,
-        (c1.y - c0.y) / f.w,
-        (c3.x - c0.x) / f.h,
-        (c3.y - c0.y) / f.h,
-        c0.x,
-        c0.y,
-      );
-      ctx.drawImage(image, 0, 0);
-    } else {
-      let maxEdge = 0;
-      for (let i = 0; i < 4; i++) {
-        const a = f.corners[i];
-        const b = f.corners[(i + 1) % 4];
-        maxEdge = Math.max(maxEdge, Math.hypot(b.x - a.x, b.y - a.y));
-      }
-      const n = Math.max(4, Math.min(32, Math.ceil(maxEdge / 48)));
-      for (let j = 0; j < n; j++) {
-        for (let i = 0; i < n; i++) {
-          const sx0 = (f.w * i) / n;
-          const sx1 = (f.w * (i + 1)) / n;
-          const sy0 = (f.h * j) / n;
-          const sy1 = (f.h * (j + 1)) / n;
-          const s00 = { x: sx0, y: sy0 };
-          const s10 = { x: sx1, y: sy0 };
-          const s11 = { x: sx1, y: sy1 };
-          const s01 = { x: sx0, y: sy1 };
-          const d00 = this.toWorld(sx0, sy0);
-          const d10 = this.toWorld(sx1, sy0);
-          const d11 = this.toWorld(sx1, sy1);
-          const d01 = this.toWorld(sx0, sy1);
-          drawTriangle(ctx, image, s00, s10, s11, d00, d10, d11);
-          drawTriangle(ctx, image, s00, s11, s01, d00, d11, d01);
-        }
-      }
-    }
-    ctx.restore();
-  }
-
   private stamp(): void {
-    for (const item of this.rasterFloats) this.drawFloatImage(item.layer.runtime.ctx, item.canvas);
+    try {
+      for (const item of this.rasterFloats)
+        RasterResampler.draw(
+          item.content.surface,
+          item.content.rect,
+          this.float!.corners,
+          item.edit,
+        );
+    } catch (error) {
+      this.cancelSelection();
+      throw error;
+    }
+  }
+
+  centerOnPaper(): void {
+    if (!this.float) return;
+    const r = this.transformedRect(0),
+      dx = Math.round(this.eng.artboard.w / 2 - (r.minX + r.maxX) / 2),
+      dy = Math.round(this.eng.artboard.h / 2 - (r.minY + r.maxY) / 2);
+    for (const p of this.float.corners) {
+      p.x += dx;
+      p.y += dy;
+    }
+    if (this.objectTransforms.length)
+      this.eng.previewObjectGroup(
+        this.objectTransforms,
+        this.sourceCorners,
+        this.float.corners,
+      );
+    this.commit();
   }
 
   private rotateHandlePos(): Pt {
@@ -522,17 +528,23 @@ export class FloatSelection {
     };
   }
 
-  private hitTest(px: number, py: number): { mode: DragMode; corner: number } | null {
+  private hitTest(
+    px: number,
+    py: number,
+  ): { mode: DragMode; corner: number } | null {
     const f = this.float!;
     const tol = 14 * this.eng.uiScale();
     if (!this.free) {
       const rh = this.rotateHandlePos();
-      if (Math.hypot(px - rh.x, py - rh.y) < tol) return { mode: 'rotate', corner: -1 };
+      if (Math.hypot(px - rh.x, py - rh.y) < tol)
+        return { mode: 'rotate', corner: -1 };
     }
     for (let i = 0; i < 4; i++) {
       const c = f.corners[i];
       if (Math.hypot(px - c.x, py - c.y) < tol) {
-        return this.free ? { mode: 'corner', corner: i } : { mode: 'scale', corner: i };
+        return this.free
+          ? { mode: 'corner', corner: i }
+          : { mode: 'scale', corner: i };
       }
     }
     if (pointInPolygon(f.corners, px, py)) return { mode: 'move', corner: -1 };

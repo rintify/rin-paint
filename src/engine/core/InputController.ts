@@ -67,8 +67,10 @@ export class InputController {
   }
 
   private beginEditableShape(point: StrokePoint, event: PointerEvent): boolean {
-    return this.engine.activeTool().allowsDirectShapeEdit !== false
-      && this.engine.beginShapeEdit(point, event);
+    return (
+      this.engine.activeTool().allowsDirectShapeEdit !== false &&
+      this.engine.beginShapeEdit(point, event)
+    );
   }
 
   attachListeners(area: HTMLElement): void {
@@ -101,10 +103,19 @@ export class InputController {
     this.area = null;
   }
 
-  toPoint(e: { clientX: number; clientY: number; pressure?: number; pointerType?: string }): StrokePoint {
+  toPoint(e: {
+    clientX: number;
+    clientY: number;
+    pressure?: number;
+    pointerType?: string;
+  }): StrokePoint {
     const { x, y } = this.engine.view.clientToArt(e.clientX, e.clientY);
     const pressure =
-      e.pointerType === 'mouse' ? 1 : e.pressure && e.pressure > 0 ? e.pressure : 0.5;
+      e.pointerType === 'mouse'
+        ? 1
+        : e.pressure && e.pressure > 0
+          ? e.pressure
+          : 0.5;
     return { x, y, pressure };
   }
 
@@ -113,7 +124,7 @@ export class InputController {
     return !!t && !!t.closest('button, [data-canvas-ui]');
   }
 
-  private onPointerDown = (e: PointerEvent): void => {
+  private onPointerDownImpl = (e: PointerEvent): void => {
     const eng = this.engine;
     if (this.isUiTarget(e)) return;
     if (useStore.getState().textEditingId) eng.finishTextEditing();
@@ -161,13 +172,22 @@ export class InputController {
       startClientY: e.clientY,
       timer: setTimeout(() => {
         const pending = this.pendingPress;
-        if (!pending || pending.pointerId !== pointerId || this.activePointer !== pointerId) {
+        if (
+          !pending ||
+          pending.pointerId !== pointerId ||
+          this.activePointer !== pointerId
+        ) {
           return;
         }
         this.pendingPress = null;
         this.activePointer = null;
         const point = pending.latest;
-        this.beginEyedropper(point, pointerId, eng.longPressEyedropperSource(), false);
+        this.beginEyedropper(
+          point,
+          pointerId,
+          eng.longPressEyedropperSource(),
+          false,
+        );
       }, EYEDROPPER_HOLD_MS),
     };
     e.preventDefault();
@@ -229,18 +249,24 @@ export class InputController {
     }
   };
 
-  private onPointerMove = (e: PointerEvent): void => {
+  private onPointerMoveImpl = (e: PointerEvent): void => {
     const eng = this.engine;
     if (e.pointerType === 'touch' && this.touchPts.has(e.pointerId)) {
       this.touchPts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
     if (this.panDrag && this.panDrag.id === e.pointerId) {
-      eng.view.panBy(e.clientX - this.panDrag.lastX, e.clientY - this.panDrag.lastY);
+      eng.view.panBy(
+        e.clientX - this.panDrag.lastX,
+        e.clientY - this.panDrag.lastY,
+      );
       this.panDrag.lastX = e.clientX;
       this.panDrag.lastY = e.clientY;
       return;
     }
-    if (this.gesture && (e.pointerId === this.gesture.id1 || e.pointerId === this.gesture.id2)) {
+    if (
+      this.gesture &&
+      (e.pointerId === this.gesture.id1 || e.pointerId === this.gesture.id2)
+    ) {
       this.updateGesture();
       return;
     }
@@ -248,7 +274,11 @@ export class InputController {
       const p = this.toPoint(e);
       this.loupe.x = Math.max(0, Math.min(eng.artboard.w - 1, p.x));
       this.loupe.y = Math.max(0, Math.min(eng.artboard.h - 1, p.y));
-      this.loupe.color = eng.getPixel(this.loupe.x, this.loupe.y, this.loupe.source);
+      this.loupe.color = eng.getPixel(
+        this.loupe.x,
+        this.loupe.y,
+        this.loupe.source,
+      );
       eng.requestOverlayRender();
       return;
     }
@@ -264,7 +294,8 @@ export class InputController {
       if (moved <= EYEDROPPER_MOVE_TOLERANCE_PX) return;
       clearTimeout(pending.timer);
       this.pendingPress = null;
-      if (!this.beginEditableShape(pending.start, e)) eng.activeTool().onDown(pending.start, e);
+      if (!this.beginEditableShape(pending.start, e))
+        eng.activeTool().onDown(pending.start, e);
     }
     if (eng.hasShapeEdit()) {
       eng.updateShapeEdit(this.toPoint(e), e);
@@ -276,14 +307,17 @@ export class InputController {
     for (const ev of events) tool.onMove(this.toPoint(ev), ev);
   };
 
-  private onPointerUp = (e: PointerEvent): void => {
+  private onPointerUpImpl = (e: PointerEvent): void => {
     const eng = this.engine;
     this.touchPts.delete(e.pointerId);
     if (this.panDrag && this.panDrag.id === e.pointerId) {
       this.panDrag = null;
       return;
     }
-    if (this.gesture && (e.pointerId === this.gesture.id1 || e.pointerId === this.gesture.id2)) {
+    if (
+      this.gesture &&
+      (e.pointerId === this.gesture.id1 || e.pointerId === this.gesture.id2)
+    ) {
       this.gesture = null;
       return;
     }
@@ -311,7 +345,8 @@ export class InputController {
       clearTimeout(pending.timer);
       this.pendingPress = null;
       const tool = eng.activeTool();
-      if (this.beginEditableShape(pending.start, e)) eng.finishShapeEdit(this.toPoint(e));
+      if (this.beginEditableShape(pending.start, e))
+        eng.finishShapeEdit(this.toPoint(e));
       else {
         tool.onDown(pending.start, e);
         tool.onUp(this.toPoint(e), e);
@@ -328,7 +363,10 @@ export class InputController {
       this.panDrag = null;
       return;
     }
-    if (this.gesture && (e.pointerId === this.gesture.id1 || e.pointerId === this.gesture.id2)) {
+    if (
+      this.gesture &&
+      (e.pointerId === this.gesture.id1 || e.pointerId === this.gesture.id2)
+    ) {
       this.gesture = null;
       return;
     }
@@ -359,12 +397,21 @@ export class InputController {
 
   private onKeyDown = (e: KeyboardEvent): void => {
     const eng = this.engine;
-    if (e.target instanceof Element && e.target.closest('input, textarea, [contenteditable="true"], [data-text-controls]')) return;
+    if (
+      e.target instanceof Element &&
+      e.target.closest(
+        'input, textarea, [contenteditable="true"], [data-text-controls]',
+      )
+    )
+      return;
     const command = shortcutIdForEvent(e, useStore.getState().shortcuts);
     if (command === 'history.undo') {
       e.preventDefault();
       void eng.undo();
-    } else if (command === 'history.redo' || command === 'history.redoAlternate') {
+    } else if (
+      command === 'history.redo' ||
+      command === 'history.redoAlternate'
+    ) {
       e.preventDefault();
       void eng.redo();
     } else if (command === 'layers.copy') {
@@ -432,7 +479,11 @@ export class InputController {
     this.engine.requestOverlayRender();
   }
 
-  getPixel(x: number, y: number, source: EyedropperSource = 'active-layer'): string {
+  getPixel(
+    x: number,
+    y: number,
+    source: EyedropperSource = 'active-layer',
+  ): string {
     const eng = this.engine;
     const layerId = source === 'active-layer' ? eng.getActiveLayerId() : null;
     if (layerId !== null && !eng.layerById(layerId)) return TRANSPARENT;
@@ -509,4 +560,25 @@ export class InputController {
     ctx.stroke();
     ctx.restore();
   }
+  private guardPointer(
+    handler: (event: PointerEvent) => void,
+  ): (event: PointerEvent) => void {
+    return (event) => {
+      try {
+        handler(event);
+      } catch (error) {
+        this.activePointer = null;
+        this.clearPendingPress();
+        this.engine.activeTool().cancel?.();
+        useStore.getState().set({
+          toolNotice:
+            error instanceof Error ? error.message : '描画処理に失敗しました',
+        });
+        this.engine.requestRender();
+      }
+    };
+  }
+  private onPointerDown = this.guardPointer(this.onPointerDownImpl);
+  private onPointerMove = this.guardPointer(this.onPointerMoveImpl);
+  private onPointerUp = this.guardPointer(this.onPointerUpImpl);
 }

@@ -1,3 +1,4 @@
+import type { PixelRect } from '../raster/geometry';
 import type { Layer } from '../layers';
 import type { TextRenderer } from '../text/render';
 import type { LayerDefinition } from './definition';
@@ -42,6 +43,14 @@ export interface LayerMeasureEnv {
 }
 
 export interface LayerDrawEnv extends LayerMeasureEnv {
+  outputRegion: PixelRect;
+  inputRegion: PixelRect;
+  paperRect: PixelRect;
+  sharpContours?(
+    id: string,
+    threshold: number,
+    revision: number,
+  ): Array<Array<{ x: number; y: number }>>;
   originX: number;
   originY: number;
   layerById(id: string): Layer | null;
@@ -99,4 +108,9 @@ export interface ObjectBounds {
   height?: number;
 }
 
-export type { LayerDefinition, LayerProps, LayerRecord, LayerSnapshot } from './definition';
+export type {
+  LayerDefinition,
+  LayerProps,
+  LayerRecord,
+  LayerSnapshot,
+} from './definition';

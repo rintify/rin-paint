@@ -1,3 +1,4 @@
+import type { RasterSurface } from '../engine/raster/RasterSurface';
 import type { AdjustParams } from './adjust';
 import type { BlendMode } from './blend';
 import type { ImageParams } from './image';
@@ -61,12 +62,6 @@ export interface ImageState {
 export interface CanvasRuntime {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
-  /** Empty raster layers can postpone their artboard-sized allocation. */
-  deferred?: boolean;
-  logicalWidth?: number;
-  logicalHeight?: number;
-  /** null means known empty; undefined means unknown/full for legacy content. */
-  contentBounds?: { x: number; y: number; w: number; h: number } | null;
 }
 
 export interface KindSpec<S, R> {
@@ -75,7 +70,7 @@ export interface KindSpec<S, R> {
 }
 
 export interface LayerKindMap {
-  raster: KindSpec<RasterState, CanvasRuntime>;
+  raster: KindSpec<RasterState, { surface: RasterSurface }>;
   adjust: KindSpec<AdjustState, undefined>;
   outline: KindSpec<OutlineState, undefined>;
   clip: KindSpec<ClipState, undefined>;
@@ -89,7 +84,13 @@ export type LayerState = LayerKindMap[LayerType]['state'];
 export type LayerRuntime = LayerKindMap[LayerType]['runtime'];
 
 export const LAYER_TYPES: readonly LayerType[] = [
-  'raster', 'adjust', 'outline', 'clip', 'shape', 'text', 'image',
+  'raster',
+  'adjust',
+  'outline',
+  'clip',
+  'shape',
+  'text',
+  'image',
 ];
 
 export function isLayerType(value: string): value is LayerType {

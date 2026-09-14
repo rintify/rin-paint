@@ -1,5 +1,10 @@
+import { TILE_SIZE, WORLD_LIMIT } from '../raster/geometry';
 import { HISTORY_VERSION, PROJECT_VERSION } from './version';
-import type { PersistedHistory, PersistedOp, PersistedAtomicOp } from '../history/historyTree';
+import type {
+  PersistedHistory,
+  PersistedOp,
+  PersistedAtomicOp,
+} from '../history/historyTree';
 import type { SavedPage, SavedProjectMeta } from './db';
 
 function isBlob(value: unknown): value is Blob {
@@ -10,13 +15,42 @@ function isTile(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const t = value as Record<string, unknown>;
   return (
-    typeof t.x === 'number' &&
-    typeof t.y === 'number' &&
-    typeof t.w === 'number' &&
-    typeof t.h === 'number' &&
-    isBlob(t.before) &&
-    isBlob(t.after)
+    Number.isInteger(t.tx) &&
+    Number.isInteger(t.ty) &&
+    Math.abs(Number(t.tx)) <= WORLD_LIMIT / TILE_SIZE &&
+    Math.abs(Number(t.ty)) <= WORLD_LIMIT / TILE_SIZE &&
+    (t.before === null || typeof t.before === 'string') &&
+    (t.after === null || typeof t.after === 'string')
   );
+}
+
+export function isRasterContent(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const c = value as Record<string, unknown>;
+  if (
+    c.kind !== 'raster-tiles' ||
+    c.tileSize !== TILE_SIZE ||
+    !Array.isArray(c.tiles)
+  )
+    return false;
+  const keys = new Set<string>();
+  return c.tiles.every((t) => {
+    if (
+      !t ||
+      !Number.isInteger(t.tx) ||
+      !Number.isInteger(t.ty) ||
+      typeof t.assetId !== 'string' ||
+      t.tx < -WORLD_LIMIT / TILE_SIZE ||
+      t.ty < -WORLD_LIMIT / TILE_SIZE ||
+      t.tx >= WORLD_LIMIT / TILE_SIZE ||
+      t.ty >= WORLD_LIMIT / TILE_SIZE
+    )
+      return false;
+    const key = `${t.tx},${t.ty}`;
+    if (keys.has(key)) return false;
+    keys.add(key);
+    return true;
+  });
 }
 
 function isLocation(value: unknown): boolean {
@@ -34,18 +68,23 @@ function isLayerLink(value: unknown): boolean {
   const link = value as Record<string, unknown>;
   const source = link.source as Record<string, unknown> | undefined;
   const fallback = link.fallbackValues as Record<string, unknown> | undefined;
-  return !!source
-    && typeof source.pageId === 'string'
-    && typeof source.layerId === 'string'
-    && typeof link.sourceNameHint === 'string'
-    && typeof link.sourcePageIndexHint === 'number'
-    && Array.isArray(link.linkedParameterIds)
-    && link.linkedParameterIds.every(id => typeof id === 'string')
-    && !!fallback
-    && Object.values(fallback).every(item => item === null
-      || typeof item === 'string'
-      || typeof item === 'boolean'
-      || (typeof item === 'number' && Number.isFinite(item)));
+  return (
+    !!source &&
+    typeof source.pageId === 'string' &&
+    typeof source.layerId === 'string' &&
+    typeof link.sourceNameHint === 'string' &&
+    typeof link.sourcePageIndexHint === 'number' &&
+    Array.isArray(link.linkedParameterIds) &&
+    link.linkedParameterIds.every((id) => typeof id === 'string') &&
+    !!fallback &&
+    Object.values(fallback).every(
+      (item) =>
+        item === null ||
+        typeof item === 'string' ||
+        typeof item === 'boolean' ||
+        (typeof item === 'number' && Number.isFinite(item)),
+    )
+  );
 }
 
 function isCommon(value: unknown): boolean {
@@ -70,7 +109,8 @@ function isLayerSnapshot(value: unknown): boolean {
     typeof s.type === 'string' &&
     isCommon(s.common) &&
     'state' in s &&
-    (s.content === undefined || isBlob(s.content))
+    (s.content === undefined ||
+      (s.type === 'raster' ? isRasterContent(s.content) : isBlob(s.content)))
   );
 }
 
@@ -79,40 +119,70 @@ function isAtomicOp(value: unknown): value is PersistedAtomicOp {
   const op = value as Record<string, unknown>;
   switch (op.kind) {
     case 'raster':
-      return typeof op.layerId === 'string' && Array.isArray(op.tiles) && op.tiles.every(isTile);
+      return (
+        typeof op.layerId === 'string' &&
+        Array.isArray(op.tiles) &&
+        op.tiles.every(isTile)
+      );
     case 'layerAdd':
       return isLocation(op.location) && isLayerSnapshot(op.snapshot);
     case 'layerRemove':
-      return isLocation(op.location) && Array.isArray(op.snapshots) && op.snapshots.every(isLayerSnapshot);
+      return (
+        isLocation(op.location) &&
+        Array.isArray(op.snapshots) &&
+        op.snapshots.every(isLayerSnapshot)
+      );
     case 'layerMove':
-      return typeof op.layerId === 'string' && isLocation(op.from) && isLocation(op.to);
+      return (
+        typeof op.layerId === 'string' &&
+        isLocation(op.from) &&
+        isLocation(op.to)
+      );
     case 'layerProps':
       return typeof op.layerId === 'string' && !!op.before && !!op.after;
     case 'layerParameter':
-      return typeof op.layerId === 'string' && typeof op.parameterId === 'string'
-        && (op.before === null || typeof op.before === 'string' || typeof op.before === 'boolean'
-          || (typeof op.before === 'number' && Number.isFinite(op.before)))
-        && (op.after === null || typeof op.after === 'string' || typeof op.after === 'boolean'
-          || (typeof op.after === 'number' && Number.isFinite(op.after)));
+      return (
+        typeof op.layerId === 'string' &&
+        typeof op.parameterId === 'string' &&
+        (op.before === null ||
+          typeof op.before === 'string' ||
+          typeof op.before === 'boolean' ||
+          (typeof op.before === 'number' && Number.isFinite(op.before))) &&
+        (op.after === null ||
+          typeof op.after === 'string' ||
+          typeof op.after === 'boolean' ||
+          (typeof op.after === 'number' && Number.isFinite(op.after)))
+      );
     case 'layerLink': {
       const target = op.target as Record<string, unknown> | undefined;
-      return !!target && typeof target.pageId === 'string' && typeof target.layerId === 'string'
-        && isLayerLink(op.before) && isLayerLink(op.after);
+      return (
+        !!target &&
+        typeof target.pageId === 'string' &&
+        typeof target.layerId === 'string' &&
+        isLayerLink(op.before) &&
+        isLayerLink(op.after)
+      );
     }
     case 'layerReplace': {
       const side = (value: unknown) => {
         if (!value || typeof value !== 'object') return false;
         const s = value as Record<string, unknown>;
         const selection = s.selection as Record<string, unknown> | undefined;
-        return Array.isArray(s.rootIds)
-          && Array.isArray(s.entries)
-          && s.entries.every(entry => !!entry && typeof entry === 'object'
-            && isLocation((entry as Record<string, unknown>).location)
-            && isLayerSnapshot((entry as Record<string, unknown>).snapshot))
-          && !!selection
-          && typeof selection.activeLayerId === 'string'
-          && Array.isArray(selection.selectedLayerIds)
-          && typeof selection.multiSelectMode === 'boolean';
+        return (
+          Array.isArray(s.rootIds) &&
+          Array.isArray(s.entries) &&
+          s.entries.every(
+            (entry) =>
+              !!entry &&
+              typeof entry === 'object' &&
+              isLocation((entry as Record<string, unknown>).location) &&
+              isLayerSnapshot((entry as Record<string, unknown>).snapshot),
+          ) &&
+          !!selection &&
+          typeof selection.activeLayerId === 'string' &&
+          Array.isArray(selection.selectedLayerIds) &&
+          typeof selection.multiSelectMode === 'boolean'
+        );
       };
       return side(op.before) && side(op.after);
     }
@@ -132,7 +202,11 @@ function isAtomicOp(value: unknown): value is PersistedAtomicOp {
         typeof op.afterActiveId === 'string'
       );
     case 'layerContent':
-      return typeof op.layerId === 'string' && isLayerSnapshot(op.before) && isLayerSnapshot(op.after);
+      return (
+        typeof op.layerId === 'string' &&
+        isLayerSnapshot(op.before) &&
+        isLayerSnapshot(op.after)
+      );
     default:
       return false;
   }
@@ -150,8 +224,14 @@ function isPersistedOp(value: unknown): value is PersistedOp {
 export function isPersistedHistory(value: unknown): value is PersistedHistory {
   if (!value || typeof value !== 'object') return false;
   const h = value as Partial<PersistedHistory>;
-  if (h.version !== HISTORY_VERSION || !Array.isArray(h.nodes) || h.nodes.length === 0) return false;
-  if (!Number.isInteger(h.rootId) || !Number.isInteger(h.currentId)) return false;
+  if (
+    h.version !== HISTORY_VERSION ||
+    !Array.isArray(h.nodes) ||
+    h.nodes.length === 0
+  )
+    return false;
+  if (!Number.isInteger(h.rootId) || !Number.isInteger(h.currentId))
+    return false;
   const ids = new Set<number>();
   for (const node of h.nodes) {
     if (
@@ -189,7 +269,8 @@ export function isSavedPage(value: unknown): value is SavedPage {
     typeof p.id === 'string' &&
     !!p.pageSpec &&
     Array.isArray(p.rootLayerIds) &&
-    Array.isArray(p.layers) && p.layers.every(isLayerSnapshot) &&
+    Array.isArray(p.layers) &&
+    p.layers.every(isLayerSnapshot) &&
     typeof p.activeLayerId === 'string' &&
     isPersistedHistory(p.history) &&
     !!p.view &&

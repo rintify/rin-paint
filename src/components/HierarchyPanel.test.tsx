@@ -16,23 +16,34 @@ const actions = vi.hoisted(() => ({
   addAdjust: vi.fn(),
   addOutline: vi.fn(),
   addClip: vi.fn(),
-  setActiveLayer: vi.fn((id: string) => useStore.getState().set({ activeLayerId: id })),
+  setActiveLayer: vi.fn((id: string) =>
+    useStore.getState().set({ activeLayerId: id }),
+  ),
   beginMultiSelect: vi.fn((id: string) => {
     const state = useStore.getState();
-    const previous = state.selectedLayerIds.length ? state.selectedLayerIds : [state.activeLayerId];
+    const previous = state.selectedLayerIds.length
+      ? state.selectedLayerIds
+      : [state.activeLayerId];
     const selected = [...previous, ...(!previous.includes(id) ? [id] : [])];
-    state.set({ multiSelectMode: true, selectedLayerIds: selected, activeLayerId: selected[0] });
+    state.set({
+      multiSelectMode: true,
+      selectedLayerIds: selected,
+      activeLayerId: selected[0],
+    });
   }),
   exitMultiSelect: vi.fn(() => {
     const state = useStore.getState();
-    state.set({ multiSelectMode: false, selectedLayerIds: state.activeLayerId ? [state.activeLayerId] : [] });
+    state.set({
+      multiSelectMode: false,
+      selectedLayerIds: state.activeLayerId ? [state.activeLayerId] : [],
+    });
   }),
   toggleDescendantSelection: vi.fn((id: string) => {
     const state = useStore.getState();
-    const layer = state.layers.find(item => item.id === id);
+    const layer = state.layers.find((item) => item.id === id);
     const descendants: string[] = [];
     const visit = (parentId: string) => {
-      const parent = state.layers.find(item => item.id === parentId);
+      const parent = state.layers.find((item) => item.id === parentId);
       for (const childId of parent?.childIds ?? []) {
         descendants.push(childId);
         visit(childId);
@@ -40,8 +51,14 @@ const actions = vi.hoisted(() => ({
     };
     visit(id);
     if (!layer?.childIds.length) return;
-    const selected = new Set(state.selectedLayerIds.length ? state.selectedLayerIds : [state.activeLayerId]);
-    const allSelected = descendants.every(descendant => selected.has(descendant));
+    const selected = new Set(
+      state.selectedLayerIds.length
+        ? state.selectedLayerIds
+        : [state.activeLayerId],
+    );
+    const allSelected = descendants.every((descendant) =>
+      selected.has(descendant),
+    );
     if (state.multiSelectMode && selected.has(id) && allSelected) {
       selected.delete(id);
       for (const descendant of descendants) selected.delete(descendant);
@@ -51,14 +68,23 @@ const actions = vi.hoisted(() => ({
     }
     const next = [...selected];
     if (!next.length) {
-      state.set({ multiSelectMode: false, selectedLayerIds: [id], activeLayerId: id });
+      state.set({
+        multiSelectMode: false,
+        selectedLayerIds: [id],
+        activeLayerId: id,
+      });
       return;
     }
-    state.set({ multiSelectMode: true, selectedLayerIds: next, activeLayerId: next[0] });
+    state.set({
+      multiSelectMode: true,
+      selectedLayerIds: next,
+      activeLayerId: next[0],
+    });
   }),
 }));
 const mockEngine = vi.hoisted(() => ({
   artboard: { w: 1600, h: 1200 },
+  layerById: () => null,
   getLayerCanvas: () => null,
   setActiveLayer: actions.setActiveLayer,
   beginMultiSelect: actions.beginMultiSelect,
@@ -98,7 +124,14 @@ const base = {
   ...caps,
 };
 const layers: LayerMeta[] = [
-  { ...base, id: 'raster', type: 'raster', canRemove: false, canMergeDown: false, state: {} },
+  {
+    ...base,
+    id: 'raster',
+    type: 'raster',
+    canRemove: false,
+    canMergeDown: false,
+    state: {},
+  },
   {
     ...base,
     id: 'shape',
@@ -106,7 +139,18 @@ const layers: LayerMeta[] = [
     type: 'shape',
     canRemove: true,
     canMergeDown: true,
-    state: { snapEnabled: true, shape: { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 1, color: '#123456' } },
+    state: {
+      snapEnabled: true,
+      shape: {
+        kind: 'line',
+        x1: 0,
+        y1: 0,
+        x2: 10,
+        y2: 10,
+        strokeWidth: 1,
+        color: '#123456',
+      },
+    },
   },
 ];
 let container: HTMLDivElement;
@@ -146,7 +190,11 @@ async function click(element: Element | null) {
   });
 }
 function menuItem(label: string): Element | null {
-  return [...document.querySelectorAll('[role="menuitem"]')].find(el => el.textContent === label) ?? null;
+  return (
+    [...document.querySelectorAll('[role="menuitem"]')].find(
+      (el) => el.textContent === label,
+    ) ?? null
+  );
 }
 function renderPanel() {
   return act(async () =>
@@ -154,7 +202,8 @@ function renderPanel() {
       <EngineProvider engine={mockEngine}>
         <HierarchyPanel />
       </EngineProvider>,
-    ));
+    ),
+  );
 }
 describe('layer settings entry points', () => {
   it('keeps raster addition on + and groups all effects in the overflow menu', async () => {
@@ -180,7 +229,7 @@ describe('layer settings entry points', () => {
     });
     await renderPanel();
     const rows = [...container.querySelectorAll('.layer-row')];
-    expect(rows.map(row => row.textContent)).toEqual([
+    expect(rows.map((row) => row.textContent)).toEqual([
       expect.stringContaining('ラスター'),
       expect.stringContaining('直線'),
     ]);
@@ -195,18 +244,27 @@ describe('layer settings entry points', () => {
     await click(container.querySelector('[aria-label="ラスターのメニュー"]'));
     await click(menuItem('名称変更'));
     await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await new Promise((resolve) => setTimeout(resolve, 300));
     });
-    const input = document.querySelector('[role="dialog"] input') as HTMLInputElement;
+    const input = document.querySelector(
+      '[role="dialog"] input',
+    ) as HTMLInputElement;
     expect(input).not.toBeNull();
     expect(document.activeElement).toBe(input);
     expect(input.value).toBe('ラスター');
     expect(actions.rename).not.toHaveBeenCalled();
     await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '新しい名称');
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value',
+      )!.set!.call(input, '新しい名称');
       input.dispatchEvent(new InputEvent('input', { bubbles: true }));
     });
-    await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    await act(async () =>
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      ),
+    );
     expect(actions.rename).toHaveBeenCalledWith('raster', '新しい名称');
   });
   it('opens raster settings by default and allows closing with X', async () => {
@@ -214,7 +272,9 @@ describe('layer settings entry points', () => {
     expect(container.querySelector('.layer-controls-palette')).not.toBeNull();
     await click(container.querySelector('[aria-label="ラスターのメニュー"]'));
     expect(menuItem('削除')?.getAttribute('aria-disabled')).toBe('true');
-    await click(container.querySelector('[aria-label="レイヤーの設定を閉じる"]'));
+    await click(
+      container.querySelector('[aria-label="レイヤーの設定を閉じる"]'),
+    );
     expect(container.querySelector('.layer-controls-palette')).toBeNull();
     await click(container.querySelector('[aria-label="ラスターのメニュー"]'));
     await click(menuItem('レイヤーの設定'));
@@ -222,9 +282,15 @@ describe('layer settings entry points', () => {
   });
   it('opens shape settings on selection once, respects closing, and targets the clicked menu', async () => {
     await renderPanel();
-    await click([...container.querySelectorAll('.layer-row')].find(el => el.textContent?.includes('直線'))!);
+    await click(
+      [...container.querySelectorAll('.layer-row')].find((el) =>
+        el.textContent?.includes('直線'),
+      )!,
+    );
     expect(container.querySelector('.layer-controls-palette')).not.toBeNull();
-    await click(container.querySelector('[aria-label="レイヤーの設定を閉じる"]'));
+    await click(
+      container.querySelector('[aria-label="レイヤーの設定を閉じる"]'),
+    );
     await act(async () => useStore.getState().set({ layers: [...layers] }));
     expect(container.querySelector('.layer-controls-palette')).toBeNull();
     await act(async () => useStore.getState().set({ activeLayerId: 'raster' }));
@@ -250,8 +316,34 @@ describe('layer settings entry points', () => {
     actions.beginMultiSelect.mockClear();
     actions.toggleDescendantSelection.mockClear();
     const nested: LayerMeta[] = [
-      { ...base, id: 'parent', name: '親', type: 'raster', childIds: ['child'], state: {} },
-      { ...base, id: 'child', name: '子', type: 'shape', parentId: 'parent', canRemove: true, state: { snapEnabled: true, shape: { kind: 'line', x1: 0, y1: 0, x2: 10, y2: 10, strokeWidth: 1, color: '#123456' } } },
+      {
+        ...base,
+        id: 'parent',
+        name: '親',
+        type: 'raster',
+        childIds: ['child'],
+        state: {},
+      },
+      {
+        ...base,
+        id: 'child',
+        name: '子',
+        type: 'shape',
+        parentId: 'parent',
+        canRemove: true,
+        state: {
+          snapEnabled: true,
+          shape: {
+            kind: 'line',
+            x1: 0,
+            y1: 0,
+            x2: 10,
+            y2: 10,
+            strokeWidth: 1,
+            color: '#123456',
+          },
+        },
+      },
     ];
     useStore.getState().set({
       layers: nested,
@@ -260,11 +352,26 @@ describe('layer settings entry points', () => {
       selectedLayerIds: ['parent'],
     });
     await renderPanel();
-    const row = [...container.querySelectorAll('.layer-row')].find(el => el.textContent?.includes('親'))!;
+    const row = [...container.querySelectorAll('.layer-row')].find((el) =>
+      el.textContent?.includes('親'),
+    )!;
     await act(async () => {
-      row.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0, clientX: 10, clientY: 10 }));
+      row.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 10,
+          clientY: 10,
+        }),
+      );
       await vi.advanceTimersByTimeAsync(500);
-      row.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: 10, clientY: 10 }));
+      row.dispatchEvent(
+        new PointerEvent('pointerup', {
+          bubbles: true,
+          clientX: 10,
+          clientY: 10,
+        }),
+      );
       row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(actions.toggleDescendantSelection).toHaveBeenCalledWith('parent');
@@ -277,9 +384,13 @@ describe('layer settings entry points', () => {
     actions.setActiveLayer.mockClear();
     actions.beginMultiSelect.mockClear();
     await renderPanel();
-    const row = [...container.querySelectorAll('.layer-row')].find(el => el.textContent?.includes('直線'))!;
+    const row = [...container.querySelectorAll('.layer-row')].find((el) =>
+      el.textContent?.includes('直線'),
+    )!;
     await act(async () => {
-      row.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
+      row.dispatchEvent(
+        new MouseEvent('click', { bubbles: true, shiftKey: true }),
+      );
     });
     expect(actions.beginMultiSelect).toHaveBeenCalledWith('shape');
     expect(actions.setActiveLayer).not.toHaveBeenCalled();
@@ -288,10 +399,16 @@ describe('layer settings entry points', () => {
   });
   it('shows a snap switch for a shape layer and keeps it out of mixed-type multi-select', async () => {
     await renderPanel();
-    await click([...container.querySelectorAll('.layer-row')].find(el => el.textContent?.includes('直線'))!);
+    await click(
+      [...container.querySelectorAll('.layer-row')].find((el) =>
+        el.textContent?.includes('直線'),
+      )!,
+    );
     const snap = container.querySelector('[aria-label="スナップ"]');
     expect(snap).not.toBeNull();
-    expect(container.textContent).toContain('移動の端・中央、90°回転、多角形の頂点');
+    expect(container.textContent).toContain(
+      '移動の端・中央、90°回転、多角形の頂点',
+    );
     await act(async () => {
       snap!.dispatchEvent(new Event('change', { bubbles: true }));
     });
@@ -301,7 +418,19 @@ describe('layer settings entry points', () => {
       name: '四角形',
       type: 'shape',
       canRemove: true,
-      state: { snapEnabled: false, shape: { kind: 'rect', x: 0, y: 0, width: 8, height: 8, color: '#000', strokeWidth: 1, paintMode: 'stroke' } },
+      state: {
+        snapEnabled: false,
+        shape: {
+          kind: 'rect',
+          x: 0,
+          y: 0,
+          width: 8,
+          height: 8,
+          color: '#000',
+          strokeWidth: 1,
+          paintMode: 'stroke',
+        },
+      },
     };
     useStore.getState().set({
       layers: [...layers, extra],
@@ -319,25 +448,52 @@ describe('layer settings entry points', () => {
       activeLayerId: 'shape',
     });
     await renderPanel();
-    expect([...container.querySelectorAll('[aria-label="スナップ"]')].length).toBe(0);
+    expect(
+      [...container.querySelectorAll('[aria-label="スナップ"]')].length,
+    ).toBe(0);
   });
 });
 
 describe('mask candidates', () => {
   it('keeps matching layers in hierarchy order with their ancestors', () => {
     const nested: LayerMeta[] = [
-      { ...base, id: 'parent', name: '親', type: 'raster', childIds: ['child'], state: {} },
-      { ...base, id: 'child', name: '対象文字', type: 'text', parentId: 'parent', state: { snapEnabled: true, text: {} as never } },
+      {
+        ...base,
+        id: 'parent',
+        name: '親',
+        type: 'raster',
+        childIds: ['child'],
+        state: {},
+      },
+      {
+        ...base,
+        id: 'child',
+        name: '対象文字',
+        type: 'text',
+        parentId: 'parent',
+        state: { snapEnabled: true, text: {} as never },
+      },
       {
         ...base,
         id: 'adjust',
         name: '補正',
         type: 'adjust',
-        state: { params: { brightness: 100, contrast: 100, hue: 0, saturation: 100 }, maskLayerIds: [] },
+        state: {
+          params: { brightness: 100, contrast: 100, hue: 0, saturation: 100 },
+          maskLayerIds: [],
+        },
       },
     ];
-    const result = maskCandidateRows(['parent', 'adjust'], nested, 'adjust', '対象');
-    expect(result.map(row => [row.layer.id, row.depth])).toEqual([['parent', 0], ['child', 1]]);
+    const result = maskCandidateRows(
+      ['parent', 'adjust'],
+      nested,
+      'adjust',
+      '対象',
+    );
+    expect(result.map((row) => [row.layer.id, row.depth])).toEqual([
+      ['parent', 0],
+      ['child', 1],
+    ]);
   });
 });
 
@@ -348,7 +504,10 @@ describe('mask interactions', () => {
     name: '補正',
     type: 'adjust',
     canRemove: true,
-    state: { params: { brightness: 100, contrast: 100, hue: 0, saturation: 100 }, maskLayerIds: [] },
+    state: {
+      params: { brightness: 100, contrast: 100, hue: 0, saturation: 100 },
+      maskLayerIds: [],
+    },
   };
 
   it('adds a dragged layer to the active effect mask without moving it', async () => {
@@ -380,18 +539,30 @@ describe('mask interactions', () => {
 
   it('scrolls to and pulses a mask source when its chip is clicked', async () => {
     const animate = vi.fn(() => ({ cancel() {} }));
-    Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: animate });
+    Object.defineProperty(HTMLElement.prototype, 'animate', {
+      configurable: true,
+      value: animate,
+    });
     useStore.getState().set({
-      layers: [...layers, { ...adjust, state: { ...adjust.state, maskLayerIds: ['shape'] } }],
+      layers: [
+        ...layers,
+        { ...adjust, state: { ...adjust.state, maskLayerIds: ['shape'] } },
+      ],
       rootLayerIds: ['raster', 'shape', 'adjust'],
       activeLayerId: 'adjust',
       selectedLayerIds: ['adjust'],
     });
     await renderPanel();
     animate.mockClear();
-    await click(container.querySelector('[aria-label="直線をヒエラルキーで表示"]'));
-    expect((animate.mock.calls as unknown as [Keyframe[]][]).some(([frames]) =>
-      Array.isArray(frames) && frames.some(frame => frame.transform === 'scale(1.06)'),
-    )).toBe(true);
+    await click(
+      container.querySelector('[aria-label="直線をヒエラルキーで表示"]'),
+    );
+    expect(
+      (animate.mock.calls as unknown as [Keyframe[]][]).some(
+        ([frames]) =>
+          Array.isArray(frames) &&
+          frames.some((frame) => frame.transform === 'scale(1.06)'),
+      ),
+    ).toBe(true);
   });
 });

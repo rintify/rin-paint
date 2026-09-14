@@ -1,4 +1,9 @@
-import type { ShapePaintMode, ShapeParams, ShapePoint, StrokePoint } from '../../../model';
+import type {
+  ShapePaintMode,
+  ShapeParams,
+  ShapePoint,
+  StrokePoint,
+} from '../../../model';
 import type { ShapeBounds } from '../geometry';
 import type {
   ShapeArtboard,
@@ -14,7 +19,8 @@ import type {
  * 設定パレットも「別種の図形が来たら素通し」という同じ約束で書ける。
  */
 export function shapeFields<S extends ShapeParams>(kind: S['kind']) {
-  const narrow = (shape: ShapeParams): S | null => (shape.kind === kind ? (shape as S) : null);
+  const narrow = (shape: ShapeParams): S | null =>
+    shape.kind === kind ? (shape as S) : null;
   return {
     control(
       label: string,
@@ -28,7 +34,10 @@ export function shapeFields<S extends ShapeParams>(kind: S['kind']) {
         value,
         min,
         canvasLength: canvasLength || undefined,
-        make: (input, shape) => { const own = narrow(shape); return own ? make(own, input) : shape; },
+        make: (input, shape) => {
+          const own = narrow(shape);
+          return own ? make(own, input) : shape;
+        },
       };
     },
     parameter(
@@ -44,8 +53,14 @@ export function shapeFields<S extends ShapeParams>(kind: S['kind']) {
         label,
         min,
         canvasLength: canvasLength || undefined,
-        read: shape => { const own = narrow(shape); return own ? read(own) : 0; },
-        write: (shape, value) => { const own = narrow(shape); return own ? write(own, value) : shape; },
+        read: (shape) => {
+          const own = narrow(shape);
+          return own ? read(own) : 0;
+        },
+        write: (shape, value) => {
+          const own = narrow(shape);
+          return own ? write(own, value) : shape;
+        },
       };
     },
   };
@@ -55,8 +70,11 @@ export function shapeFields<S extends ShapeParams>(kind: S['kind']) {
 export function rotationControlField(angle: number): ShapeControlField {
   return {
     label: '回転',
-    value: angle * 180 / Math.PI,
-    make: (value, shape) => shape.kind === 'line' ? shape : { ...shape, rotation: value * Math.PI / 180 },
+    value: (angle * 180) / Math.PI,
+    make: (value, shape) =>
+      shape.kind === 'line'
+        ? shape
+        : { ...shape, rotation: (value * Math.PI) / 180 },
   };
 }
 
@@ -67,14 +85,27 @@ export function paintClosed(
   artboard: ShapeArtboard,
   appendPath: () => void,
 ): void {
-  ctx.beginPath();
-  if (mode === 'fill-outside') ctx.rect(0, 0, artboard.w, artboard.h);
-  appendPath();
-  if (mode === 'stroke') ctx.stroke();
-  else ctx.fill(mode === 'fill-outside' ? 'evenodd' : 'nonzero');
+  ctx.save();
+  try {
+    if (mode === 'fill-outside') {
+      ctx.beginPath();
+      ctx.rect(0, 0, artboard.w, artboard.h);
+      ctx.clip();
+    }
+    ctx.beginPath();
+    if (mode === 'fill-outside') ctx.rect(0, 0, artboard.w, artboard.h);
+    appendPath();
+    if (mode === 'stroke') ctx.stroke();
+    else ctx.fill(mode === 'fill-outside' ? 'evenodd' : 'nonzero');
+  } finally {
+    ctx.restore();
+  }
 }
 
-export function appendClosedPolyline(ctx: CanvasRenderingContext2D, points: ShapePoint[]): void {
+export function appendClosedPolyline(
+  ctx: CanvasRenderingContext2D,
+  points: ShapePoint[],
+): void {
   if (!points.length) return;
   ctx.moveTo(points[0].x, points[0].y);
   for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
@@ -82,25 +113,38 @@ export function appendClosedPolyline(ctx: CanvasRenderingContext2D, points: Shap
 }
 
 /** 頂点の両側を同じ割合だけ切り詰め、arcTo で角を丸めた閉じたパスを作る。 */
-export function appendRoundedClosedPolyline(ctx: CanvasRenderingContext2D, points: ShapePoint[], requestedRadius: number): void {
+export function appendRoundedClosedPolyline(
+  ctx: CanvasRenderingContext2D,
+  points: ShapePoint[],
+  requestedRadius: number,
+): void {
   const radius = Math.max(0, requestedRadius);
-  if (radius <= 0 || points.length < 3) { appendClosedPolyline(ctx, points); return; }
+  if (radius <= 0 || points.length < 3) {
+    appendClosedPolyline(ctx, points);
+    return;
+  }
   const corners = points.map((point, index) => {
     const prev = points[(index - 1 + points.length) % points.length];
     const next = points[(index + 1) % points.length];
     const a = Math.hypot(prev.x - point.x, prev.y - point.y);
     const b = Math.hypot(next.x - point.x, next.y - point.y);
     if (a < 1e-8 || b < 1e-8) return { radius: 0, entry: point };
-    const ux = (prev.x - point.x) / a, uy = (prev.y - point.y) / a;
-    const vx = (next.x - point.x) / b, vy = (next.y - point.y) / b;
+    const ux = (prev.x - point.x) / a,
+      uy = (prev.y - point.y) / a;
+    const vx = (next.x - point.x) / b,
+      vy = (next.y - point.y) / b;
     const angle = Math.acos(Math.max(-1, Math.min(1, ux * vx + uy * vy)));
     const tangent = Math.tan(angle / 2);
-    if (!Number.isFinite(tangent) || tangent < 1e-8) return { radius: 0, entry: point };
-    const actualRadius = Math.min(radius, Math.min(a, b) * .5 * tangent);
+    if (!Number.isFinite(tangent) || tangent < 1e-8)
+      return { radius: 0, entry: point };
+    const actualRadius = Math.min(radius, Math.min(a, b) * 0.5 * tangent);
     const entryDistance = actualRadius / tangent;
     return {
       radius: actualRadius,
-      entry: { x: point.x + ux * entryDistance, y: point.y + uy * entryDistance },
+      entry: {
+        x: point.x + ux * entryDistance,
+        y: point.y + uy * entryDistance,
+      },
     };
   });
   // 生の頂点から開始すると closePath が最後の丸角を横切り、角の外へ突き出す。
@@ -112,15 +156,26 @@ export function appendRoundedClosedPolyline(ctx: CanvasRenderingContext2D, point
   ctx.closePath();
 }
 
-export function withinBounds(bounds: ShapeBounds, point: ShapePoint, slack: number): boolean {
-  return point.x >= bounds.x - slack && point.x <= bounds.x + bounds.w + slack
-    && point.y >= bounds.y - slack && point.y <= bounds.y + bounds.h + slack;
+export function withinBounds(
+  bounds: ShapeBounds,
+  point: ShapePoint,
+  slack: number,
+): boolean {
+  return (
+    point.x >= bounds.x - slack &&
+    point.x <= bounds.x + bounds.w + slack &&
+    point.y >= bounds.y - slack &&
+    point.y <= bounds.y + bounds.h + slack
+  );
 }
 
 /** 四隅ハンドルのヒット判定。points は centeredCorners と同じ左上まわりの順 */
-export function hitCorner(corners: ShapePoint[], test: ShapeHitTest): ShapeHit | null {
+export function hitCorner(
+  corners: ShapePoint[],
+  test: ShapeHitTest,
+): ShapeHit | null {
   const modes = ['nw', 'ne', 'se', 'sw'] as const;
-  const index = corners.findIndex(point => test.near(point.x, point.y));
+  const index = corners.findIndex((point) => test.near(point.x, point.y));
   return index >= 0 ? { mode: modes[index] } : null;
 }
 
@@ -137,12 +192,16 @@ export function resizeByCorner(
   point: StrokePoint,
   lockAspect = false,
 ): { cx: number; cy: number; w: number; h: number } | null {
-  if (mode !== 'nw' && mode !== 'ne' && mode !== 'sw' && mode !== 'se') return null;
-  const cos = Math.cos(-angle), sin = Math.sin(-angle);
+  if (mode !== 'nw' && mode !== 'ne' && mode !== 'sw' && mode !== 'se')
+    return null;
+  const cos = Math.cos(-angle),
+    sin = Math.sin(-angle);
   const px = (point.x - center.x) * cos - (point.y - center.y) * sin;
   const py = (point.x - center.x) * sin + (point.y - center.y) * cos;
-  let left = mode.endsWith('w') ? px : -halfWidth, right = mode.endsWith('e') ? px : halfWidth;
-  let top = mode.startsWith('n') ? py : -halfHeight, bottom = mode.startsWith('s') ? py : halfHeight;
+  let left = mode.endsWith('w') ? px : -halfWidth,
+    right = mode.endsWith('e') ? px : halfWidth;
+  let top = mode.startsWith('n') ? py : -halfHeight,
+    bottom = mode.startsWith('s') ? py : halfHeight;
   if (lockAspect) {
     const oppositeX = mode.endsWith('w') ? halfWidth : -halfWidth;
     const oppositeY = mode.startsWith('n') ? halfHeight : -halfHeight;
@@ -170,18 +229,20 @@ export function resizeByCorner(
       bottom = oppositeY + h;
     }
   }
-  const localX = (left + right) / 2, localY = (top + bottom) / 2;
+  const localX = (left + right) / 2,
+    localY = (top + bottom) / 2;
   return {
     cx: center.x + localX * Math.cos(angle) - localY * Math.sin(angle),
     cy: center.y + localX * Math.sin(angle) + localY * Math.cos(angle),
-    w: Math.max(.01, Math.abs(right - left)),
-    h: Math.max(.01, Math.abs(bottom - top)),
+    w: Math.max(0.01, Math.abs(right - left)),
+    h: Math.max(0.01, Math.abs(bottom - top)),
   };
 }
 
 /** 2 点ドラッグを正規化した矩形。潰れていれば null */
 export function dragBounds(a: StrokePoint, b: StrokePoint): ShapeBounds | null {
-  const w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
+  const w = Math.abs(b.x - a.x),
+    h = Math.abs(b.y - a.y);
   if (w === 0 || h === 0) return null;
   return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w, h };
 }

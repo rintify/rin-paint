@@ -11,7 +11,11 @@ function cloneState(state: ClipState): ClipState {
 function asClipState(value: unknown): ClipState | null {
   if (!value || typeof value !== 'object') return { maskLayerIds: [] };
   const maskLayerIds = (value as { maskLayerIds?: unknown }).maskLayerIds;
-  return { maskLayerIds: Array.isArray(maskLayerIds) ? maskLayerIds.filter((id): id is string => typeof id === 'string') : [] };
+  return {
+    maskLayerIds: Array.isArray(maskLayerIds)
+      ? maskLayerIds.filter((id): id is string => typeof id === 'string')
+      : [],
+  };
 }
 
 export const clipLayerType: LayerDefinition<'clip'> = {
@@ -20,16 +24,18 @@ export const clipLayerType: LayerDefinition<'clip'> = {
     canMask: false,
     maskSourceLabel: null,
     supportsBlend: false,
-    defaultName: index => `クリップ ${index}`,
+    defaultName: (index) => `クリップ ${index}`,
   },
   state: {
     initial: () => createClipLayer('tmp').state,
     clone: cloneState,
     normalize: cloneState,
     applyPatch: (state, patch) => cloneState({ ...state, ...patch }),
-    scale: state => cloneState(state),
+    scale: (state) => cloneState(state),
     remapReferences: (state, mapId) => ({
-      maskLayerIds: state.maskLayerIds.map(id => mapId(id)).filter((id): id is string => !!id),
+      maskLayerIds: state.maskLayerIds
+        .map((id) => mapId(id))
+        .filter((id): id is string => !!id),
     }),
   },
   codec: {
@@ -38,10 +44,9 @@ export const clipLayerType: LayerDefinition<'clip'> = {
   },
   renderer: {
     draw() {},
-    bakeOnto() {},
     contentCanvas: () => null,
     effect: {
-      dependencyLayerIds: layer => layer.state.maskLayerIds,
+      dependencyLayerIds: (layer) => layer.state.maskLayerIds,
       apply(scope, layer, env) {
         if (!layer.state.maskLayerIds.length || layer.opacity <= 0) return;
         const mask = env.maskCanvas(layer.state.maskLayerIds);

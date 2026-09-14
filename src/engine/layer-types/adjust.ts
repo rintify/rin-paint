@@ -1,4 +1,8 @@
-import { DEFAULT_ADJUST, type AdjustParams, type AdjustState } from '../../model';
+import {
+  DEFAULT_ADJUST,
+  type AdjustParams,
+  type AdjustState,
+} from '../../model';
 import { buildFilter, createAdjustLayer } from '../layers';
 import { buildCatalog } from '../parameters/catalog';
 import type { LayerDefinition } from './definition';
@@ -9,11 +13,17 @@ function cloneState(state: AdjustState): AdjustState {
 }
 
 function asAdjustState(value: unknown): AdjustState {
-  const record = value && typeof value === 'object' ? value as { params?: Partial<AdjustParams>; maskLayerIds?: unknown } : {};
+  const record =
+    value && typeof value === 'object'
+      ? (value as { params?: Partial<AdjustParams>; maskLayerIds?: unknown })
+      : {};
   const maskLayerIds = Array.isArray(record.maskLayerIds)
     ? record.maskLayerIds.filter((id): id is string => typeof id === 'string')
     : [];
-  return { params: { ...DEFAULT_ADJUST, ...(record.params ?? {}) }, maskLayerIds };
+  return {
+    params: { ...DEFAULT_ADJUST, ...(record.params ?? {}) },
+    maskLayerIds,
+  };
 }
 
 const SLIDERS = [
@@ -31,17 +41,24 @@ export const adjustLayerType: LayerDefinition<'adjust'> = {
     canMask: false,
     maskSourceLabel: null,
     supportsBlend: false,
-    defaultName: index => `色調補正 ${index}`,
+    defaultName: (index) => `色調補正 ${index}`,
   },
   state: {
     initial: () => createAdjustLayer('tmp').state,
     clone: cloneState,
     normalize: cloneState,
-    applyPatch: (state, patch) => cloneState({ ...state, ...patch, params: { ...state.params, ...patch.params } }),
-    scale: state => cloneState(state),
+    applyPatch: (state, patch) =>
+      cloneState({
+        ...state,
+        ...patch,
+        params: { ...state.params, ...patch.params },
+      }),
+    scale: (state) => cloneState(state),
     remapReferences: (state, mapId) => ({
       ...cloneState(state),
-      maskLayerIds: state.maskLayerIds.map(id => mapId(id)).filter((id): id is string => !!id),
+      maskLayerIds: state.maskLayerIds
+        .map((id) => mapId(id))
+        .filter((id): id is string => !!id),
     }),
   },
   codec: {
@@ -50,31 +67,27 @@ export const adjustLayerType: LayerDefinition<'adjust'> = {
   },
   renderer: {
     draw() {},
-    bakeOnto(target, layer, env) {
-      const work = env.borrowCanvas();
-      work.ctx.save();
-      work.ctx.filter = buildFilter(layer.state.params);
-      work.ctx.drawImage(target.runtime.canvas, 0, 0);
-      work.ctx.restore();
-      target.runtime.ctx.save();
-      target.runtime.ctx.globalAlpha = layer.opacity;
-      target.runtime.ctx.globalCompositeOperation = 'source-over';
-      target.runtime.ctx.drawImage(work.canvas, 0, 0);
-      target.runtime.ctx.restore();
-      work.release();
-    },
     contentCanvas: () => null,
     effect: {
-      dependencyLayerIds: layer => layer.state.maskLayerIds,
+      dependencyLayerIds: (layer) => layer.state.maskLayerIds,
       apply(scope, layer, env) {
         const p = layer.state.params;
-        if (layer.opacity <= 0 || (p.brightness === 100 && p.contrast === 100 && p.hue === 0 && p.saturation === 100)) return;
+        if (
+          layer.opacity <= 0 ||
+          (p.brightness === 100 &&
+            p.contrast === 100 &&
+            p.hue === 0 &&
+            p.saturation === 100)
+        )
+          return;
         const filtered = env.borrowCanvas();
         filtered.ctx.save();
         filtered.ctx.filter = buildFilter(p);
         filtered.ctx.drawImage(scope.canvas, 0, 0);
         filtered.ctx.restore();
-        const mask = layer.state.maskLayerIds.length ? env.maskCanvas(layer.state.maskLayerIds) : null;
+        const mask = layer.state.maskLayerIds.length
+          ? env.maskCanvas(layer.state.maskLayerIds)
+          : null;
         mixCanvases(scope, filtered.canvas, layer.opacity, mask);
         mask?.release();
         filtered.release();

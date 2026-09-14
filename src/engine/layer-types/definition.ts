@@ -1,7 +1,5 @@
-import type {
-  LayerCommonRecord,
-  LayerType,
-} from '../../model';
+import type { StoredRasterContent } from '../raster/RasterAssetRepository';
+import type { LayerCommonRecord, LayerType } from '../../model';
 import type { Layer, LayerOf } from '../layers';
 import type { ParameterCatalog } from '../parameters/types';
 import type {
@@ -17,7 +15,18 @@ import type {
   RenderStatsAccumulator,
 } from './types';
 
-export type { ArtboardSize, CanvasLease, EffectCacheStore, EffectScope, LayerDrawEnv, LayerMeasureEnv, MaskCanvas, ObjectBounds, Point, RenderStatsAccumulator };
+export type {
+  ArtboardSize,
+  CanvasLease,
+  EffectCacheStore,
+  EffectScope,
+  LayerDrawEnv,
+  LayerMeasureEnv,
+  MaskCanvas,
+  ObjectBounds,
+  Point,
+  RenderStatsAccumulator,
+};
 
 export interface LayerTypeInfo {
   type: LayerType;
@@ -31,24 +40,52 @@ export interface LayerStateAdapter<K extends LayerType> {
   initial(): LayerOf<K>['state'];
   clone(state: LayerOf<K>['state']): LayerOf<K>['state'];
   normalize(state: LayerOf<K>['state']): LayerOf<K>['state'];
-  applyPatch(state: LayerOf<K>['state'], patch: Partial<LayerOf<K>['state']>): LayerOf<K>['state'];
-  scale(state: LayerOf<K>['state'], factor: number, env: { width: number; height: number }): LayerOf<K>['state'];
-  remapReferences?(state: LayerOf<K>['state'], mapId: (id: string) => string | undefined): LayerOf<K>['state'];
+  applyPatch(
+    state: LayerOf<K>['state'],
+    patch: Partial<LayerOf<K>['state']>,
+  ): LayerOf<K>['state'];
+  scale(
+    state: LayerOf<K>['state'],
+    factor: number,
+    env: { width: number; height: number },
+  ): LayerOf<K>['state'];
+  remapReferences?(
+    state: LayerOf<K>['state'],
+    mapId: (id: string) => string | undefined,
+  ): LayerOf<K>['state'];
 }
 
 export interface LayerCodec<K extends LayerType> {
   encode(state: LayerOf<K>['state']): unknown;
   decode(value: unknown): LayerOf<K>['state'] | null;
-  encodeContent?(layer: LayerOf<K>): Promise<Blob | undefined>;
-  decodeRuntime?(content: Blob | HTMLCanvasElement | undefined, env: { artboard: ArtboardSize }): Promise<LayerOf<K>['runtime'] | null>;
-  scaleStored?(state: unknown, env: { artboard: ArtboardSize; factor: number }): unknown;
+  encodeContent?(
+    layer: LayerOf<K>,
+  ): Promise<Blob | StoredRasterContent | undefined>;
+  decodeRuntime?(
+    content: Blob | StoredRasterContent | HTMLCanvasElement | undefined,
+    env: { artboard: ArtboardSize },
+  ): Promise<LayerOf<K>['runtime'] | null>;
+  scaleStored?(
+    state: unknown,
+    env: { artboard: ArtboardSize; factor: number },
+  ): unknown;
 }
 
 export interface LayerRenderer<K extends LayerType> {
-  draw(ctx: CanvasRenderingContext2D, layer: LayerOf<K>, env: LayerDrawEnv): void;
-  drawMask?(ctx: CanvasRenderingContext2D, layer: LayerOf<K>, env: LayerDrawEnv): void;
-  bakeOnto(target: LayerOf<'raster'>, layer: LayerOf<K>, env: LayerDrawEnv): void;
-  contentCanvas(layer: LayerOf<K>, env: LayerMeasureEnv): HTMLCanvasElement | null;
+  draw(
+    ctx: CanvasRenderingContext2D,
+    layer: LayerOf<K>,
+    env: LayerDrawEnv,
+  ): void;
+  drawMask?(
+    ctx: CanvasRenderingContext2D,
+    layer: LayerOf<K>,
+    env: LayerDrawEnv,
+  ): void;
+  contentCanvas(
+    layer: LayerOf<K>,
+    env: LayerMeasureEnv,
+  ): HTMLCanvasElement | null;
   effect?: {
     apply(scope: EffectScope, layer: LayerOf<K>, env: LayerDrawEnv): void;
     paddingPx?(layer: LayerOf<K>, env: LayerDrawEnv): number;
@@ -58,7 +95,11 @@ export interface LayerRenderer<K extends LayerType> {
   };
   eraser?: {
     applies(layer: LayerOf<K>): boolean;
-    draw(ctx: CanvasRenderingContext2D, layer: LayerOf<K>, env: LayerDrawEnv): void;
+    draw(
+      ctx: CanvasRenderingContext2D,
+      layer: LayerOf<K>,
+      env: LayerDrawEnv,
+    ): void;
   };
 }
 
@@ -115,7 +156,11 @@ export interface LayerDefinition<K extends LayerType> {
   state: LayerStateAdapter<K>;
   codec: LayerCodec<K>;
   renderer: LayerRenderer<K>;
-  parameters: ParameterCatalog<LayerOf<K>['state']> | ((layer: LayerOf<K> | { type: K; state: LayerOf<K>['state'] }) => ParameterCatalog<LayerOf<K>['state']>);
+  parameters:
+    | ParameterCatalog<LayerOf<K>['state']>
+    | ((
+        layer: LayerOf<K> | { type: K; state: LayerOf<K>['state'] },
+      ) => ParameterCatalog<LayerOf<K>['state']>);
   capabilities: LayerCapabilities<K>;
 }
 
@@ -124,7 +169,7 @@ export interface LayerRecord {
   type: LayerType;
   common: LayerCommonRecord;
   state: unknown;
-  content?: Blob;
+  content?: Blob | StoredRasterContent;
 }
 
 export interface LayerSnapshot extends LayerRecord {
@@ -143,7 +188,9 @@ export interface LayerProps {
 export function layerMaskIds(state: unknown): string[] {
   if (!state || typeof state !== 'object') return [];
   const ids = (state as { maskLayerIds?: unknown }).maskLayerIds;
-  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [];
+  return Array.isArray(ids)
+    ? ids.filter((id): id is string => typeof id === 'string')
+    : [];
 }
 
 export function commonRecordFrom(layer: Layer): LayerCommonRecord {
@@ -154,16 +201,23 @@ export function commonRecordFrom(layer: Layer): LayerCommonRecord {
     visible: layer.visible,
     parentId: layer.parentId,
     childIds: [...layer.childIds],
-    ...(layer.parameterLink ? { parameterLink: structuredClone(layer.parameterLink) } : {}),
+    ...(layer.parameterLink
+      ? { parameterLink: structuredClone(layer.parameterLink) }
+      : {}),
   };
 }
 
-export function applyCommonRecord(layer: Layer, common: LayerCommonRecord): void {
+export function applyCommonRecord(
+  layer: Layer,
+  common: LayerCommonRecord,
+): void {
   layer.name = common.name;
   layer.opacity = common.opacity;
   layer.blend = common.blend;
   layer.visible = common.visible;
   layer.parentId = common.parentId;
   layer.childIds = [...common.childIds];
-  layer.parameterLink = common.parameterLink ? structuredClone(common.parameterLink) : undefined;
+  layer.parameterLink = common.parameterLink
+    ? structuredClone(common.parameterLink)
+    : undefined;
 }

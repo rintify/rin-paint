@@ -1,9 +1,14 @@
+import { RasterSurface } from '../raster/RasterSurface';
+import { RasterResampler } from '../raster/RasterResampler';
 import type { LayerCommon, LayerType } from '../../model';
 import { isLayerType } from '../../model';
 import type { Layer } from '../layers';
 import { makeCanvas } from '../layers';
 import { commonForLayer } from '../parameters/common';
-import { resolveCommonParameter, resolveKindParameter } from '../parameters/catalog';
+import {
+  resolveCommonParameter,
+  resolveKindParameter,
+} from '../parameters/catalog';
 import type { ParameterCatalog, ResolvedParameter } from '../parameters/types';
 import { adjustLayerType } from './adjust';
 import { clipLayerType } from './clip';
@@ -55,22 +60,38 @@ export function layerHandler(layer: Layer): LayerDefinition<LayerType> {
   return layerDefinition(layer.type) as never;
 }
 
-export function kindCatalog(layer: { type: LayerType; state: unknown }): ParameterCatalog<unknown> {
+export function kindCatalog(layer: {
+  type: LayerType;
+  state: unknown;
+}): ParameterCatalog<unknown> {
   const def = layerDefinition(layer.type);
-  const catalog = typeof def.parameters === 'function'
-    ? def.parameters(layer as never)
-    : def.parameters;
+  const catalog =
+    typeof def.parameters === 'function'
+      ? def.parameters(layer as never)
+      : def.parameters;
   return catalog;
 }
 
-export function resolvedParameters(layer: LayerCommon & { type: LayerType; state: unknown }): ResolvedParameter[] {
+export function resolvedParameters(
+  layer: LayerCommon & { type: LayerType; state: unknown },
+): ResolvedParameter[] {
   const def = layerDefinition(layer.type);
-  const common = commonForLayer(def.info.supportsBlend).map(resolveCommonParameter);
+  const common = commonForLayer(def.info.supportsBlend).map(
+    resolveCommonParameter,
+  );
   const catalog = kindCatalog(layer);
-  return [...common, ...catalog.definitions.map(item => resolveKindParameter(item, layer.type))];
+  return [
+    ...common,
+    ...catalog.definitions.map((item) =>
+      resolveKindParameter(item, layer.type),
+    ),
+  ];
 }
 
-export function buildLayerSnapshot(layer: Layer, env: LayerSnapshotEnv): LayerSnapshot {
+export function buildLayerSnapshot(
+  layer: Layer,
+  env: LayerSnapshotEnv,
+): LayerSnapshot {
   const def = layerHandler(layer);
   const snapshot: LayerSnapshot = {
     id: layer.id,
@@ -79,7 +100,11 @@ export function buildLayerSnapshot(layer: Layer, env: LayerSnapshotEnv): LayerSn
     state: def.codec.encode(layer.state as never),
   };
   if (!env.withContent) return snapshot;
-  if (layer.type === 'raster' || layer.type === 'image') {
+  if (layer.type === 'raster') {
+    snapshot.content = layer.runtime.surface.snapshot();
+    return snapshot;
+  }
+  if (layer.type === 'image') {
     const source = layer.runtime.canvas;
     const copy = makeCanvas(source.width, source.height);
     copy.getContext('2d')!.drawImage(source, 0, 0);
@@ -102,14 +127,22 @@ export async function restoreLayerFrom(
   if (!isLayerType(source.type)) return null;
   const def = layerDefinition(source.type);
   const state = def.codec.decode(source.state);
-  if (!state && source.type !== 'raster' && source.type !== 'adjust' && source.type !== 'outline' && source.type !== 'clip') {
+  if (
+    !state &&
+    source.type !== 'raster' &&
+    source.type !== 'adjust' &&
+    source.type !== 'outline' &&
+    source.type !== 'clip'
+  ) {
     return null;
   }
-  const content = 'canvas' in source && source.canvas ? source.canvas : source.content;
+  const content =
+    'canvas' in source && source.canvas ? source.canvas : source.content;
   const runtime = def.codec.decodeRuntime
     ? await def.codec.decodeRuntime(content, env)
     : undefined;
-  if ((source.type === 'raster' || source.type === 'image') && !runtime) return null;
+  if ((source.type === 'raster' || source.type === 'image') && !runtime)
+    return null;
   const layer = {
     id: source.id,
     type: source.type,
@@ -119,14 +152,19 @@ export async function restoreLayerFrom(
     visible: source.common.visible ?? true,
     parentId: source.common.parentId,
     childIds: [...source.common.childIds],
-    parameterLink: source.common.parameterLink ? structuredClone(source.common.parameterLink) : undefined,
+    parameterLink: source.common.parameterLink
+      ? structuredClone(source.common.parameterLink)
+      : undefined,
     state: def.state.normalize((state ?? def.state.initial()) as never),
     runtime,
   } as Layer;
   return layer;
 }
 
-export async function savedLayerFrom(layer: Layer, _env: LayerContentEnv): Promise<LayerRecord> {
+export async function savedLayerFrom(
+  layer: Layer,
+  _env: LayerContentEnv,
+): Promise<LayerRecord> {
   const def = layerHandler(layer);
   return {
     id: layer.id,
@@ -142,34 +180,58 @@ export function layerTypeProps(layer: Layer): LayerProps {
 }
 
 export function objectTransformProps(layer: Layer): LayerProps {
-  return layerHandler(layer).capabilities.objectTransform ? layerTypeProps(layer) : {};
+  return layerHandler(layer).capabilities.objectTransform
+    ? layerTypeProps(layer)
+    : {};
 }
 
-export function scaleLayer(layer: Layer, factor: number, env: LayerScaleEnv): void {
+export function scaleLayer(
+  layer: Layer,
+  factor: number,
+  env: LayerScaleEnv,
+): void {
   const def = layerHandler(layer);
   layer.state = def.state.scale(layer.state as never, factor, env);
-  if (layer.type === 'raster') scaleRasterRuntime(layer, factor, env.width, env.height);
+  if (layer.type === 'raster')
+    scaleRasterRuntime(layer, factor, env.width, env.height);
 }
 
-export async function scaleStoredLayer(source: LayerRecord | LayerSnapshot, env: LayerStoredScaleEnv): Promise<void> {
+export async function scaleLayerAsync(
+  layer: Layer,
+  factor: number,
+  env: LayerScaleEnv,
+): Promise<void> {
+  if (layer.type !== 'raster') {
+    scaleLayer(layer, factor, env);
+    return;
+  }
+  if (factor !== 1)
+    layer.runtime.surface = await RasterResampler.scaleAsync(
+      layer.runtime.surface,
+      factor,
+    );
+}
+
+export async function scaleStoredLayer(
+  source: LayerRecord | LayerSnapshot,
+  env: LayerStoredScaleEnv,
+): Promise<void> {
   if (!isLayerType(source.type)) return;
   const def = layerDefinition(source.type);
-  if (def.codec.scaleStored) source.state = def.codec.scaleStored(source.state, env);
-  if (source.type === 'raster' && (source.content || ('canvas' in source && source.canvas))) {
-    const content = 'canvas' in source && source.canvas ? source.canvas : source.content;
-    if (content instanceof Blob) {
-      const bitmap = await createImageBitmap(content);
-      const canvas = makeCanvas(env.artboard.w, env.artboard.h);
-      canvas.getContext('2d')!.drawImage(bitmap, 0, 0, bitmap.width * env.factor, bitmap.height * env.factor);
-      bitmap.close();
-      (source as LayerSnapshot).canvas = canvas;
-      source.content = undefined;
-    } else if (content instanceof HTMLCanvasElement) {
-      const canvas = makeCanvas(env.artboard.w, env.artboard.h);
-      canvas.getContext('2d')!.drawImage(content, 0, 0, content.width * env.factor, content.height * env.factor);
-      (source as LayerSnapshot).canvas = canvas;
-      source.content = undefined;
-    }
+  if (def.codec.scaleStored)
+    source.state = def.codec.scaleStored(source.state, env);
+  if (
+    source.type === 'raster' &&
+    source.content &&
+    !(source.content instanceof Blob)
+  ) {
+    if (env.factor !== 1)
+      source.content = (
+        await RasterResampler.scaleAsync(
+          await RasterSurface.restore(source.content),
+          env.factor,
+        )
+      ).snapshot();
   }
 }
 
@@ -195,14 +257,22 @@ export function applyLayerProps(layer: Layer, props: LayerProps): void {
   if (props.blend !== undefined) layer.blend = props.blend;
   if (props.visible !== undefined) layer.visible = props.visible;
   if (props.parameterLink !== undefined) {
-    layer.parameterLink = props.parameterLink ? structuredClone(props.parameterLink) : undefined;
+    layer.parameterLink = props.parameterLink
+      ? structuredClone(props.parameterLink)
+      : undefined;
   }
   if (props.state !== undefined) {
-    layer.state = layerHandler(layer).state.applyPatch(layer.state as never, props.state as never);
+    layer.state = layerHandler(layer).state.applyPatch(
+      layer.state as never,
+      props.state as never,
+    );
   }
 }
 
-export function hostWithProps(layer: Layer, props: LayerProps): import('../parameters/host').ParameterHost {
+export function hostWithProps(
+  layer: Layer,
+  props: LayerProps,
+): import('../parameters/host').ParameterHost {
   const next = {
     ...layer,
     state: layerHandler(layer).state.clone(layer.state as never),
@@ -218,25 +288,45 @@ export function applyRecordProps(record: LayerRecord, props: LayerProps): void {
   if (props.blend !== undefined) record.common.blend = props.blend;
   if (props.visible !== undefined) record.common.visible = props.visible;
   if (props.parameterLink !== undefined) {
-    record.common.parameterLink = props.parameterLink ? structuredClone(props.parameterLink) : undefined;
+    record.common.parameterLink = props.parameterLink
+      ? structuredClone(props.parameterLink)
+      : undefined;
   }
   if (props.state !== undefined && isLayerType(record.type)) {
-    const current = layerDefinition(record.type).codec.decode(record.state)
-      ?? layerDefinition(record.type).state.initial();
-    const next = layerDefinition(record.type).state.applyPatch(current as never, props.state as never);
+    const current =
+      layerDefinition(record.type).codec.decode(record.state) ??
+      layerDefinition(record.type).state.initial();
+    const next = layerDefinition(record.type).state.applyPatch(
+      current as never,
+      props.state as never,
+    );
     record.state = layerDefinition(record.type).codec.encode(next as never);
   }
 }
 
-export function remapRecordIds(record: LayerRecord, mapId: (id: string) => string | undefined): void {
+export function remapRecordIds(
+  record: LayerRecord,
+  mapId: (id: string) => string | undefined,
+): void {
   record.id = mapId(record.id) ?? record.id;
-  record.common.parentId = record.common.parentId ? mapId(record.common.parentId) ?? null : null;
-  record.common.childIds = record.common.childIds.map(id => mapId(id)).filter((id): id is string => !!id);
-  if (isLayerType(record.type) && layerDefinition(record.type).state.remapReferences) {
-    const current = layerDefinition(record.type).codec.decode(record.state)
-      ?? layerDefinition(record.type).state.initial();
+  record.common.parentId = record.common.parentId
+    ? (mapId(record.common.parentId) ?? null)
+    : null;
+  record.common.childIds = record.common.childIds
+    .map((id) => mapId(id))
+    .filter((id): id is string => !!id);
+  if (
+    isLayerType(record.type) &&
+    layerDefinition(record.type).state.remapReferences
+  ) {
+    const current =
+      layerDefinition(record.type).codec.decode(record.state) ??
+      layerDefinition(record.type).state.initial();
     record.state = layerDefinition(record.type).codec.encode(
-      layerDefinition(record.type).state.remapReferences!(current as never, mapId) as never,
+      layerDefinition(record.type).state.remapReferences!(
+        current as never,
+        mapId,
+      ) as never,
     );
   }
 }

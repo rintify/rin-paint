@@ -31,14 +31,22 @@ export function StorageUsage() {
   const historyCount = useStore((s) => s.historyCount);
 
   const rows = [
-    { label: `履歴（${historyCount}件）`, value: usage.history },
+    { label: `履歴の参照データ（${historyCount}件）`, value: usage.history },
     { label: '自動保存プロジェクト', value: usage.project },
     { label: 'タイムラプス', value: usage.timelapse },
     { label: 'その他', value: usage.other },
   ];
 
   return (
-    <Box sx={{ flex: 'none', px: 1.75, py: 1, borderTop: 1, borderColor: 'divider' }}>
+    <Box
+      sx={{
+        flex: 'none',
+        px: 1.75,
+        py: 1,
+        borderTop: 1,
+        borderColor: 'divider',
+      }}
+    >
       <Button
         fullWidth
         size="small"
@@ -70,7 +78,10 @@ export function StorageUsage() {
           {rows.map((row) => (
             <ListItem key={row.label} dense sx={{ py: 0.25 }}>
               <ListItemText primary={row.label} />
-              <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+              <Typography
+                variant="body2"
+                sx={{ fontVariantNumeric: 'tabular-nums' }}
+              >
                 {formatBytes(row.value)}
               </Typography>
             </ListItem>
@@ -78,13 +89,20 @@ export function StorageUsage() {
           <Divider sx={{ my: 0.5 }} />
           <ListItem dense>
             <ListItemText primary="合計" />
-            <Typography variant="body2" sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+            <Typography
+              variant="body2"
+              sx={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}
+            >
               {formatBytes(usage.total)}
             </Typography>
           </ListItem>
         </List>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', px: 1.5, pb: 1, pt: 0.5 }}>
-          履歴はメモリ上の保持データ、ほかはブラウザ保存領域の概算です。
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ display: 'block', px: 1.5, pb: 1, pt: 0.5 }}
+        >
+          履歴は共有画像を含む参照量です。合計はブラウザ保存領域を集計し、共有画像を重複計上しません。
         </Typography>
       </Menu>
     </Box>

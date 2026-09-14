@@ -1,8 +1,9 @@
 import { useStore } from '../../state/store';
 import { HistoryTree } from '../history/historyTree';
-import { createRasterLayer } from '../layers';
+import { canvasToBlob, createRasterLayer } from '../layers';
 import {
   deletePageData,
+  collectUnusedRasterAssets,
   loadPage,
   savePage,
   saveProjectMeta,
@@ -11,12 +12,6 @@ import {
 } from '../persistence/db';
 import { PROJECT_VERSION } from '../persistence/version';
 import type { PaintEngine } from '../PaintEngine';
-
-function toBlobP(c: HTMLCanvasElement): Promise<Blob> {
-  return new Promise((resolve, reject) =>
-    c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png'),
-  );
-}
 
 /** Page order, active page, and page CRUD. */
 export class PageService {
@@ -44,15 +39,19 @@ export class PageService {
     const eng = this.engine;
     await eng.flushSavePublic();
     const id = this.newPageId();
-    const layer = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
+    const layer = createRasterLayer(
+      'レイヤー 1',
+      eng.artboard.w,
+      eng.artboard.h,
+    );
     const history = new HistoryTree();
     const page: SavedPage = {
       id,
       pageSpec: { ...eng.getPageSpec() },
       rootLayerIds: [layer.id],
       activeLayerId: layer.id,
-      layers: [{ ...eng.layerService.snapshotLayer(layer, false), content: await toBlobP(layer.runtime.canvas) }],
-      history: await history.serialize(toBlobP),
+      layers: [eng.layerService.snapshotLayer(layer, true)],
+      history: await history.serialize(canvasToBlob),
       view: { x: 0, y: 0, scale: 1, rot: 0 },
       thumbnailVersion: 0,
     };
@@ -67,7 +66,12 @@ export class PageService {
   async switchPage(id: string): Promise<void> {
     const eng = this.engine;
     if (useStore.getState().fillProgress !== null) eng.cancelFill();
-    if (eng.isBusy() || id === this.activePageId || !this.pageOrder.includes(id)) return;
+    if (
+      eng.isBusy() ||
+      id === this.activePageId ||
+      !this.pageOrder.includes(id)
+    )
+      return;
     eng.layerService.finishFloating();
     eng.cancelSessions();
     eng.cancelShapeEdit();
@@ -103,15 +107,23 @@ export class PageService {
       const target = this.pageOrder[index + 1] ?? this.pageOrder[index - 1];
       await this.switchPage(target);
     }
-    this.pageOrder = this.pageOrder.filter(pageId => pageId !== id);
+    this.pageOrder = this.pageOrder.filter((pageId) => pageId !== id);
     this.engine.links.removePage(id);
     await deletePageData(id);
+    await collectUnusedRasterAssets();
     await this.saveMeta();
     this.engine.syncStore();
   }
 
   async reorderPages(from: number, to: number): Promise<void> {
-    if (from < 0 || to < 0 || from >= this.pageOrder.length || to >= this.pageOrder.length || from === to) return;
+    if (
+      from < 0 ||
+      to < 0 ||
+      from >= this.pageOrder.length ||
+      to >= this.pageOrder.length ||
+      from === to
+    )
+      return;
     const [id] = this.pageOrder.splice(from, 1);
     this.pageOrder.splice(to, 0, id);
     await this.saveMeta();

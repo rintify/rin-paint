@@ -1,10 +1,14 @@
+import { collectAssetIds, decodeAsset } from '../raster/RasterAssetRepository';
+import { collectUnusedRasterAssets } from '../persistence/db';
+import {
+  RasterEditSession,
+  type RasterChangeSet,
+} from '../raster/RasterSurface';
+import { tileRect } from '../raster/geometry';
 import { rectValid, type DirtyRect } from '../brush';
 import { HISTORY_PRUNE_DEFAULT } from '../history/constants';
-import {
-  HistoryTree,
-  type Op,
-} from '../history/historyTree';
-import { applyTiles, extractTiles } from '../history/tilePatch';
+import { HistoryTree, type Op } from '../history/historyTree';
+import { applyTiles } from '../history/tilePatch';
 import { objectTransformProps } from '../layer-types/registry';
 import type { RasterLayer } from '../layers';
 import type { PaintEngine, SelectedObjectTransform } from '../PaintEngine';
@@ -13,6 +17,32 @@ import { useStore } from '../../state/store';
 /** Owns HistoryTree and undo/redo / raster commit helpers. */
 export class HistoryService {
   history = new HistoryTree();
+  private edits = new Map<string, RasterEditSession>();
+
+  hasRasterEdits(): boolean {
+    return this.edits.size > 0;
+  }
+  cancelBefore(layer: RasterLayer): void {
+    this.edits.get(layer.id)?.cancel();
+    this.edits.delete(layer.id);
+    this.engine.bumpLayer(layer.id);
+  }
+  captureBefore(layer: RasterLayer): void {
+    this.edits.get(layer.id)?.cancel();
+    this.edits.set(layer.id, new RasterEditSession(layer.runtime.surface));
+  }
+  editFor(layer: RasterLayer): RasterEditSession {
+    let edit = this.edits.get(layer.id);
+    if (!edit) {
+      edit = new RasterEditSession(layer.runtime.surface);
+      this.edits.set(layer.id, edit);
+    }
+    return edit;
+  }
+  restoreBefore(layer: RasterLayer): void {
+    this.edits.get(layer.id)?.resetToBefore();
+    this.engine.bumpLayer(layer.id);
+  }
 
   constructor(private engine: PaintEngine) {}
 
@@ -25,14 +55,19 @@ export class HistoryService {
       eng.scheduleSave();
       return;
     }
+    const previous = this.history.current;
     const node = this.history.undo();
     if (!node) return;
     eng.setBusy(true);
     try {
       if (node.op) {
         await node.ready;
+        for (const id of collectAssetIds(node.op)) await decodeAsset(id);
         await this.applyOp(node.op, 'undo');
       }
+    } catch (error) {
+      this.history.current = previous;
+      throw error;
     } finally {
       eng.setBusy(false);
     }
@@ -47,14 +82,19 @@ export class HistoryService {
       eng.cancelSessions();
       eng.scheduleSave();
     }
+    const previous = this.history.current;
     const node = this.history.redo(childIndex);
     if (!node) return;
     eng.setBusy(true);
     try {
       if (node.op) {
         await node.ready;
+        for (const id of collectAssetIds(node.op)) await decodeAsset(id);
         await this.applyOp(node.op, 'redo');
       }
+    } catch (error) {
+      this.history.current = previous;
+      throw error;
     } finally {
       eng.setBusy(false);
     }
@@ -81,26 +121,37 @@ export class HistoryService {
     }
     switch (op.kind) {
       case 'pageChange': {
-        await eng.restorePageSnapshotPublic(dir === 'undo' ? op.before : op.after);
+        await eng.restorePageSnapshotPublic(
+          dir === 'undo' ? op.before : op.after,
+        );
         break;
       }
       case 'raster': {
         const layer = ls.rasterById(op.layerId);
         if (layer) {
-          await applyTiles(layer, op.tiles, dir === 'undo' ? 'before' : 'after');
+          await applyTiles(
+            layer,
+            op.tiles,
+            dir === 'undo' ? 'before' : 'after',
+          );
           ls.bumpLayer(layer.id);
         }
         break;
       }
       case 'layerAdd': {
-        if (dir === 'redo') { await ls.restoreLayer(op.snapshot, op.location); ls.activeLayerId = op.snapshot.id; }
-        else ls.removeLayerInternal(op.snapshot.id);
+        if (dir === 'redo') {
+          await ls.restoreLayer(op.snapshot, op.location);
+          ls.activeLayerId = op.snapshot.id;
+        } else ls.removeLayerInternal(op.snapshot.id);
         break;
       }
       case 'layerRemove': {
         if (dir === 'undo') {
           const entries = op.snapshots.map((snapshot) => ({
-            location: snapshot.id === op.snapshots[0].id ? op.location : { parentId: snapshot.common.parentId, index: 0 },
+            location:
+              snapshot.id === op.snapshots[0].id
+                ? op.location
+                : { parentId: snapshot.common.parentId, index: 0 },
             snapshot,
           }));
           await ls.restoreEntries(entries);
@@ -123,13 +174,17 @@ export class HistoryService {
         break;
       }
       case 'layerLink': {
-        eng.links.applyHistoryLink(op.target, dir === 'undo' ? op.before : op.after);
+        eng.links.applyHistoryLink(
+          op.target,
+          dir === 'undo' ? op.before : op.after,
+        );
         break;
       }
       case 'layerReplace': {
         const remove = dir === 'undo' ? op.after : op.before;
         const restore = dir === 'undo' ? op.before : op.after;
-        for (const id of remove.rootIds) if (ls.byId(id)) ls.removeLayerInternal(id);
+        for (const id of remove.rootIds)
+          if (ls.byId(id)) ls.removeLayerInternal(id);
         await ls.restoreEntries(restore.entries);
         const selection = restore.selection;
         ls.activeLayerId = selection.activeLayerId;
@@ -139,7 +194,14 @@ export class HistoryService {
         });
         for (const change of op.maskChanges ?? []) {
           const layer = ls.byId(change.layerId);
-          if (layer) ls.assignProps(layer, { state: { maskLayerIds: [...(dir === 'undo' ? change.before : change.after)] } });
+          if (layer)
+            ls.assignProps(layer, {
+              state: {
+                maskLayerIds: [
+                  ...(dir === 'undo' ? change.before : change.after),
+                ],
+              },
+            });
         }
         break;
       }
@@ -147,7 +209,14 @@ export class HistoryService {
         const applyMaskChanges = () => {
           for (const change of op.maskChanges ?? []) {
             const layer = ls.byId(change.layerId);
-            if (layer) ls.assignProps(layer, { state: { maskLayerIds: [...(dir === 'undo' ? change.before : change.after)] } });
+            if (layer)
+              ls.assignProps(layer, {
+                state: {
+                  maskLayerIds: [
+                    ...(dir === 'undo' ? change.before : change.after),
+                  ],
+                },
+              });
           }
         };
         const target = ls.rasterById(op.targetLayerId);
@@ -157,7 +226,8 @@ export class HistoryService {
             if (op.targetProps) ls.assignProps(target, op.targetProps.before);
             ls.bumpLayer(target.id);
           }
-          if (!ls.byId(op.removed.snapshot.id)) await ls.restoreEntries([op.removed]);
+          if (!ls.byId(op.removed.snapshot.id))
+            await ls.restoreEntries([op.removed]);
         } else {
           ls.removeLayerExact(op.removed.snapshot.id);
           if (target) {
@@ -166,7 +236,8 @@ export class HistoryService {
             ls.bumpLayer(target.id);
           }
         }
-        ls.activeLayerId = dir === 'undo' ? op.beforeActiveId : op.afterActiveId;
+        ls.activeLayerId =
+          dir === 'undo' ? op.beforeActiveId : op.afterActiveId;
         applyMaskChanges();
         break;
       }
@@ -178,51 +249,68 @@ export class HistoryService {
   }
 
   commitRasterBatch(
-    entries: { layer: RasterLayer; before: HTMLCanvasElement; rect: DirtyRect }[],
+    entries: { layer: RasterLayer; change: RasterChangeSet }[],
     label: string,
     objects: SelectedObjectTransform[] = [],
   ): void {
     const eng = this.engine;
     const operations: Extract<Op, { kind: 'batch' }>['ops'] = [];
-    const ready: Promise<void>[] = [];
+
     for (const entry of entries) {
-      if (!rectValid(entry.rect)) continue;
-      const before = entry.before.getContext('2d', { willReadFrequently: true })!;
-      const extraction = extractTiles(before, entry.layer.runtime.ctx, entry.rect, eng.artboard.w, eng.artboard.h);
-      if (extraction.tileCount === 0) continue;
-      const rasterOp: Extract<Op, { kind: 'raster' }> = { kind: 'raster', layerId: entry.layer.id, tiles: [] };
-      operations.push(rasterOp);
-      ready.push(extraction.ready.then((tiles) => { rasterOp.tiles = tiles; }));
-      eng.layerService.bumpLayer(entry.layer.id, entry.rect);
+      if (!entry.change.tiles.length) continue;
+      operations.push({
+        kind: 'raster',
+        layerId: entry.layer.id,
+        tiles: entry.change.tiles,
+      });
+      for (const tile of entry.change.tiles) {
+        const r = tileRect(tile.tx, tile.ty);
+        eng.layerService.bumpLayer(entry.layer.id, {
+          minX: r.x,
+          minY: r.y,
+          maxX: r.x + r.w,
+          maxY: r.y + r.h,
+        });
+      }
     }
     for (const entry of objects) {
       const layer = eng.layerService.byId(entry.id);
       if (!layer) continue;
       const after = objectTransformProps(layer);
-      const propsOp = { kind: 'layerProps' as const, layerId: entry.id, before: entry.before, after };
+      const propsOp = {
+        kind: 'layerProps' as const,
+        layerId: entry.id,
+        before: entry.before,
+        after,
+      };
       operations.push(propsOp);
-      const linkOp = eng.layerService.linkOpForUserChange(layer, entry.before, after);
+      const linkOp = eng.layerService.linkOpForUserChange(
+        layer,
+        entry.before,
+        after,
+      );
       if (linkOp) operations.push(linkOp);
-      eng.links.propagateFrom({ pageId: eng.pages.activePageId, layerId: entry.id });
+      eng.links.propagateFrom({
+        pageId: eng.pages.activePageId,
+        layerId: entry.id,
+      });
     }
     if (!operations.length) return;
-    const node = this.history.push(operations.length === 1 ? operations[0] : { kind: 'batch', ops: operations }, label);
-    node.ready = Promise.all(ready).then(() => undefined);
-    void node.ready.then(() => eng.scheduleStorageRefresh());
+    this.history.push(
+      operations.length === 1
+        ? operations[0]
+        : { kind: 'batch', ops: operations },
+      label,
+    );
     eng.committed(false);
   }
 
   commitRasterEdit(layer: RasterLayer, rect: DirtyRect, label: string): void {
-    const eng = this.engine;
     if (!rectValid(rect)) return;
-    const extraction = extractTiles(eng.compositor.scratchCtx, layer.runtime.ctx, rect, eng.artboard.w, eng.artboard.h);
-    if (extraction.tileCount === 0) return;
-    const op: Extract<Op, { kind: 'raster' }> = { kind: 'raster', layerId: layer.id, tiles: [] };
-    const node = this.history.push(op, label);
-    node.ready = extraction.ready.then((tiles) => { op.tiles = tiles; });
-    void node.ready.then(() => eng.scheduleStorageRefresh());
-    eng.layerService.bumpLayer(layer.id, rect);
-    eng.committed(false);
+    const change = this.editFor(layer).commit();
+    this.edits.delete(layer.id);
+    if (!change.tiles.length) return;
+    this.commitRasterBatch([{ layer, change }], label);
   }
 
   pruneHistory(limit = HISTORY_PRUNE_DEFAULT): number {
@@ -233,6 +321,10 @@ export class HistoryService {
       eng.syncStore();
       eng.scheduleSave();
       eng.scheduleStorageRefresh();
+      void eng
+        .flushSavePublic()
+        .then(() => collectUnusedRasterAssets())
+        .catch(() => undefined);
     }
     return removed;
   }

@@ -16,15 +16,23 @@ export class CanvasPool {
     // 局所dirty矩形の微妙なサイズ差で毎フレーム再確保しない。
     const bucketWidth = Math.max(1, Math.ceil(width / 64) * 64);
     const bucketHeight = Math.max(1, Math.ceil(height / 64) * 64);
-    const matching = this.idle.findIndex(canvas => canvas.width === bucketWidth && canvas.height === bucketHeight);
-    const reused = matching >= 0 ? this.idle.splice(matching, 1)[0] : this.idle.pop();
+    const matching = this.idle.findIndex(
+      (canvas) =>
+        canvas.width === bucketWidth && canvas.height === bucketHeight,
+    );
+    const reused =
+      matching >= 0 ? this.idle.splice(matching, 1)[0] : this.idle.pop();
     const canvas = reused ?? makeCanvas(bucketWidth, bucketHeight);
     if (reused) this.idlePixels -= canvas.width * canvas.height;
     if (canvas.width !== bucketWidth || canvas.height !== bucketHeight) {
       canvas.width = bucketWidth;
       canvas.height = bucketHeight;
     }
-    const ctx = canvas.getContext('2d', { willReadFrequently: this.willReadFrequently })!;
+    const ctx = canvas.getContext('2d', {
+      willReadFrequently: this.willReadFrequently,
+    });
+    if (!ctx) throw new Error('描画用のメモリを確保できませんでした');
+    ctx.reset?.();
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
@@ -42,7 +50,10 @@ export class CanvasPool {
         released = true;
         this.idle.push(canvas);
         this.idlePixels += canvas.width * canvas.height;
-        while (this.idle.length > this.maxIdle || this.idlePixels > this.maxIdlePixels) {
+        while (
+          this.idle.length > this.maxIdle ||
+          this.idlePixels > this.maxIdlePixels
+        ) {
           const discarded = this.idle.shift();
           if (!discarded) break;
           this.idlePixels -= discarded.width * discarded.height;

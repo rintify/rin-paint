@@ -1,5 +1,10 @@
 import { TRANSPARENT, type StrokePoint } from '../../model';
-import { emptyRect, expandRect, stampSegment, type DirtyRect } from '../../engine/brush';
+import {
+  emptyRect,
+  expandRect,
+  stampRasterSegment,
+  type DirtyRect,
+} from '../../engine/brush';
 import type { RasterLayer } from '../../engine/layers';
 import type { PaintEngine } from '../../engine/PaintEngine';
 import { DEFAULT_SIZE_MM, mmToPx } from '../../engine/units';
@@ -30,7 +35,10 @@ export class PenTool implements Tool {
     if (first) {
       this.press = pressure;
     } else {
-      const alpha = Math.max(0.05, 1 - this.settings.pressureStabilization / 100);
+      const alpha = Math.max(
+        0.05,
+        1 - this.settings.pressureStabilization / 100,
+      );
       this.press += (pressure - this.press) * alpha;
     }
     return this.press;
@@ -64,7 +72,8 @@ export class PenTool implements Tool {
     this.layer = layer;
     this.eng.captureBefore(layer);
     const settings = this.eng.activeToolSettings();
-    this.size = settings?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getPageSpec().ppi);
+    this.size =
+      settings?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getPageSpec().ppi);
     this.color = settings?.color ?? '#000';
     this.settings = normalizePenDetailSettings(settings?.settings);
     this.erase = this.color === TRANSPARENT;
@@ -73,7 +82,17 @@ export class PenTool implements Tool {
     this.totalDistance = 0;
 
     const r = this.radius(p.pressure, this.taperFactor(0), true);
-    stampSegment(layer.runtime.ctx, p.x, p.y, r, p.x, p.y, r, this.color, this.erase);
+    stampRasterSegment(
+      this.eng.historyService.editFor(layer),
+      p.x,
+      p.y,
+      r,
+      p.x,
+      p.y,
+      r,
+      this.color,
+      this.erase,
+    );
     expandRect(this.rect, p.x, p.y, r + 2);
     this.lastX = p.x;
     this.lastY = p.y;
@@ -87,9 +106,13 @@ export class PenTool implements Tool {
     const segmentDistance = Math.hypot(p.x - this.lastX, p.y - this.lastY);
     this.totalDistance += segmentDistance;
     this.points.push({ ...p, distance: this.totalDistance });
-    const r = this.radius(p.pressure, this.taperFactor(this.totalDistance), false);
-    stampSegment(
-      this.layer.runtime.ctx,
+    const r = this.radius(
+      p.pressure,
+      this.taperFactor(this.totalDistance),
+      false,
+    );
+    stampRasterSegment(
+      this.eng.historyService.editFor(this.layer),
       this.lastX,
       this.lastY,
       this.lastR,
@@ -112,14 +135,19 @@ export class PenTool implements Tool {
   onUp(p: StrokePoint, event: PointerEvent): void {
     if (!this.layer) return;
     if (Math.hypot(p.x - this.lastX, p.y - this.lastY) > 0.01) {
-      const lastPressure = this.points[this.points.length - 1]?.pressure ?? p.pressure;
+      const lastPressure =
+        this.points[this.points.length - 1]?.pressure ?? p.pressure;
       this.onMove({
         ...p,
         pressure: event.pressure > 0 ? p.pressure : lastPressure,
       });
     }
     if (this.settings.taperOut > 0) this.repaintWithTaperOut();
-    this.eng.commitRasterEdit(this.layer, this.rect, this.erase ? '透明ペン' : 'ペン');
+    this.eng.commitRasterEdit(
+      this.layer,
+      this.rect,
+      this.erase ? '透明ペン' : 'ペン',
+    );
     this.eng.pushColor(this.color);
     this.layer = null;
     this.points = [];
@@ -127,7 +155,7 @@ export class PenTool implements Tool {
 
   cancel(): void {
     if (!this.layer) return;
-    this.eng.restoreBefore(this.layer, this.rect);
+    this.eng.historyService.cancelBefore(this.layer);
     this.layer = null;
     this.points = [];
   }
@@ -142,13 +170,36 @@ export class PenTool implements Tool {
 
     for (let i = 0; i < this.points.length; i++) {
       const point = this.points[i];
-      const taper = this.taperFactor(point.distance, this.totalDistance - point.distance);
+      const taper = this.taperFactor(
+        point.distance,
+        this.totalDistance - point.distance,
+      );
       const r = this.radius(point.pressure, taper, i === 0);
       if (prev) {
-        stampSegment(layer.runtime.ctx, prev.x, prev.y, prevR, point.x, point.y, r, this.color, this.erase);
+        stampRasterSegment(
+          this.eng.historyService.editFor(layer),
+          prev.x,
+          prev.y,
+          prevR,
+          point.x,
+          point.y,
+          r,
+          this.color,
+          this.erase,
+        );
         expandRect(this.rect, prev.x, prev.y, prevR + 2);
       } else {
-        stampSegment(layer.runtime.ctx, point.x, point.y, r, point.x, point.y, r, this.color, this.erase);
+        stampRasterSegment(
+          this.eng.historyService.editFor(layer),
+          point.x,
+          point.y,
+          r,
+          point.x,
+          point.y,
+          r,
+          this.color,
+          this.erase,
+        );
       }
       expandRect(this.rect, point.x, point.y, r + 2);
       prev = point;

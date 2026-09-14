@@ -1,3 +1,5 @@
+import type { RasterEditSession } from './raster/RasterSurface';
+import { tileCoordinates, tileKey, tileRect } from './raster/geometry';
 export interface DirtyRect {
   minX: number;
   minY: number;
@@ -9,7 +11,12 @@ export function emptyRect(): DirtyRect {
   return { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
 }
 
-export function expandRect(r: DirtyRect, x: number, y: number, pad: number): void {
+export function expandRect(
+  r: DirtyRect,
+  x: number,
+  y: number,
+  pad: number,
+): void {
   r.minX = Math.min(r.minX, x - pad);
   r.minY = Math.min(r.minY, y - pad);
   r.maxX = Math.max(r.maxX, x + pad);
@@ -80,4 +87,62 @@ export function stampSegment(
   ctx.fillStyle = erase ? '#000000' : color;
   ctx.fill(path);
   ctx.restore();
+}
+
+export function stampRasterSegment(
+  edit: RasterEditSession,
+  ax: number,
+  ay: number,
+  ar: number,
+  bx: number,
+  by: number,
+  br: number,
+  color: string,
+  erase: boolean,
+): void {
+  const dist = Math.hypot(bx - ax, by - ay),
+    steps = Math.max(
+      1,
+      Math.ceil(dist / Math.max(0.75, Math.max(0.35, Math.min(ar, br)) * 0.35)),
+    );
+  const tiles = new Map<string, { tx: number; ty: number; path: Path2D }>();
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps,
+      x = ax + (bx - ax) * t,
+      y = ay + (by - ay) * t,
+      r = Math.max(0.35, ar + (br - ar) * t);
+    for (const tile of tileCoordinates({
+      x: x - r - 2,
+      y: y - r - 2,
+      w: 2 * r + 4,
+      h: 2 * r + 4,
+    })) {
+      const key = tileKey(tile.tx, tile.ty);
+      let entry = tiles.get(key);
+      if (!entry) {
+        entry = { ...tile, path: new Path2D() };
+        tiles.set(key, entry);
+      }
+      const origin = tileRect(tile.tx, tile.ty),
+        lx = x - origin.x,
+        ly = y - origin.y;
+      entry.path.moveTo(lx + r, ly);
+      entry.path.arc(lx, ly, r, 0, Math.PI * 2);
+    }
+  }
+  for (const { tx, ty, path } of tiles.values()) {
+    const rect = tileRect(tx, ty);
+    edit.mutateRegion(
+      rect,
+      (ctx) => {
+        ctx.translate(rect.x, rect.y);
+        ctx.globalCompositeOperation = erase
+          ? 'destination-out'
+          : 'source-over';
+        ctx.fillStyle = erase ? '#000000' : color;
+        ctx.fill(path);
+      },
+      erase,
+    );
+  }
 }

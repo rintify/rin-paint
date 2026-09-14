@@ -10,7 +10,12 @@ import {
   Stack,
   Typography,
 } from '@mui/material';
-import { useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { useEngine } from '../EngineContext';
 import { useStore } from '../../state/store';
 import type { LayerMeta } from '../../model';
@@ -27,18 +32,24 @@ function LayerSettingsOverflow({
 }) {
   const engine = useEngine();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-  const shapeActions = meta.type === 'shape' ? shapePanelActions(meta.state.shape) : [];
+  const shapeActions =
+    meta.type === 'shape' ? shapePanelActions(meta.state.shape) : [];
   return (
     <>
       <IconButton
         size="small"
         aria-label="レイヤー設定のその他の操作"
         sx={{ alignSelf: 'flex-end' }}
-        onClick={event => setAnchor(event.currentTarget)}
+        onClick={(event) => setAnchor(event.currentTarget)}
       >
         <MoreVertIcon />
       </IconButton>
-      <Menu anchorEl={anchor} open={!!anchor} onClose={() => setAnchor(null)} disableRestoreFocus>
+      <Menu
+        anchorEl={anchor}
+        open={!!anchor}
+        onClose={() => setAnchor(null)}
+        disableRestoreFocus
+      >
         <MenuItem
           onClick={() => {
             setAnchor(null);
@@ -67,12 +78,13 @@ function LayerSettingsOverflow({
             パラメータリンクを解除
           </MenuItem>
         )}
-        {shapeActions.map(action => (
+        {shapeActions.map((action) => (
           <MenuItem
             key={action.id}
             onClick={() => {
               setAnchor(null);
-              if (action.id === 'convertToPolygon') engine.convertRectToPolygon(meta.id);
+              if (action.id === 'convertToPolygon')
+                engine.convertRectToPolygon(meta.id);
             }}
           >
             {action.label}
@@ -100,10 +112,13 @@ function LayerControls({
   meta: LayerMeta;
   onRequestLinkDialog: () => void;
 }) {
-  const multi = useStore(s => s.multiSelectMode);
-  const layers = useStore(s => s.layers);
-  const ids = useStore(s => s.selectedLayerIds);
-  const selected = multi ? layers.filter(layer => ids.includes(layer.id)) : [meta];
+  const engine = useEngine();
+  const multi = useStore((s) => s.multiSelectMode);
+  const layers = useStore((s) => s.layers);
+  const ids = useStore((s) => s.selectedLayerIds);
+  const selected = multi
+    ? layers.filter((layer) => ids.includes(layer.id))
+    : [meta];
   return (
     <Stack spacing={1.5}>
       {multi && (
@@ -111,8 +126,19 @@ function LayerControls({
           {selected.length}レイヤーの共通設定。異なる値は「—」で表示します。
         </Typography>
       )}
+      {selected.some((layer) => engine.hasOutsideContent?.(layer.id)) && (
+        <Typography variant="caption">用紙外に内容あり</Typography>
+      )}
+      <Button onClick={() => engine.centerSelectedContent()}>
+        内容を用紙中央へ移動
+      </Button>
       <ParameterPanel layers={selected} />
-      {!multi && <LayerSettingsOverflow meta={meta} onRequestLinkDialog={onRequestLinkDialog} />}
+      {!multi && (
+        <LayerSettingsOverflow
+          meta={meta}
+          onRequestLinkDialog={onRequestLinkDialog}
+        />
+      )}
     </Stack>
   );
 }
@@ -125,8 +151,8 @@ export function LayerControlsPalette({
   onClose: () => void;
 }) {
   const engine = useEngine();
-  const multi = useStore(s => s.multiSelectMode);
-  const selectedCount = useStore(s => s.selectedLayerIds.length);
+  const multi = useStore((s) => s.multiSelectMode);
+  const selectedCount = useStore((s) => s.selectedLayerIds.length);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [linkDialogRequested, setLinkDialogRequested] = useState(false);
   const paper = useRef<HTMLDivElement | null>(null);
@@ -134,9 +160,15 @@ export function LayerControlsPalette({
     const clamp = () => {
       const rect = paper.current?.getBoundingClientRect();
       if (!rect) return;
-      const dx = rect.left < 8 ? 8 - rect.left : Math.min(0, window.innerWidth - 8 - rect.right);
-      const dy = rect.top < 8 ? 8 - rect.top : Math.min(0, window.innerHeight - 8 - rect.bottom);
-      if (dx || dy) setPosition(p => ({ x: p.x + dx, y: p.y + dy }));
+      const dx =
+        rect.left < 8
+          ? 8 - rect.left
+          : Math.min(0, window.innerWidth - 8 - rect.right);
+      const dy =
+        rect.top < 8
+          ? 8 - rect.top
+          : Math.min(0, window.innerHeight - 8 - rect.bottom);
+      if (dx || dy) setPosition((p) => ({ x: p.x + dx, y: p.y + dy }));
     };
     const observer = new ResizeObserver(clamp);
     if (paper.current) observer.observe(paper.current);
@@ -161,8 +193,14 @@ export function LayerControlsPalette({
     const current = drag.current;
     if (!current || current.pointerId !== event.pointerId) return;
     setPosition({
-      x: Math.max(current.minX, Math.min(current.maxX, current.left + event.clientX - current.x)),
-      y: Math.max(current.minY, Math.min(current.maxY, current.top + event.clientY - current.y)),
+      x: Math.max(
+        current.minX,
+        Math.min(current.maxX, current.left + event.clientX - current.x),
+      ),
+      y: Math.max(
+        current.minY,
+        Math.min(current.maxY, current.top + event.clientY - current.y),
+      ),
     });
   };
   const finish = (event: ReactPointerEvent<HTMLElement>) => {
@@ -193,9 +231,17 @@ export function LayerControlsPalette({
             left: position.x,
             top: position.y,
             minX: position.x + 8 - (rect?.left ?? 8),
-            maxX: position.x + window.innerWidth - 8 - (rect?.right ?? window.innerWidth - 8),
+            maxX:
+              position.x +
+              window.innerWidth -
+              8 -
+              (rect?.right ?? window.innerWidth - 8),
             minY: position.y + 8 - (rect?.top ?? 8),
-            maxY: position.y + window.innerHeight - 8 - (rect?.bottom ?? window.innerHeight - 8),
+            maxY:
+              position.y +
+              window.innerHeight -
+              8 -
+              (rect?.bottom ?? window.innerHeight - 8),
           };
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
@@ -206,11 +252,13 @@ export function LayerControlsPalette({
         <Typography variant="subtitle2" noWrap sx={{ flex: 1 }}>
           {multi ? `${selectedCount}レイヤーを複数選択中` : meta.name}
         </Typography>
-        <Typography variant="caption" color="text.secondary">パラメータ</Typography>
+        <Typography variant="caption" color="text.secondary">
+          パラメータ
+        </Typography>
         <IconButton
           size="small"
           aria-label="レイヤーの設定を閉じる"
-          onPointerDown={e => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
           onClick={onClose}
         >
           <CloseIcon fontSize="small" />
@@ -235,7 +283,10 @@ export function LayerControlsPalette({
             onSourceDialogOpened={() => setLinkDialogRequested(false)}
           />
         )}
-        <LayerControls meta={meta} onRequestLinkDialog={() => setLinkDialogRequested(true)} />
+        <LayerControls
+          meta={meta}
+          onRequestLinkDialog={() => setLinkDialogRequested(true)}
+        />
       </Box>
     </Paper>
   );

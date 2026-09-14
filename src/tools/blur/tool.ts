@@ -1,5 +1,11 @@
 import type { StrokePoint } from '../../model';
-import { emptyRect, expandRect, rectValid, unionRect, type DirtyRect } from '../../engine/brush';
+import {
+  emptyRect,
+  expandRect,
+  rectValid,
+  unionRect,
+  type DirtyRect,
+} from '../../engine/brush';
 import type { RasterLayer } from '../../engine/layers';
 import type { PaintEngine } from '../../engine/PaintEngine';
 import { DEFAULT_SIZE_MM, mmToPx } from '../../engine/units';
@@ -32,7 +38,9 @@ export class BlurTool implements Tool {
     if (!layer) return;
     this.layer = layer;
     this.eng.captureBefore(layer);
-    const size = this.eng.activeToolSettings()?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getPageSpec().ppi);
+    const size =
+      this.eng.activeToolSettings()?.sizePx ??
+      mmToPx(DEFAULT_SIZE_MM, this.eng.getPageSpec().ppi);
     this.radius = Math.max(3, size * 0.5);
     this.blurPx = Math.max(1, size * 0.14);
     this.rect = emptyRect();
@@ -57,7 +65,10 @@ export class BlurTool implements Tool {
     while (this.acc + (dist - travelled) >= spacing) {
       travelled += spacing - this.acc;
       this.acc = 0;
-      const dab = this.dab(this.lastX + ux * travelled, this.lastY + uy * travelled);
+      const dab = this.dab(
+        this.lastX + ux * travelled,
+        this.lastY + uy * travelled,
+      );
       damage = damage ? unionRect(damage, dab) : dab;
     }
     this.acc += dist - travelled;
@@ -76,7 +87,7 @@ export class BlurTool implements Tool {
 
   cancel(): void {
     if (!this.layer) return;
-    this.eng.restoreBefore(this.layer, this.rect);
+    this.eng.historyService.cancelBefore(this.layer);
     this.layer = null;
   }
 
@@ -100,7 +111,8 @@ export class BlurTool implements Tool {
 
     this.srcCtx.save();
     this.srcCtx.clearRect(0, 0, s, s);
-    this.srcCtx.drawImage(layer.runtime.canvas, -ox, -oy);
+    this.srcCtx.translate(-ox, -oy);
+    layer.runtime.surface.drawRegion(this.srcCtx, { x: ox, y: oy, w: s, h: s });
     this.srcCtx.restore();
 
     this.blurredCtx.save();
@@ -136,10 +148,12 @@ export class BlurTool implements Tool {
     this.mixCtx.drawImage(this.blurred, 0, 0);
     this.mixCtx.restore();
 
-    layer.runtime.ctx.save();
-    layer.runtime.ctx.clearRect(ox, oy, s, s);
-    layer.runtime.ctx.drawImage(this.mix, ox, oy);
-    layer.runtime.ctx.restore();
+    this.eng.historyService
+      .editFor(layer)
+      .mutateRegion({ x: ox, y: oy, w: s, h: s }, (ctx) => {
+        ctx.clearRect(ox, oy, s, s);
+        ctx.drawImage(this.mix, ox, oy);
+      });
 
     expandRect(this.rect, cx, cy, r + pad);
     return { minX: ox, minY: oy, maxX: ox + s, maxY: oy + s };

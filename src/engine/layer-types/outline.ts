@@ -10,8 +10,10 @@ function normalize(value: Partial<OutlineParams> | undefined): OutlineParams {
   const width = Number(value?.widthMm);
   const threshold = Number(value?.alphaThreshold);
   return {
-    color: typeof value?.color === 'string' && /^#[0-9a-f]{6}$/i.test(value.color)
-      ? value.color : DEFAULT_OUTLINE.color,
+    color:
+      typeof value?.color === 'string' && /^#[0-9a-f]{6}$/i.test(value.color)
+        ? value.color
+        : DEFAULT_OUTLINE.color,
     widthMm: Number.isFinite(width)
       ? roundMm(Math.max(SIZE_MM_MIN, Math.min(SIZE_MM_MAX, width)))
       : DEFAULT_OUTLINE.widthMm,
@@ -27,9 +29,10 @@ function cloneState(state: OutlineState): OutlineState {
 }
 
 function asOutlineState(value: unknown): OutlineState {
-  const outline = value && typeof value === 'object' && 'outline' in value
-    ? (value as { outline?: Partial<OutlineParams> }).outline
-    : value as Partial<OutlineParams> | undefined;
+  const outline =
+    value && typeof value === 'object' && 'outline' in value
+      ? (value as { outline?: Partial<OutlineParams> }).outline
+      : (value as Partial<OutlineParams> | undefined);
   return { outline: normalize(outline) };
 }
 
@@ -41,14 +44,16 @@ export const outlineLayerType: LayerDefinition<'outline'> = {
     canMask: true,
     maskSourceLabel: '縁どり',
     supportsBlend: false,
-    defaultName: index => `縁どり ${index}`,
+    defaultName: (index) => `縁どり ${index}`,
   },
   state: {
     initial: () => createOutlineLayer('tmp').state,
     clone: cloneState,
-    normalize: state => ({ outline: normalize(state.outline) }),
-    applyPatch: (state, patch) => ({ outline: normalize({ ...state.outline, ...patch.outline }) }),
-    scale: state => cloneState(state),
+    normalize: (state) => ({ outline: normalize(state.outline) }),
+    applyPatch: (state, patch) => ({
+      outline: normalize({ ...state.outline, ...patch.outline }),
+    }),
+    scale: (state) => cloneState(state),
   },
   codec: {
     encode: cloneState,
@@ -59,17 +64,31 @@ export const outlineLayerType: LayerDefinition<'outline'> = {
     drawMask(ctx, layer, env) {
       env.drawEffectContribution(ctx, layer.id);
     },
-    bakeOnto() {},
     contentCanvas: () => null,
     effect: {
       clickableAddedPixels: true,
       paddingPx(layer, env) {
-        const radius = layer.state.outline.widthMm * env.ppi / 25.4;
-        return Math.ceil(radius * (layer.state.outline.cornerStyle === 'sharp' ? SHARP_OUTLINE_MITER_LIMIT : 1) + 1);
+        const radius = (layer.state.outline.widthMm * env.ppi) / 25.4;
+        return Math.ceil(
+          radius *
+            (layer.state.outline.cornerStyle === 'sharp'
+              ? SHARP_OUTLINE_MITER_LIMIT
+              : 1) +
+            1,
+        );
       },
       apply(scope, layer, env) {
         const o = layer.state.outline;
-        applyOutline(scope, layer.id, o.color, o.widthMm, o.alphaThreshold, o.cornerStyle ?? 'round', layer.opacity, env);
+        applyOutline(
+          scope,
+          layer.id,
+          o.color,
+          o.widthMm,
+          o.alphaThreshold,
+          o.cornerStyle ?? 'round',
+          layer.opacity,
+          env,
+        );
       },
     },
   },
@@ -77,29 +96,69 @@ export const outlineLayerType: LayerDefinition<'outline'> = {
     [{ id: 'appearance', label: '見た目' }],
     [
       {
-        id: 'outline.color', semanticId: 'appearance.color', groupId: 'appearance', label: '縁の色',
-        editor: { kind: 'color', transparent: false }, surfaces: SURFACES,
-        read: state => state.outline.color,
-        write: (state, value) => ({ outline: { ...state.outline, color: String(value) } }),
-      },
-      {
-        id: 'outline.widthMm', semanticId: 'appearance.widthMm', groupId: 'appearance', label: '太さ',
-        editor: { kind: 'slider', min: SIZE_MM_MIN, max: SIZE_MM_MAX, unit: { kind: 'mm' } }, surfaces: SURFACES,
-        read: state => state.outline.widthMm,
-        write: (state, value) => ({ outline: { ...state.outline, widthMm: roundMm(Number(value)) } }),
-      },
-      {
-        id: 'outline.alphaThreshold', semanticId: 'outline.alphaThreshold', groupId: 'appearance', label: '透明度閾値',
-        editor: { kind: 'slider', min: 0, max: 100, unit: { kind: 'percent' } }, surfaces: SURFACES,
-        read: state => Math.round(state.outline.alphaThreshold * 100),
-        write: (state, value) => ({ outline: { ...state.outline, alphaThreshold: Number(value) / 100 } }),
-      },
-      {
-        id: 'outline.cornerStyle', semanticId: 'appearance.cornerStyle', groupId: 'appearance', label: '縁の角',
-        editor: { kind: 'select', options: { kind: 'static', options: [{ value: 'round', label: '丸' }, { value: 'sharp', label: '角' }] } },
+        id: 'outline.color',
+        semanticId: 'appearance.color',
+        groupId: 'appearance',
+        label: '縁の色',
+        editor: { kind: 'color', transparent: false },
         surfaces: SURFACES,
-        read: state => state.outline.cornerStyle ?? 'round',
-        write: (state, value) => ({ outline: { ...state.outline, cornerStyle: value === 'sharp' ? 'sharp' : 'round' } }),
+        read: (state) => state.outline.color,
+        write: (state, value) => ({
+          outline: { ...state.outline, color: String(value) },
+        }),
+      },
+      {
+        id: 'outline.widthMm',
+        semanticId: 'appearance.widthMm',
+        groupId: 'appearance',
+        label: '太さ',
+        editor: {
+          kind: 'slider',
+          min: SIZE_MM_MIN,
+          max: SIZE_MM_MAX,
+          unit: { kind: 'mm' },
+        },
+        surfaces: SURFACES,
+        read: (state) => state.outline.widthMm,
+        write: (state, value) => ({
+          outline: { ...state.outline, widthMm: roundMm(Number(value)) },
+        }),
+      },
+      {
+        id: 'outline.alphaThreshold',
+        semanticId: 'outline.alphaThreshold',
+        groupId: 'appearance',
+        label: '透明度閾値',
+        editor: { kind: 'slider', min: 0, max: 100, unit: { kind: 'percent' } },
+        surfaces: SURFACES,
+        read: (state) => Math.round(state.outline.alphaThreshold * 100),
+        write: (state, value) => ({
+          outline: { ...state.outline, alphaThreshold: Number(value) / 100 },
+        }),
+      },
+      {
+        id: 'outline.cornerStyle',
+        semanticId: 'appearance.cornerStyle',
+        groupId: 'appearance',
+        label: '縁の角',
+        editor: {
+          kind: 'select',
+          options: {
+            kind: 'static',
+            options: [
+              { value: 'round', label: '丸' },
+              { value: 'sharp', label: '角' },
+            ],
+          },
+        },
+        surfaces: SURFACES,
+        read: (state) => state.outline.cornerStyle ?? 'round',
+        write: (state, value) => ({
+          outline: {
+            ...state.outline,
+            cornerStyle: value === 'sharp' ? 'sharp' : 'round',
+          },
+        }),
       },
     ],
   ),

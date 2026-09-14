@@ -1,7 +1,16 @@
+import {
+  collectAssetIds,
+  setRasterRootsProvider,
+  releaseUnusedCanvases,
+} from '../raster/RasterAssetRepository';
 import { useStore } from '../../state/store';
 import { savedLayerFrom } from '../layer-types/registry';
 import { canvasToBlob } from '../layers';
-import { getPersistenceUsage, savePage, saveProjectMeta, type SavedLayer } from '../persistence/db';
+import {
+  getPersistenceUsage,
+  savePage,
+  type SavedLayer,
+} from '../persistence/db';
 import { PROJECT_VERSION } from '../persistence/version';
 import type { PaintEngine } from '../PaintEngine';
 
@@ -14,7 +23,16 @@ export class AutosaveService {
   saving: Promise<void> | null = null;
   storageTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(private engine: PaintEngine) {}
+  constructor(private engine: PaintEngine) {
+    setRasterRootsProvider(() => {
+      if (engine.isBusy() || engine.hasOpenSession()) return null;
+      const ids = collectAssetIds(engine.history.root);
+      for (const layer of engine.layerService.layers)
+        if (layer.type === 'raster')
+          collectAssetIds(layer.runtime.surface.snapshot(), ids);
+      return ids;
+    });
+  }
 
   attachLifecycle(): void {
     window.addEventListener('pagehide', this.onPageHide);
@@ -27,7 +45,7 @@ export class AutosaveService {
     if (this.saveTimer !== null) clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
-      void this.flushSave();
+      void this.flushSave().catch(() => undefined);
     }, 200);
   }
 
@@ -43,20 +61,33 @@ export class AutosaveService {
     if (this.saving) return this.saving;
     let failed = false;
     this.saving = (async () => {
-      while (this.persistedRevision < this.saveRevision) {
+      while (
+        this.persistedRevision < this.saveRevision &&
+        !eng.hasOpenSession() &&
+        !eng.isBusy()
+      ) {
         const targetRevision = this.saveRevision;
         try {
           await this.saveSnapshot();
           this.persistedRevision = targetRevision;
-        } catch {
+        } catch (error) {
           failed = true;
-          break;
+          useStore.getState().set({
+            toolNotice:
+              '自動保存に失敗しました。内容を保持しています。保存を再試行してください。',
+          });
+          throw error;
         }
       }
     })().finally(() => {
       this.saving = null;
-      if (!failed && this.persistedRevision < this.saveRevision) {
-        queueMicrotask(() => void this.flushSave());
+      if (
+        !failed &&
+        !eng.hasOpenSession() &&
+        !eng.isBusy() &&
+        this.persistedRevision < this.saveRevision
+      ) {
+        queueMicrotask(() => void this.flushSave().catch(() => undefined));
       }
     });
     return this.saving;
@@ -68,62 +99,80 @@ export class AutosaveService {
     const pages = eng.pages;
     const st = useStore.getState();
     // レイヤー内容は同期でコピーされ、PNG 化だけが非同期に進む。
-    const layerSources = ls.layers.map((l) => savedLayerFrom(l, { artboard: eng.artboard }));
+    const layerSources = ls.layers.map((l) =>
+      savedLayerFrom(l, { artboard: eng.artboard }),
+    );
+    const pageId = pages.activePageId;
+    const pageOrder = [...pages.pageOrder];
     const activeLayerId = ls.activeLayerId;
     const view = eng.view.snapshot();
     const pageSpec = { ...eng.getPageSpec() };
     const fonts = structuredClone(st.fonts);
     const rootLayerIds = [...ls.rootLayerIds];
     const historyPromise = eng.history.serialize(canvasToBlob);
-    const layers: SavedLayer[] = await Promise.all(layerSources);
+    const layersPromise: Promise<SavedLayer[]> = Promise.all(layerSources);
     let thumbnail: Blob | undefined;
     if (eng.compositor.main) {
       eng.ensureComposited();
       const thumb = document.createElement('canvas');
       thumb.width = 240;
-      thumb.height = Math.max(1, Math.round(240 * eng.artboard.h / eng.artboard.w));
-      thumb.getContext('2d')!.drawImage(eng.compositor.main, 0, 0, thumb.width, thumb.height);
-      thumbnail = await new Promise(resolve => thumb.toBlob(blob => resolve(blob ?? undefined), 'image/webp', .72));
+      thumb.height = Math.max(
+        1,
+        Math.round((240 * eng.artboard.h) / eng.artboard.w),
+      );
+      thumb
+        .getContext('2d')!
+        .drawImage(eng.compositor.main, 0, 0, thumb.width, thumb.height);
+      thumbnail = await new Promise((resolve) =>
+        thumb.toBlob((blob) => resolve(blob ?? undefined), 'image/webp', 0.72),
+      );
       pages.thumbnailVersion++;
     }
-    await saveProjectMeta({
-      version: PROJECT_VERSION,
-      pageOrder: [...pages.pageOrder],
-      activePageId: pages.activePageId,
-      fonts,
-    });
     const page = {
-      id: pages.activePageId,
+      id: pageId,
       pageSpec,
       rootLayerIds,
-      layers,
+      layers: await layersPromise,
       activeLayerId,
       history: await historyPromise,
       view,
       thumbnailVersion: pages.thumbnailVersion,
       thumbnail,
     };
-    await savePage(page);
+    await savePage(page, {
+      version: PROJECT_VERSION,
+      pageOrder,
+      activePageId: pageId,
+      fonts,
+    });
     eng.links.noteSavedPage(page);
+    if (!eng.hasOpenSession())
+      releaseUnusedCanvases(
+        collectAssetIds(
+          ls.layers
+            .filter((l) => l.type === 'raster')
+            .map((l) => l.runtime.surface.snapshot()),
+        ),
+      );
     this.scheduleStorageRefresh();
   }
 
   private onVisibilityChange = (): void => {
     if (document.visibilityState === 'hidden') {
       this.engine.events.emit('textCommitRequest');
-      void this.flushSave();
+      void this.flushSave().catch(() => undefined);
     }
   };
 
   private onPageHide = (event: PageTransitionEvent): void => {
     this.engine.events.emit('textCommitRequest');
     if (event.persisted) {
-      void this.flushSave();
+      void this.flushSave().catch(() => undefined);
       return;
     }
     this.engine.layerService.finishFloating();
     this.scheduleSave();
-    void this.flushSave();
+    void this.flushSave().catch(() => undefined);
   };
 
   scheduleStorageRefresh(): void {
@@ -144,7 +193,7 @@ export class AutosaveService {
           project: persisted.project,
           timelapse: persisted.timelapse,
           other: persisted.other,
-          total: history + persisted.project + persisted.timelapse + persisted.other,
+          total: persisted.project + persisted.timelapse + persisted.other,
         },
       });
     } catch {

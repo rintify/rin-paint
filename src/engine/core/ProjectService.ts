@@ -8,15 +8,16 @@ import {
 import { HistoryTree, type PageSnapshot } from '../history/historyTree';
 import { isPersistedHistory } from '../persistence/schema';
 import { PROJECT_VERSION } from '../persistence/version';
-import { restoreLayerFrom, savedLayerFrom, scaleLayer } from '../layer-types/registry';
 import {
-  canvasToBlob,
-  createRasterLayer,
-  type Layer,
-} from '../layers';
+  restoreLayerFrom,
+  savedLayerFrom,
+  scaleLayerAsync,
+} from '../layer-types/registry';
+import { canvasToBlob, createRasterLayer, type Layer } from '../layers';
 import { validateLayerTree } from '../layerTree';
 import {
   hasClipboard,
+  collectUnusedRasterAssets,
   loadPage,
   loadProjectMeta,
   replaceProject,
@@ -56,7 +57,8 @@ export class ProjectService {
       const layer = await restoreLayerFrom(sl, { artboard: eng.artboard });
       if (layer) ls.layers.push(layer);
     }
-    if (!validateLayerTree(ls.rootLayerIds, ls.layers)) throw new Error('invalid layer tree');
+    if (!validateLayerTree(ls.rootLayerIds, ls.layers))
+      throw new Error('invalid layer tree');
     ls.activeLayerId = page.activeLayerId;
     eng.history = new HistoryTree();
     if (isPersistedHistory(page.history)) eng.history.restore(page.history);
@@ -81,9 +83,16 @@ export class ProjectService {
       persistedDataFound = !!meta;
       if (meta?.version === PROJECT_VERSION && meta.pageOrder.length) {
         const restoredPages = await Promise.all(meta.pageOrder.map(loadPage));
-        if (restoredPages.some(page => !page)) throw new Error('一部のページを読み込めませんでした');
-        const page = restoredPages.find(value => value?.id === meta.activePageId);
-        if (page && page.layers.length > 0 && !validatePageSpec(page.pageSpec)) {
+        if (restoredPages.some((page) => !page))
+          throw new Error('一部のページを読み込めませんでした');
+        const page = restoredPages.find(
+          (value) => value?.id === meta.activePageId,
+        );
+        if (
+          page &&
+          page.layers.length > 0 &&
+          !validatePageSpec(page.pageSpec)
+        ) {
           pages.pageOrder = [...meta.pageOrder];
           pages.activePageId = meta.activePageId;
           setPersistencePageId(pages.activePageId);
@@ -94,9 +103,13 @@ export class ProjectService {
           await this.restoreSavedPage(page);
           await Promise.all([
             saveProjectMeta(meta),
-            ...(restoredPages as SavedPage[]).map(saved => savePage(saved)),
+            ...(restoredPages as SavedPage[]).map((saved) => savePage(saved)),
           ]);
-          useStore.getState().set({ pageW: eng.artboard.w, pageH: eng.artboard.h, pageSpec: { ...this.pageSpec } });
+          useStore.getState().set({
+            pageW: eng.artboard.w,
+            pageH: eng.artboard.h,
+            pageSpec: { ...this.pageSpec },
+          });
         }
       }
     } catch {
@@ -118,14 +131,22 @@ export class ProjectService {
     eng.setLastViewState(eng.view.snapshot());
     eng.autosave.initialized = !restoreFailed;
     useStore.getState().set({
-      pages: pages.pageOrder.map(id => ({ id, thumbnailVersion: id === pages.activePageId ? pages.thumbnailVersion : 0 })),
+      pages: pages.pageOrder.map((id) => ({
+        id,
+        thumbnailVersion:
+          id === pages.activePageId ? pages.thumbnailVersion : 0,
+      })),
       activePageId: pages.activePageId,
       clipboardAvailable: await hasClipboard().catch(() => false),
     });
     eng.compositor.syncTextRenders();
     eng.scheduleStorageRefresh();
+    if (!restoreFailed) void collectUnusedRasterAssets().catch(() => undefined);
     if (restoreFailed) {
-      useStore.getState().set({ toolNotice: '保存データを復元できなかったため、自動保存を停止しました。新規作成または読込を選んでください。' });
+      useStore.getState().set({
+        toolNotice:
+          '保存データを復元できなかったため、自動保存を停止しました。新規作成または読込を選んでください。',
+      });
     } else {
       eng.scheduleSave();
     }
@@ -136,7 +157,7 @@ export class ProjectService {
     const ls = eng.layerService;
     return {
       spec: { ...this.pageSpec },
-      layers: ls.layers.map(l => ls.snapshotLayer(l, true, true)),
+      layers: ls.layers.map((l) => ls.snapshotLayer(l, true, true)),
       roots: [...ls.rootLayerIds],
       activeId: ls.activeLayerId,
     };
@@ -155,7 +176,11 @@ export class ProjectService {
     eng.compositor.syncWorkCanvases();
     eng.compositor.textRenderer.clear();
     eng.compositor.syncTextRenders();
-    useStore.getState().set({ pageW: eng.artboard.w, pageH: eng.artboard.h, pageSpec: { ...this.pageSpec } });
+    useStore.getState().set({
+      pageW: eng.artboard.w,
+      pageH: eng.artboard.h,
+      pageSpec: { ...this.pageSpec },
+    });
   }
 
   async resizePage(spec: PageSpec): Promise<void> {
@@ -173,26 +198,39 @@ export class ProjectService {
       const { width, height } = pagePixels(spec);
       const factor = spec.ppi / this.pageSpec.ppi;
       for (const layer of ls.layers) {
-        scaleLayer(layer, factor, { width, height });
+        await scaleLayerAsync(layer, factor, { width, height });
         ls.bumpLayer(layer.id);
       }
       this.pageSpec = { ...spec };
       eng.artboard.resize(width, height);
       eng.compositor.syncWorkCanvases();
       const after = this.pageSnapshot();
-      const node = eng.history.push({ kind: 'pageChange', before, after }, 'ページサイズ・解像度');
-      node.ready = Promise.all([...before.layers, ...after.layers].map(async snapshot => {
-        if (snapshot.canvas) {
-          try { snapshot.content = await canvasToBlob(snapshot.canvas); snapshot.canvas = undefined; }
-          catch { /* Keep the original canvas so undo remains lossless; persistence can retry. */ }
-        }
-      })).then(() => undefined);
-      useStore.getState().set({ pageW: width, pageH: height, pageSpec: { ...spec } });
+      const node = eng.history.push(
+        { kind: 'pageChange', before, after },
+        'ページサイズ・解像度',
+      );
+      node.ready = Promise.all(
+        [...before.layers, ...after.layers].map(async (snapshot) => {
+          if (snapshot.canvas) {
+            try {
+              snapshot.content = await canvasToBlob(snapshot.canvas);
+              snapshot.canvas = undefined;
+            } catch {
+              /* Keep the original canvas so undo remains lossless; persistence can retry. */
+            }
+          }
+        }),
+      ).then(() => undefined);
+      useStore
+        .getState()
+        .set({ pageW: width, pageH: height, pageSpec: { ...spec } });
       eng.compositor.textRenderer.clear();
     } catch (error) {
       await this.restorePageSnapshot(before);
       throw error;
-    } finally { eng.setBusy(false); }
+    } finally {
+      eng.setBusy(false);
+    }
     eng.committed();
   }
 
@@ -211,9 +249,16 @@ export class ProjectService {
     this.projectGeneration++;
     try {
       await eng.recorderPublic().reset();
-      if (eng.autosave.saveTimer !== null) { clearTimeout(eng.autosave.saveTimer); eng.autosave.saveTimer = null; }
+      if (eng.autosave.saveTimer !== null) {
+        clearTimeout(eng.autosave.saveTimer);
+        eng.autosave.saveTimer = null;
+      }
       await eng.autosave.saving;
-      const layer = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
+      const layer = createRasterLayer(
+        'レイヤー 1',
+        eng.artboard.w,
+        eng.artboard.h,
+      );
       const history = new HistoryTree();
       const pageId = pages.newPageId();
       const meta: SavedProjectMeta = {
@@ -233,33 +278,61 @@ export class ProjectService {
         thumbnailVersion: 0,
       };
       await replaceProject(meta, [page]);
-      pages.activePageId = pageId; pages.pageOrder = [pageId]; pages.thumbnailVersion = 0;
+      pages.activePageId = pageId;
+      pages.pageOrder = [pageId];
+      pages.thumbnailVersion = 0;
       await eng.links.refreshCatalog();
       setPersistencePageId(pageId);
-      ls.layers = [layer]; ls.rootLayerIds = [layer.id]; ls.activeLayerId = layer.id;
-      ls.resetCountersFromLayers(); eng.history = history; ls.clearVersions();
+      ls.layers = [layer];
+      ls.rootLayerIds = [layer.id];
+      ls.activeLayerId = layer.id;
+      ls.resetCountersFromLayers();
+      eng.history = history;
+      ls.clearVersions();
       eng.compositor.textRenderer.clear();
       await loadFonts([]);
       eng.autosave.persistedRevision = eng.autosave.saveRevision;
-      useStore.getState().set({ fonts: [], textEditingId: null, projectGeneration: this.projectGeneration, selectionActive: false, freeTransform: false, selectedLayerIds: [layer.id], multiSelectMode: false, clipboardAvailable: false, pages: [{ id: pageId, thumbnailVersion: 0 }], activePageId: pageId });
+      useStore.getState().set({
+        fonts: [],
+        textEditingId: null,
+        projectGeneration: this.projectGeneration,
+        selectionActive: false,
+        freeTransform: false,
+        selectedLayerIds: [layer.id],
+        multiSelectMode: false,
+        clipboardAvailable: false,
+        pages: [{ id: pageId, thumbnailVersion: 0 }],
+        activePageId: pageId,
+      });
       eng.events.emit('projectReset');
       eng.view.reset();
       eng.shapeEdit.refreshVertexState();
-      eng.requestRender(); eng.syncStore(); eng.scheduleStorageRefresh();
-    } finally { eng.setBusy(false); }
+      eng.requestRender();
+      eng.syncStore();
+      eng.scheduleStorageRefresh();
+    } finally {
+      eng.setBusy(false);
+    }
   }
 
   async addFont(file: File): Promise<ProjectFont | null> {
     const eng = this.engine;
     if (eng.isBusy()) return null;
     const generation = this.projectGeneration;
-    if (!/\.(ttf|otf|woff2?)$/i.test(file.name)) throw new Error('TTF・OTF・WOFF・WOFF2を選択してください');
+    if (!/\.(ttf|otf|woff2?)$/i.test(file.name))
+      throw new Error('TTF・OTF・WOFF・WOFF2を選択してください');
     const dataUrl = await blobToDataURL(file);
-    const font = { id: crypto.randomUUID(), name: file.name.replace(/\.[^.]+$/, ''), dataUrl };
+    const font = {
+      id: crypto.randomUUID(),
+      name: file.name.replace(/\.[^.]+$/, ''),
+      dataUrl,
+    };
     const probe = new FontFace(`rin-font-${font.id}`, `url("${dataUrl}")`);
     await probe.load();
     if (generation !== this.projectGeneration) return null;
-    const existing = useStore.getState().fonts.find(f => f.dataUrl === dataUrl);
+    const existing = useStore
+      .getState()
+      .fonts.find((f) => f.dataUrl === dataUrl);
     if (existing) return existing;
     const fonts = [...useStore.getState().fonts, font];
     useStore.getState().set({ fonts });
@@ -275,7 +348,13 @@ export class ProjectService {
     if (!eng.compositor.main) return;
     eng.finishTextEditing();
     await eng.readyToRender();
-    downloadBlob(await pngWithPpi(await canvasToBlob(eng.compositor.main), this.pageSpec.ppi), 'rin-paint.png');
+    downloadBlob(
+      await pngWithPpi(
+        await canvasToBlob(eng.compositor.main),
+        this.pageSpec.ppi,
+      ),
+      'rin-paint.png',
+    );
   }
 
   async exportProject(): Promise<void> {
@@ -283,12 +362,24 @@ export class ProjectService {
     if (eng.isBusy()) throw new Error('処理の完了後に保存してください');
     eng.layerService.finishFloating();
     await eng.links.flush();
-    eng.scheduleSave(); await eng.flushSavePublic();
+    eng.scheduleSave();
+    await eng.flushSavePublic();
     const meta = await loadProjectMeta();
     if (!meta) throw new Error('プロジェクトを保存できませんでした');
-    const pages = (await Promise.all(meta.pageOrder.map(loadPage))).filter((page): page is SavedPage => !!page);
-    if (pages.length !== meta.pageOrder.length) throw new Error('一部のページを読み込めませんでした');
-    downloadBlob(await packProjectFile({ app: 'rin-paint', version: PROJECT_VERSION, meta, pages }), `rin-paint-${new Date().toISOString().slice(0, 10)}.rinpaint`);
+    const pages = (await Promise.all(meta.pageOrder.map(loadPage))).filter(
+      (page): page is SavedPage => !!page,
+    );
+    if (pages.length !== meta.pageOrder.length)
+      throw new Error('一部のページを読み込めませんでした');
+    downloadBlob(
+      await packProjectFile({
+        app: 'rin-paint',
+        version: PROJECT_VERSION,
+        meta,
+        pages,
+      }),
+      `rin-paint-${new Date().toISOString().slice(0, 10)}.rinpaint`,
+    );
   }
 
   async importProject(file: File): Promise<void> {
@@ -297,27 +388,53 @@ export class ProjectService {
     const pages = eng.pages;
     if (eng.isBusy()) throw new Error('busy');
     const archive = await unpackProjectFile(file);
-    const proj = archive.pages.find(page => page.id === archive.meta.activePageId) ?? archive.pages[0];
+    // Decode and validate every page before replacing any persisted data.
+    for (const page of archive.pages) {
+      if (!new HistoryTree().restore(page.history))
+        throw new Error('履歴構造が不正です');
+      if (validatePageSpec(page.pageSpec))
+        throw new Error('ページサイズが不正です');
+      const size = pagePixels(page.pageSpec),
+        layers: Layer[] = [];
+      for (const record of page.layers) {
+        const layer = await restoreLayerFrom(record, {
+          artboard: { w: size.width, h: size.height },
+        });
+        if (!layer) throw new Error('レイヤーを復元できません');
+        layers.push(layer);
+      }
+      if (
+        !validateLayerTree(page.rootLayerIds, layers) ||
+        !layers.some((l) => l.id === page.activeLayerId)
+      )
+        throw new Error('レイヤー構造が不正です');
+    }
+    const proj =
+      archive.pages.find((page) => page.id === archive.meta.activePageId) ??
+      archive.pages[0];
     if (eng.isBusy()) throw new Error('busy');
     ls.finishFloating();
     eng.cancelSessions();
     const before = this.pageSnapshot();
     const previousFonts = useStore.getState().fonts;
     const previousHistory = eng.history;
+    const previousPageOrder = [...pages.pageOrder],
+      previousPageId = pages.activePageId;
     eng.setBusy(true);
     this.projectGeneration++;
     try {
       await eng.recorderPublic().reset();
-      if (eng.autosave.saveTimer !== null) { clearTimeout(eng.autosave.saveTimer); eng.autosave.saveTimer = null; }
+      if (eng.autosave.saveTimer !== null) {
+        clearTimeout(eng.autosave.saveTimer);
+        eng.autosave.saveTimer = null;
+      }
       await eng.autosave.saving;
       const meta: SavedProjectMeta = {
         ...archive.meta,
         activePageId: proj.id,
-        pageOrder: archive.pages.map(page => page.id),
+        pageOrder: archive.pages.map((page) => page.id),
       };
-      await replaceProject(meta, archive.pages);
-      pages.pageOrder = [...meta.pageOrder]; pages.activePageId = meta.activePageId; setPersistencePageId(pages.activePageId);
-      await eng.links.refreshCatalog();
+
       this.pageSpec = { ...proj.pageSpec };
       const pixels = pagePixels(this.pageSpec);
       eng.artboard.resize(pixels.width, pixels.height);
@@ -330,15 +447,29 @@ export class ProjectService {
       for (const pl of proj.layers) {
         const index = (counters.get(pl.type) ?? 0) + 1;
         counters.set(pl.type, index);
-        const layer = await restoreLayerFrom(pl, { artboard: eng.artboard }, index);
+        const layer = await restoreLayerFrom(
+          pl,
+          { artboard: eng.artboard },
+          index,
+        );
         if (layer) layers.push(layer);
       }
       if (!layers.some((l) => l.type === 'raster')) {
-        const fallback = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
+        const fallback = createRasterLayer(
+          'レイヤー 1',
+          eng.artboard.w,
+          eng.artboard.h,
+        );
         layers.push(fallback);
         proj.rootLayerIds.push(fallback.id);
       }
-      if (!validateLayerTree(proj.rootLayerIds, layers)) throw new Error('invalid layer tree');
+      if (!validateLayerTree(proj.rootLayerIds, layers))
+        throw new Error('invalid layer tree');
+      await replaceProject(meta, archive.pages);
+      pages.pageOrder = [...meta.pageOrder];
+      pages.activePageId = meta.activePageId;
+      setPersistencePageId(pages.activePageId);
+      await eng.links.refreshCatalog();
       ls.layers = layers;
       ls.rootLayerIds = [...proj.rootLayerIds];
       ls.activeLayerId = proj.activeLayerId ?? '';
@@ -352,12 +483,19 @@ export class ProjectService {
         pageSpec: { ...this.pageSpec },
         clipboardAvailable: false,
         activePageId: pages.activePageId,
-        pages: pages.pageOrder.map(id => ({ id, thumbnailVersion: archive.pages.find(page => page.id === id)?.thumbnailVersion ?? 0 })),
+        pages: pages.pageOrder.map((id) => ({
+          id,
+          thumbnailVersion:
+            archive.pages.find((page) => page.id === id)?.thumbnailVersion ?? 0,
+        })),
       });
       ls.fixActive();
       eng.links.reconcileAll();
       eng.compositor.syncTextRenders();
     } catch (error) {
+      pages.pageOrder = previousPageOrder;
+      pages.activePageId = previousPageId;
+      setPersistencePageId(previousPageId);
       await loadFonts(previousFonts);
       useStore.getState().set({ fonts: previousFonts });
       await this.restorePageSnapshot(before);

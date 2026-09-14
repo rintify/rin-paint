@@ -6,28 +6,6 @@ import type { PaintEngine } from '../../engine/PaintEngine';
 import type { Tool, ToolSession } from '../types';
 import { FloatSelection } from '../transform/floatSelection';
 
-function opaqueBounds(canvas: HTMLCanvasElement): DirtyRect | null {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-  const { width, height } = canvas;
-  const { data } = ctx.getImageData(0, 0, width, height);
-  let minX = width;
-  let minY = height;
-  let maxX = -1;
-  let maxY = -1;
-  for (let y = 0, i = 0; y < height; y++) {
-    for (let x = 0; x < width; x++, i += 4) {
-      if (data[i + 3] === 0) continue;
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-    }
-  }
-  if (maxX < 0) return null;
-  return { minX, minY, maxX: maxX + 1, maxY: maxY + 1 };
-}
-
 export class MoveTool implements Tool {
   readonly floatSelection: FloatSelection;
   private refreshing = false;
@@ -42,7 +20,9 @@ export class MoveTool implements Tool {
     cancel: () => this.cancelAndRefresh(),
   };
 
-  overlayAnimated(): boolean { return this.floatSelection.overlayAnimated(); }
+  overlayAnimated(): boolean {
+    return this.floatSelection.overlayAnimated();
+  }
 
   setFreeTransform(on: boolean): void {
     this.floatSelection.setFreeTransform(on);
@@ -131,15 +111,27 @@ export class MoveTool implements Tool {
   private selectionBounds(): DirtyRect | null {
     let bounds: DirtyRect | null = null;
     for (const layer of this.eng.selectedRasters()) {
-      const opaque = opaqueBounds(layer.runtime.canvas);
+      const r = layer.runtime.surface.getContentBounds();
+      const opaque = r
+        ? { minX: r.x, minY: r.y, maxX: r.x + r.w, maxY: r.y + r.h }
+        : null;
       if (opaque) bounds = bounds ? unionRect(bounds, opaque) : opaque;
     }
     const ids = new Set(useStore.getState().selectedLayerIds);
     for (const layer of this.eng.allLayers()) {
-      if (!ids.has(layer.id) || !layerHandler(layer).capabilities.objectTransform) continue;
+      if (
+        !ids.has(layer.id) ||
+        !layerHandler(layer).capabilities.objectTransform
+      )
+        continue;
       const box = this.eng.objectBounds(layer.id);
       if (!box) continue;
-      const next = { minX: box.x, minY: box.y, maxX: box.x + box.w, maxY: box.y + box.h };
+      const next = {
+        minX: box.x,
+        minY: box.y,
+        maxX: box.x + box.w,
+        maxY: box.y + box.h,
+      };
       bounds = bounds ? unionRect(bounds, next) : next;
     }
     return bounds;

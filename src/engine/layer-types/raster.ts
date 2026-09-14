@@ -1,17 +1,16 @@
-import { canvasToBlob, createRasterLayer, ensureRasterSurface, makeCanvas, type Layer, type RasterLayer } from '../layers';
+import type { RasterLayer, Layer } from '../layers';
+import { RasterSurface } from '../raster/RasterSurface';
+import { RasterResampler } from '../raster/RasterResampler';
 import { emptyCatalog } from '../parameters/catalog';
 import type { LayerDefinition } from './definition';
-import type { LayerDrawEnv } from './types';
-
 export const rasterLayerType: LayerDefinition<'raster'> = {
   info: {
     type: 'raster',
     canMask: true,
     maskSourceLabel: 'ラスター',
     supportsBlend: true,
-    defaultName: index => `レイヤー ${index}`,
+    defaultName: (index) => `レイヤー ${index}`,
   },
-
   state: {
     initial: () => ({}),
     clone: () => ({}),
@@ -19,105 +18,80 @@ export const rasterLayerType: LayerDefinition<'raster'> = {
     applyPatch: () => ({}),
     scale: () => ({}),
   },
-
   codec: {
     encode: () => ({}),
     decode: () => ({}),
     async encodeContent(layer) {
-      if (layer.runtime.deferred) return undefined;
-      const copy = makeCanvas(layer.runtime.canvas.width, layer.runtime.canvas.height);
-      copy.getContext('2d')!.drawImage(layer.runtime.canvas, 0, 0);
-      return canvasToBlob(copy);
+      return layer.runtime.surface.snapshot();
     },
-    async decodeRuntime(content, env) {
-      const layer = createRasterLayer('tmp', env.artboard.w, env.artboard.h, undefined, !content);
-      if (content instanceof HTMLCanvasElement) layer.runtime.ctx.drawImage(content, 0, 0);
-      else if (content) {
-        const bitmap = await createImageBitmap(content);
-        layer.runtime.ctx.drawImage(bitmap, 0, 0);
-        bitmap.close();
-      }
-      return layer.runtime;
-    },
-    async scaleStored(state, _env) {
-      return state;
+    async decodeRuntime(content) {
+      if (!content) return { surface: new RasterSurface() };
+      if (content instanceof Blob || content instanceof HTMLCanvasElement)
+        throw new Error('対応していないラスター形式です');
+      return { surface: await RasterSurface.restore(content) };
     },
   },
-
   renderer: {
     draw(ctx, layer, env) {
-      if (layer.runtime.deferred) return;
+      const region = env.outputRegion;
       const erasers = layer.childIds
-        .map(id => env.layerById(id))
-        .filter((child): child is Layer => !!child && child.visible && !!env.handlerFor(child).renderer.eraser?.applies(child as never));
-      let source: HTMLCanvasElement = layer.runtime.canvas;
-      let borrowed: ReturnType<LayerDrawEnv['borrowCanvas']> | null = null;
-      if (erasers.length) {
-        borrowed = env.borrowCanvas();
-        borrowed.ctx.save();
-        borrowed.ctx.setTransform(1, 0, 0, 1, -env.originX, -env.originY);
-        borrowed.ctx.drawImage(layer.runtime.canvas, 0, 0);
-        for (const eraser of erasers) env.handlerFor(eraser).renderer.eraser!.draw(borrowed.ctx, eraser as never, env);
-        borrowed.ctx.restore();
-        source = borrowed.canvas;
+        .map((id) => env.layerById(id))
+        .filter(
+          (child): child is Layer =>
+            !!child &&
+            child.visible &&
+            !!env.handlerFor(child).renderer.eraser?.applies(child as never),
+        );
+      ctx.save();
+      try {
+        ctx.globalAlpha = layer.opacity;
+        ctx.globalCompositeOperation = layer.blend;
+        if (erasers.length) {
+          const work = env.borrowCanvas(region.w, region.h);
+          try {
+            work.ctx.translate(-region.x, -region.y);
+            layer.runtime.surface.drawRegion(work.ctx, region);
+            for (const eraser of erasers)
+              env
+                .handlerFor(eraser)
+                .renderer.eraser!.draw(work.ctx, eraser as never, env);
+            ctx.drawImage(
+              work.canvas,
+              0,
+              0,
+              region.w,
+              region.h,
+              region.x,
+              region.y,
+              region.w,
+              region.h,
+            );
+          } finally {
+            work.release();
+          }
+        } else layer.runtime.surface.drawRegion(ctx, region);
+        env.drawAboveLayer?.(ctx, layer.id);
+      } finally {
+        ctx.restore();
       }
-      ctx.globalAlpha = layer.opacity;
-      ctx.globalCompositeOperation = layer.blend;
-      ctx.drawImage(source, borrowed ? env.originX : 0, borrowed ? env.originY : 0);
-      env.drawAboveLayer?.(ctx, layer.id);
-      borrowed?.release();
     },
-    drawMask(ctx, layer) {
-      if (layer.runtime.deferred) return;
-      ctx.drawImage(layer.runtime.canvas, 0, 0);
+    drawMask(ctx, layer, env) {
+      layer.runtime.surface.drawRegion(ctx, env.outputRegion);
     },
-    bakeOnto(target, layer) {
-      if (layer.runtime.deferred) return;
-      ensureRasterSurface(target);
-      target.runtime.ctx.save();
-      target.runtime.ctx.globalAlpha = layer.opacity;
-      target.runtime.ctx.globalCompositeOperation = layer.blend;
-      target.runtime.ctx.drawImage(layer.runtime.canvas, 0, 0);
-      target.runtime.ctx.restore();
-    },
-    contentCanvas: layer => layer.runtime.deferred ? null : layer.runtime.canvas,
+    contentCanvas: () => null,
   },
-
   parameters: emptyCatalog(),
-
-  capabilities: {
-    maskSource: {
-      nativeCanvas: layer => layer.runtime.deferred ? null : layer.runtime.canvas,
-      drawOpacity: layer => layer.opacity,
-    },
-  },
+  capabilities: { maskSource: { drawOpacity: (layer) => layer.opacity } },
 };
-
-export function scaleRasterRuntime(layer: RasterLayer, factor: number, width: number, height: number): void {
-  if (layer.runtime.deferred) {
-    layer.runtime.logicalWidth = width;
-    layer.runtime.logicalHeight = height;
-    return;
-  }
-  const contentBounds = layer.runtime.contentBounds;
-  const canvas = makeCanvas(width, height);
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) throw new Error('キャンバス用のメモリを確保できませんでした');
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(layer.runtime.canvas, 0, 0, layer.runtime.canvas.width * factor, layer.runtime.canvas.height * factor);
-  layer.runtime = {
-    canvas,
-    ctx,
-    logicalWidth: width,
-    logicalHeight: height,
-    ...(contentBounds === null ? { contentBounds: null } : contentBounds ? {
-      contentBounds: {
-        x: contentBounds.x * factor,
-        y: contentBounds.y * factor,
-        w: contentBounds.w * factor,
-        h: contentBounds.h * factor,
-      },
-    } : {}),
-  };
+export function scaleRasterRuntime(
+  layer: RasterLayer,
+  factor: number,
+  _width: number,
+  _height: number,
+): void {
+  if (factor !== 1)
+    layer.runtime.surface = RasterResampler.scale(
+      layer.runtime.surface,
+      factor,
+    );
 }
