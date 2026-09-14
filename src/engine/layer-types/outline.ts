@@ -90,6 +90,7 @@ export const outlineLayerType: LayerDefinition<'outline'> = {
         );
       },
       apply(scope, layer, env) {
+        if (env.drawShapeOutline?.(scope, layer)) return;
         const o = layer.state.outline;
         applyOutline(
           scope,

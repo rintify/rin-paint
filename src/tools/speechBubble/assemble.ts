@@ -32,7 +32,9 @@ export function assembleSpeechBubble(
       fontId: options.fontId,
       sizePt: options.fontSizePt,
       direction: 'vertical',
-      horizontalAlign: 'left',
+      // 縦書きでは horizontalAlign が列の物理的な左右位置を表す。
+      // 漫画の吹き出しは右側の列から読み始めるため、右寄せを既定にする。
+      horizontalAlign: 'right',
       verticalAlign: 'top',
       lineHeight: 1.5,
     }),

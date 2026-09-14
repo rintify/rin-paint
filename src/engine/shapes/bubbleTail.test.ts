@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BubbleTailShapeParams } from '../../model';
-import { shapeBounds, shapePoints } from '.';
+import { drawShapeGizmo, shapeBounds, shapePoints } from '.';
 import { shapeKindHandler } from './kinds/registry';
 
 function tail(style: BubbleTailShapeParams['style']): BubbleTailShapeParams {
@@ -35,5 +35,23 @@ describe('bubble tail geometry', () => {
     expect(gaps[0]).toBeGreaterThan(gaps[1]);
     expect(gaps[1]).toBeGreaterThan(gaps[2]);
     expect(gaps[2]).toBeGreaterThan(gaps[3]);
+  });
+
+  it('draws a dedicated labeled curve gizmo without a bounding box', () => {
+    const labels: string[] = [];
+    const context = {
+      save: vi.fn(), restore: vi.fn(), setLineDash: vi.fn(), beginPath: vi.fn(),
+      moveTo: vi.fn(), lineTo: vi.fn(), quadraticCurveTo: vi.fn(), arc: vi.fn(),
+      rect: vi.fn(), closePath: vi.fn(), fill: vi.fn(), stroke: vi.fn(),
+      fillRect: vi.fn(), strokeRect: vi.fn(),
+      measureText: (label: string) => ({ width: label.length * 10 }),
+      fillText: (label: string) => labels.push(label),
+    } as unknown as CanvasRenderingContext2D;
+
+    drawShapeGizmo(context, tail('pointed'), { scale: 1 });
+
+    expect(context.quadraticCurveTo).toHaveBeenCalledWith(60, 0, 110, 20);
+    expect(labels).toEqual(['根元', '曲がり', '先端']);
+    expect(context.strokeRect).not.toHaveBeenCalled();
   });
 });

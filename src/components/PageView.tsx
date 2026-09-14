@@ -196,7 +196,7 @@ export function PageView() {
       )}
       {bubbleDraftActive && (
         <Paper elevation={6} data-canvas-ui sx={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', p: 1, display: 'flex', alignItems: 'center', gap: 1, zIndex: 6 }}>
-          <Typography variant="caption">しっぽの先端をクリック</Typography>
+          <Typography variant="caption">吹き出しの外側をクリックして、しっぽの先端を配置</Typography>
           <Button onClick={() => engine.cancelSessions()}>キャンセル</Button>
         </Paper>
       )}

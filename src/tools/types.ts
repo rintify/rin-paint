@@ -23,6 +23,7 @@ export interface Tool {
   onActivate?(): void;
   /** レイヤー選択が変わった直後。選択に追従するツールが使う。 */
   onLayerSelectionChange?(): void;
+  onSettingsChange?(): void;
   drawOverlay?(ctx: CanvasRenderingContext2D): void;
   /** trueの間だけ操作ガイドのアニメーションフレームを継続する。 */
   overlayAnimated?(): boolean;

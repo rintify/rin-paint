@@ -514,8 +514,9 @@ export class PaintEngine {
   selectedObjectsInRect(
     rect: DirtyRect,
     polygon?: { x: number; y: number }[],
+    layerIds?: ReadonlySet<string>,
   ): SelectedObjectTransform[] {
-    return this.objects.selectedObjectsInRect(rect, polygon);
+    return this.objects.selectedObjectsInRect(rect, polygon, layerIds);
   }
   previewObjectGroup(
     entries: SelectedObjectTransform[],
@@ -871,6 +872,7 @@ export class PaintEngine {
 
   updateActiveToolSettings(patch: Record<string, unknown>): void {
     useStore.getState().updateActiveToolSettings(patch);
+    this.activeTool().onSettingsChange?.();
   }
 
   pushColor(color: string): void {

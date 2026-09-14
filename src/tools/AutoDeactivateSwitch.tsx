@@ -1,6 +1,6 @@
-import { Box, Stack, Switch, Typography } from '@mui/material';
+import { Box } from '@mui/material';
 import { useEngine } from '../components/EngineContext';
-import { LabeledControl } from '../components/inspectorLayout';
+import { ToggleControl } from '../components/inspectorLayout';
 import { normalizeToolSettings } from './registry';
 import { useStore } from '../state/store';
 
@@ -15,19 +15,13 @@ export function AutoDeactivateSwitch() {
       : true;
   });
   return (
-    <Box sx={{ mt: 1.25 }}>
-      <LabeledControl label="使用後に解除">
-        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-            {enabled ? '解除する' : '維持する'}
-          </Typography>
-          <Switch
-            checked={enabled}
-            onChange={(event) => engine.updateActiveToolSettings({ autoDeactivateAfterUse: event.target.checked })}
-            slotProps={{ input: { 'aria-label': LABEL } }}
-          />
-        </Stack>
-      </LabeledControl>
+    <Box className="section">
+      <ToggleControl
+        label="使用後に解除"
+        ariaLabel={LABEL}
+        checked={enabled}
+        onChange={(checked) => engine.updateActiveToolSettings({ autoDeactivateAfterUse: checked })}
+      />
     </Box>
   );
 }

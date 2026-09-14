@@ -214,7 +214,7 @@ describe('canvas history and new project', () => {
     expect(children[2].state).toMatchObject({
       text: {
         direction: 'vertical',
-        horizontalAlign: 'left',
+        horizontalAlign: 'right',
         verticalAlign: 'top',
         lineHeight: 1.5,
         width: 84,
@@ -1772,6 +1772,53 @@ describe('selection and layer transform', () => {
     expect(engine.getPageSpec()).toEqual(initial);
     expect(pixel(id, -4, 12)[3]).toBe(255);
     useStore.getState().deactivateTool();
+  });
+
+  it.each([[false, true], [true, true], [true, false]])('moves descendants once (enabled=%s, overlapping=%s)', async (enabled, overlapping) => {
+    await engine.newProject();
+    const parent = useStore.getState().activeLayerId;
+    paintRaster(engine.layerById(parent) as RasterLayer, (ctx) => ctx.fillRect(10, 10, 100, 100));
+    engine.addRasterLayer();
+    const child = useStore.getState().activeLayerId;
+    paintRaster(engine.layerById(child) as RasterLayer, (ctx) => ctx.fillRect(120, 10, 20, 20));
+    engine.addShapeLayer({
+      kind: 'rect', x: 150, y: 40, width: 20, height: 20,
+      color: '#00ff00', strokeWidth: 1, paintMode: 'fill-inside',
+    });
+    const grandchild = useStore.getState().activeLayerId;
+    engine.moveLayerAsTopChild(grandchild, child);
+    engine.moveLayerAsTopChild(child, parent);
+    engine.setActiveLayer(parent);
+    if (overlapping) engine.beginMultiSelect(child);
+    activateKind('move');
+    engine.updateActiveToolSettings({ includeDescendants: enabled });
+    expect(useStore.getState().selectedLayerIds).toEqual(expect.arrayContaining(overlapping ? [parent, child] : [parent]));
+    engine.move.onDown(pt(60, 60));
+    engine.move.onMove(pt(80, 60));
+    engine.move.onUp();
+    await engine.commitFloatSelection();
+    await awaitHistoryReady();
+    expect(pixel(parent, 15, 15)[3]).toBe(0);
+    expect(pixel(parent, 35, 15)[3]).toBe(255);
+    expect(pixel(child, 125, 15)[3]).toBe(0);
+    expect(pixel(child, 145, 15)[3]).toBe(255);
+    expect(engine.getShape(grandchild)).toMatchObject({ x: enabled ? 170 : 150, y: 40 });
+    await engine.undo();
+    expect(pixel(parent, 15, 15)[3]).toBe(255);
+    expect(pixel(child, 125, 15)[3]).toBe(255);
+    expect(engine.getShape(grandchild)).toMatchObject({ x: 150, y: 40 });
+    useStore.getState().deactivateTool();
+    if (enabled) {
+      activateKind('move');
+      engine.move.onDown(pt(170, 110));
+      engine.move.onMove(pt(250, 160));
+      engine.move.onUp();
+      await engine.commitFloatSelection();
+      await awaitHistoryReady();
+      expect(engine.getShape(grandchild)).toMatchObject({ x: 210, y: 20, width: 40, height: 40 });
+      expect(pixel(child, 155, -35)[3]).toBeGreaterThan(0);
+      useStore.getState().deactivateTool();
+    }
   });
 
   it('floats selected raster and shape layers when the move tool is activated', async () => {

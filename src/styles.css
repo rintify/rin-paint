@@ -266,6 +266,11 @@
   cursor: move;
 }
 .text-frame.editing { cursor: default; }
+.text-frame.gizmo-locked {
+  pointer-events: none;
+  cursor: default;
+}
+.text-frame.gizmo-locked.editing { pointer-events: auto; }
 .text-editor { outline: none; cursor: text; caret-color: #0084ff; user-select: text; -webkit-user-select: text; }
 .text-editor span, .text-editor ruby { user-select: text; -webkit-user-select: text; }
 .text-editor::selection, .text-editor *::selection { background: #0084ff55; }

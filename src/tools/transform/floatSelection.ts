@@ -60,6 +60,7 @@ export interface FloatExtractInput {
   maxY: number;
   preferredLayerId?: string;
   rectangular?: boolean;
+  layerIds?: ReadonlySet<string>;
 }
 
 const ROTATE_HANDLE_OFFSET = 34;
@@ -162,7 +163,7 @@ export class FloatSelection {
     });
   }
 
-  extractFromRect(rect: DirtyRect, preferredLayerId?: string): boolean {
+  extractFromRect(rect: DirtyRect, preferredLayerId?: string, layerIds?: ReadonlySet<string>): boolean {
     const minX = rect.minX;
     const minY = rect.minY;
     const maxX = rect.maxX;
@@ -186,6 +187,7 @@ export class FloatSelection {
       maxY,
       preferredLayerId,
       rectangular: true,
+      layerIds,
     });
   }
 
@@ -202,7 +204,10 @@ export class FloatSelection {
       return false;
     }
 
-    const selected = this.eng.selectedRasters();
+    const selected = input.layerIds
+      ? this.eng.allLayers().filter((layer): layer is RasterLayer =>
+          layer.type === 'raster' && input.layerIds!.has(layer.id))
+      : this.eng.selectedRasters();
     this.rasterFloats = [];
     try {
       for (const layer of selected) {
@@ -251,6 +256,7 @@ export class FloatSelection {
     this.objectTransforms = this.eng.selectedObjectsInRect(
       this.origRect,
       input.outline,
+      input.layerIds,
     );
     this.sourceCorners = this.float.corners.map((point) => ({ ...point }));
     this.phase = 'float';

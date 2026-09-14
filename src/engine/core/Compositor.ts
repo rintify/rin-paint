@@ -1,4 +1,5 @@
 import { renderLayerById, renderView } from '../references/renderView';
+import { drawCachedShapeOutline } from './ShapeOutlineCache';
 import { effectDamage } from './EffectDamage';
 import type { EffectPreview } from '../layer-types/types';
 import { shapeVisualPadding } from '../shapes';
@@ -343,6 +344,9 @@ export class Compositor {
     const drawAboveLayer = tool?.drawAboveLayer?.bind(tool);
     const env: LayerDrawEnv = {
       artboard: eng.artboard,
+      drawShapeOutline: (scope, layer) => drawCachedShapeOutline(
+        scope, layer, this.regions.effectInputLayers(layer.id, withToolOverlay), env,
+      ),
       effectPreview: withToolOverlay ? this.effectPreview : undefined,
       outputRegion: { x: originX, y: originY, w: width, h: height },
       inputRegion: { x: originX, y: originY, w: width, h: height },

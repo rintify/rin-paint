@@ -43,6 +43,7 @@ export interface LayerMeasureEnv {
 }
 
 export interface LayerDrawEnv extends LayerMeasureEnv {
+  drawShapeOutline?(scope: EffectScope, layer: Extract<Layer, { type: 'outline' }>): boolean;
   effectPreview?: EffectPreview;
   outputRegion: PixelRect;
   inputRegion: PixelRect;

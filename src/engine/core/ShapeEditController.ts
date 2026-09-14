@@ -221,7 +221,7 @@ export class ShapeEditController {
       Math.hypot(point.x - x, point.y - y) <= radius;
 
     const rotate = this.rotateHandle(shape);
-    const hit = near(rotate.x, rotate.y)
+    const hit = shape.kind !== 'bubble-tail' && near(rotate.x, rotate.y)
       ? {
           mode: 'rotate' as ShapeEditMode,
           vertexIndex: undefined,

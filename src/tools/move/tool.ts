@@ -5,6 +5,7 @@ import { useStore } from '../../state/store';
 import type { PaintEngine } from '../../engine/PaintEngine';
 import type { Tool, ToolSession } from '../types';
 import { FloatSelection } from '../transform/floatSelection';
+import { normalizeMoveToolSettings } from './settings';
 
 export class MoveTool implements Tool {
   readonly latestMoveOnly = true;
@@ -30,6 +31,10 @@ export class MoveTool implements Tool {
   }
 
   onActivate(): void {
+    this.refresh();
+  }
+
+  onSettingsChange(): void {
     this.refresh();
   }
 
@@ -94,32 +99,45 @@ export class MoveTool implements Tool {
   }
 
   private beginFromSelection(): void {
-    const rect = this.selectionBounds();
+    const ids = this.targetLayerIds();
+    const rect = this.selectionBounds(ids);
     if (!rect) {
       this.floatSelection.emitSelectionState();
       this.eng.requestOverlayRender();
       return;
     }
     const preferred = this.eng.activeRaster()?.id;
-    this.floatSelection.extractFromRect(rect, preferred);
+    this.floatSelection.extractFromRect(rect, preferred, ids);
   }
 
-  private selectionBounds(): DirtyRect | null {
+  private targetLayerIds(): Set<string> {
+    const state = useStore.getState();
+    const selected = state.multiSelectMode
+      ? state.selectedLayerIds
+      : [this.eng.getActiveLayerId()];
+    const { includeDescendants } = normalizeMoveToolSettings(this.eng.activeToolSettings()?.settings);
+    const ids = selected.flatMap((id) => includeDescendants
+      ? this.eng.layerService.descendantIds(id)
+      : [id]);
+    return new Set(ids.filter((id) => {
+      const layer = this.eng.layerById(id);
+      return layer && (includeDescendants || layer.type !== 'raster' || layer.visible);
+    }));
+  }
+
+  private selectionBounds(ids: ReadonlySet<string>): DirtyRect | null {
     let bounds: DirtyRect | null = null;
-    for (const layer of this.eng.selectedRasters()) {
-      const r = layer.runtime.surface.getContentBounds();
-      const opaque = r
-        ? { minX: r.x, minY: r.y, maxX: r.x + r.w, maxY: r.y + r.h }
-        : null;
-      if (opaque) bounds = bounds ? unionRect(bounds, opaque) : opaque;
-    }
-    const ids = new Set(useStore.getState().selectedLayerIds);
     for (const layer of this.eng.allLayers()) {
-      if (
-        !ids.has(layer.id) ||
-        !layerHandler(layer).capabilities.objectTransform
-      )
+      if (!ids.has(layer.id)) continue;
+      if (layer.type === 'raster') {
+        const r = layer.runtime.surface.getContentBounds();
+        if (r) {
+          const next = { minX: r.x, minY: r.y, maxX: r.x + r.w, maxY: r.y + r.h };
+          bounds = bounds ? unionRect(bounds, next) : next;
+        }
         continue;
+      }
+      if (!layerHandler(layer).capabilities.objectTransform) continue;
       const box = this.eng.objectBounds(layer.id);
       if (!box) continue;
       const next = {

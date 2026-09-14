@@ -9,9 +9,10 @@ import type { PaintEngine } from '../engine/PaintEngine';
 import type { ToolKind } from './registry';
 
 const setAuto = vi.hoisted(() => vi.fn());
+const updateSettings = vi.hoisted(() => vi.fn());
 const mockEngine = {
   setActiveToolAutoDeactivateAfterUse: setAuto,
-  updateActiveToolSettings() {},
+  updateActiveToolSettings: updateSettings,
 } as unknown as PaintEngine;
 
 let container: HTMLDivElement;
@@ -20,6 +21,7 @@ const original = useStore.getState();
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   setAuto.mockClear();
+  updateSettings.mockClear();
   const tools = defaultTools();
   useStore.setState({
     tools,
@@ -50,6 +52,12 @@ describe('per-tool auto deactivate', () => {
     );
     const toggle = container.querySelector('[aria-label="使用後にツール選択を解除"]');
     expect(toggle).not.toBeNull();
+    await act(async () =>
+      [...container.querySelectorAll('span')]
+        .find((element) => element.textContent === '使用後に解除')!
+        .click(),
+    );
+    expect(updateSettings).toHaveBeenCalledWith({ autoDeactivateAfterUse: false });
 
     const pen = useStore.getState().tools.find((tool) => tool.kind === 'pen')!;
     useStore.getState().activateTool(pen.id);

@@ -10,8 +10,9 @@ export class ObjectTransform {
   selectedObjectsInRect(
     rect: DirtyRect,
     polygon?: { x: number; y: number }[],
+    layerIds?: ReadonlySet<string>,
   ): SelectedObjectTransform[] {
-    const ids = new Set(useStore.getState().selectedLayerIds);
+    const ids = layerIds ?? new Set(useStore.getState().selectedLayerIds);
     const pointInPolygon = (point: { x: number; y: number }) => {
       if (!polygon?.length) return true;
       let inside = false;

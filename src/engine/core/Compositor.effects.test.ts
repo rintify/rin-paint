@@ -2,6 +2,7 @@ import { paintRaster } from '../raster/testing';
 // @vitest-environment happy-dom
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createCanvas, type Canvas } from '@napi-rs/canvas';
+import { translateShape } from '../shapes';
 import { Compositor } from './Compositor';
 import {
   createTransformLayer,
@@ -796,7 +797,7 @@ describe('effect scopes', () => {
     revisions.set(source.id, 1);
     compositor.invalidateLayer(source.id, { minX: 100, minY: 100, maxX: 125, maxY: 120 });
     compositor.ensureComposited();
-    expect(compositor.renderStats().cpuReadbackPixels).toBe(256 * 256);
+    expect(compositor.renderStats().cpuReadbackPixels).toBe(0);
     expect(rgba(main, 98, 110)).toEqual([255, 255, 255, 255]);
     expect(rgba(main, 103, 110)[0]).toBeLessThan(100);
   });
@@ -1354,4 +1355,63 @@ it('tracks damage through off-paper intermediate transforms and isolated child s
       main.getContext('2d')!.getImageData(0, 0, 1024, 1024).data,
     ).equals(Buffer.from(partial)),
   ).toBe(true);
+});
+
+describe('shape outline translation cache', () => {
+  it.each(['round', 'sharp'] as const)('reuses %s outlines across tiles and translations, and refreshes edits', cornerStyle => {
+    const body = createShapeLayer('body', {
+      kind: 'rect', x: 210.25, y: 100.5, width: 100, height: 80,
+      color: '#ffffff', strokeWidth: 0, paintMode: 'fill-inside',
+    });
+    const tail = createShapeLayer('tail', {
+      kind: 'bubble-tail', style: 'pointed', start: { x: 270.25, y: 160.5 },
+      control: { x: 300.25, y: 190.5 }, tip: { x: 320.25, y: 210.5 },
+      width: 25, circleCount: 3, spacingDecay: 0, color: '#ffffff', strokeWidth: 0,
+    });
+    body.opacity = 0.75;
+    const outline = createOutlineLayer('outline');
+    outline.state.outline = { ...outline.state.outline, widthMm: 3, cornerStyle };
+    body.childIds = [tail.id, outline.id];
+    tail.parentId = outline.parentId = body.id;
+    const layers = [body, tail, outline];
+    const { main, compositor, revisions } = createRenderer(layers, [body.id], 25.4, 512);
+    expect(compositor.renderStats().cpuReadbackPixels).toBeGreaterThan(0);
+    const compareUncached = () => {
+      const reference = createRenderer(layers, [body.id], 25.4, 512);
+      const drawEnv = reference.compositor.drawEnv.bind(reference.compositor);
+      vi.spyOn(reference.compositor, 'drawEnv').mockImplementation((...args) => ({
+        ...drawEnv(...args), drawShapeOutline: undefined,
+      }));
+      reference.compositor.requestRender();
+      reference.compositor.ensureComposited();
+      const pixels = (canvas: HTMLCanvasElement) => canvas.getContext('2d')!.getImageData(0, 0, 512, 512).data;
+      const actual = pixels(main), expected = pixels(reference.main);
+      let maxDifference = 0;
+      for (let i = 0; i < actual.length; i++)
+        maxDifference = Math.max(maxDifference, Math.abs(actual[i] - expected[i]));
+      // Separate bitmap composition may round an antialiased channel by one.
+      expect(maxDifference).toBeLessThanOrEqual(1);
+    };
+    compareUncached();
+    for (const input of [body, tail]) {
+      input.state.shape = translateShape(input.state.shape, 29, -13);
+      revisions.set(input.id, 1);
+    }
+    compositor.requestRender();
+    compositor.ensureComposited();
+    expect(compositor.renderStats().cpuReadbackPixels).toBe(0);
+    compareUncached();
+    outline.state.outline.widthMm = 5;
+    revisions.set(outline.id, 1);
+    compositor.requestRender();
+    compositor.ensureComposited();
+    expect(compositor.renderStats().cpuReadbackPixels).toBeGreaterThan(0);
+    compareUncached();
+    tail.state.shape = translateShape(tail.state.shape, 10.5, 0);
+    revisions.set(tail.id, 2);
+    compositor.requestRender();
+    compositor.ensureComposited();
+    expect(compositor.renderStats().cpuReadbackPixels).toBeGreaterThan(0);
+    compareUncached();
+  });
 });

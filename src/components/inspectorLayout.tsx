@@ -1,4 +1,4 @@
-import { alpha, Box, Card, Stack, Typography } from '@mui/material';
+import { alpha, Box, Card, Stack, Switch, Typography } from '@mui/material';
 import type { ReactNode } from 'react';
 
 export function FieldStack({ children }: { children: ReactNode }) {
@@ -11,7 +11,7 @@ export function LabeledControl({
   children,
 }: {
   label: string;
-  color?: 'text.secondary' | 'secondary' | 'warning' | 'warning.main';
+  color?: 'text.primary' | 'text.secondary' | 'secondary' | 'warning' | 'warning.main';
   children: ReactNode;
 }) {
   return (
@@ -20,6 +20,48 @@ export function LabeledControl({
         {label}
       </Typography>
       <Box sx={{ flex: 1, minWidth: 0 }}>{children}</Box>
+    </Stack>
+  );
+}
+
+/** Boolean settings share the inspector's label column and compact control spacing. */
+export function ToggleControl({
+  label,
+  ariaLabel = label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  ariaLabel?: string;
+  checked: boolean;
+  onChange(checked: boolean): void;
+}) {
+  return (
+    <Stack
+      component="label"
+      direction="row"
+      spacing={1}
+      sx={{
+        alignItems: 'center',
+        minWidth: 0,
+        width: '100%',
+        minHeight: 32,
+        cursor: 'pointer',
+      }}
+    >
+      <Typography
+        variant="caption"
+        color="text.primary"
+        sx={{ width: 80, flex: 'none', lineHeight: 1.3 }}
+      >
+        {label}
+      </Typography>
+      <Switch
+        size="small"
+        checked={checked}
+        onChange={(_, value) => onChange(value)}
+        slotProps={{ input: { 'aria-label': ariaLabel } }}
+      />
     </Stack>
   );
 }

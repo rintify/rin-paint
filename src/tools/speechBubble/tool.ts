@@ -40,6 +40,45 @@ function textFrame(body: Body, padding: number) {
   return { x: raw.x + px, y: raw.y + px, w: Math.max(1, raw.w - px * 2), h: Math.max(1, raw.h - px * 2) };
 }
 
+function drawInvalidTailTarget(
+  context: CanvasRenderingContext2D,
+  body: Body,
+  point: StrokePoint,
+  scale: number,
+): void {
+  const bodyCenter = center(body);
+  context.save();
+  context.strokeStyle = '#e53935';
+  context.fillStyle = '#e53935';
+  context.lineWidth = 2 * scale;
+  context.setLineDash([4 * scale, 3 * scale]);
+  context.beginPath();
+  context.moveTo(bodyCenter.x, bodyCenter.y);
+  context.lineTo(point.x, point.y);
+  context.stroke();
+  context.setLineDash([]);
+  context.beginPath();
+  context.arc(point.x, point.y, 7 * scale, 0, Math.PI * 2);
+  context.stroke();
+  context.beginPath();
+  context.moveTo(point.x - 3 * scale, point.y);
+  context.lineTo(point.x + 3 * scale, point.y);
+  context.moveTo(point.x, point.y - 3 * scale);
+  context.lineTo(point.x, point.y + 3 * scale);
+  context.stroke();
+  const label = '外側に配置';
+  context.font = `${Math.max(10, 11 * scale)}px sans-serif`;
+  context.textAlign = 'center';
+  context.textBaseline = 'bottom';
+  const labelY = point.y - 11 * scale;
+  const width = context.measureText(label).width + 10 * scale;
+  context.fillStyle = 'rgba(255, 255, 255, .94)';
+  context.fillRect(point.x - width / 2, labelY - 15 * scale, width, 15 * scale);
+  context.fillStyle = '#e53935';
+  context.fillText(label, point.x, labelY - 2 * scale);
+  context.restore();
+}
+
 export class SpeechBubbleTool implements Tool {
   private start: StrokePoint | null = null;
   private current: StrokePoint | null = null;
@@ -181,8 +220,15 @@ export class SpeechBubbleTool implements Tool {
     if (tail) drawShape(context, tail, false, this.engine.artboard);
     const width = mmToPx(this.engine.activeToolSettings()?.sizeMm ?? 1, this.engine.getPageSpec().ppi);
     drawShape(context, { ...body, color: settings.outlineColor, paintMode: 'stroke', strokeWidth: width * 2 }, false, this.engine.artboard);
-    drawShapeGizmo(context, body, { scale: this.engine.uiScale() });
-    if (tail) drawShapeGizmo(context, tail, { scale: this.engine.uiScale() });
+    const scale = this.engine.uiScale();
+    drawShapeGizmo(context, body, {
+      scale,
+      // しっぽ配置中は本体を掴めないので、操作可能に見えるハンドルを出さない。
+      handles: !this.body,
+    });
+    if (tail) drawShapeGizmo(context, tail, { scale, tailPlacement: true });
+    else if (this.body && this.current)
+      drawInvalidTailTarget(context, body, this.current, scale);
     context.restore();
   }
 }

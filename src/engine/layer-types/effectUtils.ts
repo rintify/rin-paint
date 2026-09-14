@@ -653,6 +653,7 @@ export function applyOutline(
   cornerStyle: 'round' | 'sharp',
   opacity: number,
   env: LayerDrawEnv,
+  output: HTMLCanvasElement = scope.canvas,
 ): void {
   const width = scope.width,
     height = scope.height;
@@ -660,7 +661,7 @@ export function applyOutline(
   if (radius <= 0 || opacity <= 0) return;
   if (cornerStyle === 'sharp' && env.sharpContours) {
     const contours = env.sharpContours(cacheId, threshold, scope.inputRevision);
-    const target = scope.canvas.getContext('2d')!;
+    const target = output.getContext('2d')!;
     target.save();
     try {
       target.setTransform(1, 0, 0, 1, -scope.x, -scope.y);
@@ -732,7 +733,7 @@ export function applyOutline(
     );
   }
   if (!field) return;
-  const target = scope.canvas.getContext('2d')!;
+  const target = output.getContext('2d')!;
   if (cornerStyle === 'sharp') {
     if (!field.contours.length) return;
     target.save();

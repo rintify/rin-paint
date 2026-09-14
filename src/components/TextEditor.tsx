@@ -12,6 +12,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   const layers = useStore(s => s.layers);
   const activeId = useStore(s => s.activeLayerId);
   const editingId = useStore(s => s.textEditingId);
+  const gizmosEnabled = useStore(s => !s.tool);
   const ppi = useStore(s => s.pageSpec.ppi);
   const viewScale = useStore(s => s.viewScale);
   const found = layers.find(l => l.id === activeId);
@@ -139,7 +140,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   const displayScale = Math.max(0.0001, fitScale * viewScale);
   const frameOrigin = textEditorFrameOrigin(text.x, text.y, width, height, fitScale);
   const begin = (event: ReactPointerEvent<HTMLDivElement>, mode: 'move' | 'resize' | 'rotate', corner?: TextResizeCorner) => {
-    if (composing.current) return;
+    if (!gizmosEnabled || composing.current) return;
     if (event.button !== 0) return;
     commit();
     event.preventDefault(); event.stopPropagation();
@@ -193,7 +194,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
       {snapGuides.y !== null && <div className="text-snap-guide horizontal" style={{ top: snapGuides.y * fitScale }} />}
       <div
       data-canvas-ui
-      className={`text-frame${editing ? ' editing' : ''}`}
+      className={`text-frame${editing ? ' editing' : ''}${gizmosEnabled ? '' : ' gizmo-locked'}`}
       style={{
         left: frameOrigin.left,
         top: frameOrigin.top,
@@ -208,7 +209,7 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
         '--text-ui-scale': 1 / displayScale,
       } as React.CSSProperties}
       onPointerDown={event => {
-        if (editing || (event.target as HTMLElement).closest('.text-resize-handle, .text-move-edge')) return;
+        if (!gizmosEnabled || editing || (event.target as HTMLElement).closest('.text-resize-handle, .text-move-edge')) return;
         begin(event, 'move');
       }}
       onPointerMove={move}
@@ -236,13 +237,13 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
             void (redo ? engine.redo() : engine.undo()).then(() => engine.editTextLayer(activeId));
           }
         }} />}
-      {editing && ['top', 'right', 'bottom', 'left'].map(edge => (
+      {gizmosEnabled && editing && ['top', 'right', 'bottom', 'left'].map(edge => (
         <div key={edge} className={`text-move-edge ${edge}`} title="文字枠を移動" onPointerDown={event => begin(event, 'move')} />
       ))}
-      {resizeHandles.map(corner => (
+      {gizmosEnabled && resizeHandles.map(corner => (
         <div key={corner} className={`text-resize-handle ${corner}`} title="文字枠のサイズを変更" onPointerDown={event => begin(event, 'resize', corner)} />
       ))}
-      {!editing && <div className="text-rotate-stem"><div className="text-rotate-handle" title="文字を回転" onPointerDown={event => begin(event, 'rotate')} /></div>}
+      {gizmosEnabled && !editing && <div className="text-rotate-stem"><div className="text-rotate-handle" title="文字を回転" onPointerDown={event => begin(event, 'rotate')} /></div>}
       {overflow && editing && <div className="text-overflow-hint">枠からはみ出しています</div>}
       </div>
     </>
