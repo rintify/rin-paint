@@ -23,6 +23,15 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
   const before = useRef<TextParams | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rendered = useRef('');
+  const moveFrame = useRef(0);
+  const pendingMove = useRef<(() => void) | null>(null);
+  const flushMove = () => {
+    if (moveFrame.current) cancelAnimationFrame(moveFrame.current);
+    moveFrame.current = 0;
+    const apply = pendingMove.current;
+    pendingMove.current = null;
+    apply?.();
+  };
   const currentId = useRef(activeId);
   currentId.current = activeId;
   const [overflow, setOverflow] = useState(false);
@@ -99,6 +108,9 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
       engine.events.off('textCommitRequest', flush);
       document.removeEventListener('selectionchange', selection);
       if (timer.current) clearTimeout(timer.current);
+      if (moveFrame.current) cancelAnimationFrame(moveFrame.current);
+      moveFrame.current = 0;
+      pendingMove.current = null;
     };
   }, []);
   useLayoutEffect(() => {
@@ -156,10 +168,10 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
     setSnapGuides({ x: null, y: null });
     capture.setPointerCapture(event.pointerId);
   };
-  const move = (event: ReactPointerEvent<HTMLDivElement>) => {
+  const applyMove = (pointerId: number, clientX: number, clientY: number) => {
     const d = drag.current;
-    if (!d || d.pointerId !== event.pointerId) return;
-    const p = engine.view.clientToArt(event.clientX, event.clientY);
+    if (!d || d.pointerId !== pointerId) return;
+    const p = engine.view.clientToArt(clientX, clientY);
     const dx = p.x - d.x;
     const dy = p.y - d.y;
     let next: TextParams;
@@ -178,9 +190,16 @@ export function TextEditor({ fitScale }: { fitScale: number }) {
     }
     engine.updateText(activeId, d.before, next, true);
   };
+  const move = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    const { pointerId, clientX, clientY } = event;
+    pendingMove.current = () => applyMove(pointerId, clientX, clientY);
+    if (!moveFrame.current) moveFrame.current = requestAnimationFrame(flushMove);
+  };
   const finish = (event: ReactPointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || d.pointerId !== event.pointerId) return;
+    flushMove();
     drag.current = null;
     setSnapGuides({ x: null, y: null });
     const next = engine.getText(activeId);

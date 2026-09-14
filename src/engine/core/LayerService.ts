@@ -50,7 +50,7 @@ import { isEmptyText } from '../text/model';
 import type { PaintEngine } from '../PaintEngine';
 import { cloneShape, polygonFromWorldPoints, shapeCorners } from '../shapes';
 import type { LayerParameterValue } from '../parameters/types';
-import type { DirtyRect } from '../brush';
+import { unionRect, type DirtyRect } from '../brush';
 
 export type { PanelFrameLayerOptions } from '../../tools/panelFrame/assemble';
 export type { SpeechBubbleLayerOptions } from '../../tools/speechBubble/assemble';
@@ -401,11 +401,21 @@ export class LayerService {
           { ...layer, state: { ...layer.state, text: structuredClone(after) } },
         )
       : null;
+    const textDamage = (): DirtyRect => {
+      const bounds = this.engine.objectBounds(id)!;
+      // Include glyph overhang and ruby outside an automatic text frame.
+      const text = layer.state.text;
+      const pad = Math.ceil(Math.max(text.style.sizePt, ...text.ranges.map(r => r.sizePt))
+        * this.engine.getPageSpec().ppi / 72) + 2;
+      return { minX: bounds.x - pad, minY: bounds.y - pad,
+        maxX: bounds.x + bounds.w + pad, maxY: bounds.y + bounds.h + pad };
+    };
+    const previousDamage = textDamage();
     layer.state.text = structuredClone(after);
     if (linkChange) layer.parameterLink = structuredClone(linkChange.after);
-    this.bumpLayer(id);
-    const contentBefore = { ...before, x: 0, y: 0, width: null, height: null };
-    const contentAfter = { ...after, x: 0, y: 0, width: null, height: null };
+    this.bumpLayer(id, unionRect(previousDamage, textDamage()));
+    const contentBefore = { ...before, x: 0, y: 0, rotation: 0, width: null, height: null };
+    const contentAfter = { ...after, x: 0, y: 0, rotation: 0, width: null, height: null };
     const frameOnlyPreview =
       preview && JSON.stringify(contentBefore) === JSON.stringify(contentAfter);
     if (!frameOnlyPreview) this.engine.syncTextRendersPublic();
@@ -447,7 +457,8 @@ export class LayerService {
           { pageId: this.engine.pages.activePageId, layerId: id },
           true,
         );
-      this.engine.syncStore();
+      if (preview) this.engine.syncPreviewStore();
+      else this.engine.syncStore();
     }
   }
 

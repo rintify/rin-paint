@@ -1499,6 +1499,60 @@ describe('shape snap, constraints, and persistence', () => {
     engine.cancelShapeEdit();
   });
 
+  it('snaps only the tip handle of a speech-bubble tail', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({
+      kind: 'rect',
+      x: 200,
+      y: 200,
+      width: 40,
+      height: 40,
+      color: '#000',
+      strokeWidth: 1,
+      paintMode: 'stroke',
+    });
+    engine.addShapeLayer({
+      kind: 'bubble-tail',
+      style: 'pointed',
+      start: { x: 20, y: 20 },
+      control: { x: 60, y: 60 },
+      tip: { x: 100, y: 100 },
+      width: 20,
+      circleCount: 5,
+      spacingDecay: .5,
+      color: '#000',
+      strokeWidth: 1,
+    });
+    const id = useStore.getState().activeLayerId;
+
+    engine.beginShapeEdit(pt(20, 20));
+    engine.updateShapeEdit(pt(204, 204));
+    expect(engine.getShape(id)).toEqual(expect.objectContaining({
+      kind: 'bubble-tail',
+      start: { x: 204, y: 204 },
+    }));
+    expect(shapeEdit().snapGuides()).toEqual({ x: null, y: null });
+    engine.cancelShapeEdit();
+
+    engine.beginShapeEdit(pt(60, 60));
+    engine.updateShapeEdit(pt(204, 204));
+    expect(engine.getShape(id)).toEqual(expect.objectContaining({
+      kind: 'bubble-tail',
+      control: { x: 204, y: 204 },
+    }));
+    expect(shapeEdit().snapGuides()).toEqual({ x: null, y: null });
+    engine.cancelShapeEdit();
+
+    engine.beginShapeEdit(pt(100, 100));
+    engine.updateShapeEdit(pt(204, 204));
+    expect(engine.getShape(id)).toEqual(expect.objectContaining({
+      kind: 'bubble-tail',
+      tip: { x: 200, y: 200 },
+    }));
+    expect(shapeEdit().snapGuides()).toEqual({ x: 200, y: 200 });
+    engine.cancelShapeEdit();
+  });
+
   it('merges a dragged polygon vertex when it snaps onto an adjacent vertex', async () => {
     await engine.newProject();
     engine.addShapeLayer({
@@ -1819,6 +1873,47 @@ describe('selection and layer transform', () => {
       expect(pixel(child, 155, -35)[3]).toBeGreaterThan(0);
       useStore.getState().deactivateTool();
     }
+  });
+
+  it.each([true, false])('snaps move tool to other raster bounds only when enabled (%s)', async (snapEnabled) => {
+    await engine.newProject();
+    paintRaster(engine.activeRaster()!, ctx => ctx.fillRect(200, 200, 40, 40));
+    engine.addShapeLayer({
+      kind: 'rect', x: 100, y: 100, width: 40, height: 40,
+      color: '#ff0000', strokeWidth: 1, paintMode: 'fill-inside',
+    });
+    const id = engine.getActiveLayerId();
+    activateKind('move');
+    engine.updateActiveToolSettings({ snapEnabled });
+    engine.move.onDown(pt(120, 120));
+    engine.move.onMove(pt(177, 120));
+    engine.move.onUp();
+    await engine.commitFloatSelection();
+    await awaitHistoryReady();
+    expect(engine.getShape(id)).toMatchObject({ x: snapEnabled ? 160 : 157, y: 100 });
+    await engine.undo();
+    expect(engine.getShape(id)).toMatchObject({ x: 100, y: 100 });
+    engine.cancelSessions();
+    useStore.getState().deactivateTool();
+  });
+
+  it('does not snap a moving shape to its own original bounds', async () => {
+    await engine.newProject();
+    engine.addShapeLayer({
+      kind: 'rect', x: 100, y: 100, width: 40, height: 40,
+      color: '#ff0000', strokeWidth: 1, paintMode: 'fill-inside',
+    });
+    const id = engine.getActiveLayerId();
+    activateKind('move');
+    engine.updateActiveToolSettings({ snapEnabled: true });
+    engine.move.onDown(pt(120, 120));
+    engine.move.onMove(pt(123, 124));
+    engine.move.onUp();
+    await engine.commitFloatSelection();
+    await awaitHistoryReady();
+    expect(engine.getShape(id)).toMatchObject({ x: 103, y: 104 });
+    engine.cancelSessions();
+    useStore.getState().deactivateTool();
   });
 
   it('floats selected raster and shape layers when the move tool is activated', async () => {

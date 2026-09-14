@@ -97,6 +97,9 @@ export class ProjectService {
     let persistedDataFound = false;
     let restoreFailed = false;
     try {
+      // Install and settle the built-in font faces before any saved text is
+      // measured. Project fonts, when present, are added below.
+      await loadFonts([]);
       const meta = await loadProjectMeta();
       persistedDataFound = !!meta;
       if (meta?.version === PROJECT_VERSION && meta.pageOrder.length) {

@@ -11,6 +11,11 @@ export function MoveSettingsPanel() {
   return (
     <Box className="section">
       <ToggleControl
+        label="スナップ"
+        checked={settings.snapEnabled}
+        onChange={(checked) => engine.updateActiveToolSettings({ snapEnabled: checked })}
+      />
+      <ToggleControl
         label="子孫も移動"
         checked={settings.includeDescendants}
         onChange={(checked) => engine.updateActiveToolSettings({ includeDescendants: checked })}

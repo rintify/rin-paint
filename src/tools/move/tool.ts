@@ -13,7 +13,8 @@ export class MoveTool implements Tool {
   private refreshing = false;
 
   constructor(private eng: PaintEngine) {
-    this.floatSelection = new FloatSelection(eng, 'レイヤーを変形');
+    this.floatSelection = new FloatSelection(eng, 'レイヤーを変形', () =>
+      normalizeMoveToolSettings(eng.activeToolSettings()?.settings).snapEnabled);
   }
 
   readonly session: ToolSession = {

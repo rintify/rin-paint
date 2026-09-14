@@ -13,6 +13,11 @@ import type {
   SelectedObjectTransform,
 } from '../../engine/PaintEngine';
 import type { Tool } from '../types';
+import {
+  collectSnapLines, snapTranslation, snapPointToLines, snapAngleToRightAngles,
+  type SnapLines,
+} from '../../engine/shapes/snap';
+import { pointBounds, snapUniformScale } from './snap';
 
 export interface Pt {
   x: number;
@@ -49,6 +54,9 @@ interface Drag {
   startCorners: Pt[];
   startDist: number;
   startAngle: number;
+  snapLines: SnapLines | null;
+  xGuide: number | null;
+  yGuide: number | null;
 }
 
 export interface FloatExtractInput {
@@ -115,6 +123,7 @@ export class FloatSelection {
   constructor(
     private eng: PaintEngine,
     private readonly historyLabel: string,
+    private readonly snapEnabled: () => boolean = () => false,
   ) {}
 
   setFreeTransform(on: boolean): void {
@@ -269,12 +278,30 @@ export class FloatSelection {
     return true;
   }
 
+  private collectSnapTargets(): SnapLines {
+    const excluded = new Set([
+      ...this.rasterFloats.map(item => item.layer.id),
+      ...this.objectTransforms.map(item => item.id),
+    ]);
+    const bounds = this.eng.allLayers().flatMap(layer => {
+      if (excluded.has(layer.id) || !layer.visible) return [];
+      const rect = layer.type === 'raster'
+        ? layer.runtime.surface.getContentBounds()
+        : this.eng.objectBounds(layer.id);
+      return rect ? [rect] : [];
+    });
+    return collectSnapLines(this.eng.artboard, bounds);
+  }
+
   beginDrag(p: StrokePoint): boolean {
     if (this.phase !== 'float' || !this.float) return false;
     const hit = this.hitTest(p.x, p.y);
     if (hit === null) return false;
     const c = centroid(this.float.corners);
     this.drag = {
+      snapLines: this.snapEnabled() ? this.collectSnapTargets() : null,
+      xGuide: null,
+      yGuide: null,
       mode: hit.mode,
       corner: hit.corner,
       sx: p.x,
@@ -292,26 +319,52 @@ export class FloatSelection {
     const beforeRect = this.transformedRect(4);
     const d = this.drag;
     const c = centroid(d.startCorners);
+    const tolerance = 8 * this.eng.uiScale();
+    d.xGuide = d.yGuide = null;
     if (d.mode === 'move') {
-      const dx = Math.round(p.x - d.sx);
-      const dy = Math.round(p.y - d.sy);
+      let dx = Math.round(p.x - d.sx);
+      let dy = Math.round(p.y - d.sy);
+      if (d.snapLines) {
+        const snapped = snapTranslation(pointBounds(d.startCorners), dx, dy, d.snapLines, tolerance);
+        ({ dx, dy } = snapped);
+        d.xGuide = snapped.xGuide;
+        d.yGuide = snapped.yGuide;
+      }
       f.corners = d.startCorners.map((q) => ({
         x: q.x + dx,
         y: q.y + dy,
       })) as Float['corners'];
     } else if (d.mode === 'corner') {
       const q = d.startCorners[d.corner];
-      f.corners[d.corner] = { x: q.x + (p.x - d.sx), y: q.y + (p.y - d.sy) };
+      let point = { x: q.x + (p.x - d.sx), y: q.y + (p.y - d.sy) };
+      if (d.snapLines) {
+        const snapped = snapPointToLines(point, d.snapLines, tolerance);
+        point = snapped.point;
+        d.xGuide = snapped.xGuide;
+        d.yGuide = snapped.yGuide;
+      }
+      f.corners[d.corner] = point;
     } else if (d.mode === 'scale') {
       const dist = Math.hypot(p.x - c.x, p.y - c.y);
-      const k = Math.min(20, Math.max(0.05, dist / d.startDist));
+      let k = Math.min(20, Math.max(0.05, dist / d.startDist));
+      if (d.snapLines) {
+        const snapped = snapUniformScale(d.startCorners[d.corner], c, k, d.snapLines, tolerance);
+        k = snapped.scale;
+        d.xGuide = snapped.xGuide;
+        d.yGuide = snapped.yGuide;
+      }
       f.corners = d.startCorners.map((q) => ({
         x: c.x + (q.x - c.x) * k,
         y: c.y + (q.y - c.y) * k,
       })) as Float['corners'];
     } else {
       const angle = Math.atan2(p.y - c.y, p.x - c.x);
-      const dr = angle - d.startAngle;
+      let dr = angle - d.startAngle;
+      if (d.snapLines) {
+        const [a, b] = d.startCorners;
+        const orientation = Math.atan2(b.y - a.y, b.x - a.x);
+        dr = snapAngleToRightAngles(orientation + dr).angle - orientation;
+      }
       const cos = Math.cos(dr);
       const sin = Math.sin(dr);
       f.corners = d.startCorners.map((q) => ({
@@ -335,6 +388,7 @@ export class FloatSelection {
   endDrag(): void {
     if (this.drag && this.objectTransforms.length) this.eng.syncStore();
     this.drag = null;
+    this.eng.requestOverlayRender();
   }
 
   /** 現在の変形位置でレイヤーへスタンプ (浮動状態は継続) */
@@ -504,6 +558,21 @@ export class FloatSelection {
     const cs = f.corners;
     const dashOffset = (performance.now() / 60) % (10 * s);
     ctx.save();
+    ctx.lineWidth = s;
+    ctx.strokeStyle = '#4f8cff';
+    ctx.setLineDash([6 * s, 4 * s]);
+    if (this.drag?.xGuide != null) {
+      ctx.beginPath();
+      ctx.moveTo(this.drag.xGuide, 0);
+      ctx.lineTo(this.drag.xGuide, this.eng.artboard.h);
+      ctx.stroke();
+    }
+    if (this.drag?.yGuide != null) {
+      ctx.beginPath();
+      ctx.moveTo(0, this.drag.yGuide);
+      ctx.lineTo(this.eng.artboard.w, this.drag.yGuide);
+      ctx.stroke();
+    }
     ctx.lineWidth = 1.5 * s;
 
     if (f.outline.length > 2) {

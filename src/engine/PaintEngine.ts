@@ -1159,6 +1159,20 @@ export class PaintEngine {
     return this.settings.importFile(file);
   }
 
+  /** Transform previews only change layer values, not tree/history/link metadata. */
+  syncPreviewStore(): void {
+    const state = useStore.getState();
+    const layers = state.layers.map(meta => {
+      const layer = this.layerService.byId(meta.id);
+      const version = this.layerService.versions.get(meta.id) ?? 0;
+      return layer && version !== meta.version
+        ? { ...meta, state: layerHandler(layer).state.clone(layer.state as never), version } as LayerMeta
+        : meta;
+    });
+    const next = reuseArray(state.layers, layers);
+    if (next !== state.layers) state.set({ layers: next });
+  }
+
   syncStore(): void {
     const ls = this.layerService;
     this.storeProjection.begin(ls.layers, ls.rootLayerIds);

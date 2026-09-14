@@ -1,4 +1,5 @@
 import { roundMm, SIZE_MM_MAX } from '../../engine/units';
+import { GEN_EI_ANTIQUE_FONT_ID } from '../../engine/text/fonts';
 
 export type BubbleBodyKind = 'rect' | 'ellipse';
 export type BubbleTailSetting = 'none' | 'pointed' | 'rounds';
@@ -25,7 +26,7 @@ export const DEFAULT_SPEECH_BUBBLE_TOOL_SETTINGS: SpeechBubbleToolSettings = {
   circleCount: 3,
   tailSpacingDecay: 0.35,
   textColor: '#000000',
-  fontId: 'serif',
+  fontId: GEN_EI_ANTIQUE_FONT_ID,
   fontSizePt: 12,
   textPaddingMm: 2,
   constrainAspect: false,

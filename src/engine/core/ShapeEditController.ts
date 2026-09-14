@@ -64,6 +64,10 @@ interface ShapeEdit {
 const HANDLE_RADIUS = 11;
 const SNAP_SCREEN_PX = 8;
 
+function vertexCanSnap(shape: ShapeParams, index: number): boolean {
+  return shape.kind !== 'bubble-tail' || index === 2;
+}
+
 function shapeDirty(shape: ShapeParams): DirtyRect {
   const bounds = shapeBounds(shape);
   const pad = Math.max(3, shapeVisualPadding(shape));
@@ -239,6 +243,7 @@ export class ShapeEditController {
     const cornerIndex = (
       { nw: 0, ne: 1, se: 2, sw: 3 } as Partial<Record<ShapeEditMode, number>>
     )[mode];
+    const vertexIndex = hit?.vertexIndex;
     if (mode === 'vertex')
       this.selectedHandle = {
         layerId: layer.id,
@@ -254,6 +259,12 @@ export class ShapeEditController {
 
     let vertexWorld: VertexWorld | undefined;
     const handleIndex = mode === 'vertex' ? hit?.vertexIndex : cornerIndex;
+    const snapVertexIndex =
+      mode === 'vertex' &&
+      vertexIndex !== undefined &&
+      vertexCanSnap(shape, vertexIndex)
+        ? vertexIndex
+        : undefined;
     if (
       handleIndex !== undefined &&
       (mode === 'vertex' || shape.kind === 'rect' || shape.kind === 'ellipse')
@@ -284,15 +295,13 @@ export class ShapeEditController {
       vertexWorld,
       vertexSnapPoints:
         layer.state.snapEnabled &&
-        mode === 'vertex' &&
-        hit?.vertexIndex !== undefined
-          ? this.collectVertexSnapPoints(layer.id, hit.vertexIndex)
+        snapVertexIndex !== undefined
+          ? this.collectVertexSnapPoints(layer.id, snapVertexIndex)
           : undefined,
       vertexSnapLines:
         layer.state.snapEnabled &&
-        mode === 'vertex' &&
-        hit?.vertexIndex !== undefined
-          ? this.collectVertexSnapLines(layer.id, hit.vertexIndex)
+        snapVertexIndex !== undefined
+          ? this.collectVertexSnapLines(layer.id, snapVertexIndex)
           : undefined,
       snappedPoint: null,
     };

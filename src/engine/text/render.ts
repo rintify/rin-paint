@@ -1,27 +1,52 @@
 import { toCanvas } from 'html-to-image';
 import type { ProjectFont, TextParams, TextStyle } from '../../types';
+import { builtInFontCss, fontFamily, STANDARD_FONTS, type BuiltInFont } from './fonts';
 import { styleAt, textAlignment } from './model';
 
-export const STANDARD_FONTS = [{ id: 'sans', name: 'ゴシック' }, { id: 'serif', name: '明朝' }, { id: 'mono', name: '等幅' }];
-export function fontFamily(id: string): string {
-  if (id === 'sans') return '"Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif';
-  if (id === 'serif') return '"Hiragino Mincho ProN", "Yu Mincho", serif';
-  if (id === 'mono') return '"MS Gothic", monospace';
-  return `"rin-font-${id.replace(/[^a-zA-Z0-9-]/g, '')}"`;
-}
+export { fontFamily, STANDARD_FONTS } from './fonts';
 let loadedFonts: ProjectFont[] = [];
 let fontSheet: HTMLStyleElement | null = null;
 let fontEpoch = 0;
+const embeddedBuiltInSources = new Map<string, string>();
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('フォントを読み込めませんでした'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function embedBuiltInSources(): Promise<void> {
+  // Imported asset ids are not HTTP resources in the Vitest DOM.
+  if (import.meta.env.MODE === 'test') return;
+  await Promise.all(STANDARD_FONTS.map(async font => {
+    if (!font.source || embeddedBuiltInSources.has(font.id)) return;
+    const response = await fetch(font.source);
+    if (!response.ok) throw new Error(`font fetch failed: ${response.status}`);
+    embeddedBuiltInSources.set(font.id, await blobToDataUrl(await response.blob()));
+  }));
+}
+
 export async function loadFonts(fonts: ProjectFont[]): Promise<void> {
   const epoch = ++fontEpoch;
   loadedFonts = fonts;
   fontSheet ??= document.head.appendChild(document.createElement('style'));
   fontSheet.textContent = fontCss(fonts);
-  await Promise.all(fonts.map(f => document.fonts.load(`16px ${fontFamily(f.id)}`)));
+  await Promise.all([
+    embedBuiltInSources(),
+    ...STANDARD_FONTS.map(font => document.fonts.load(`16px ${fontFamily(font.id)}`)),
+    ...fonts.map(font => document.fonts.load(`16px ${fontFamily(font.id)}`)),
+  ]);
   if (epoch !== fontEpoch) return;
 }
-function fontCss(fonts = loadedFonts): string {
-  return fonts.map(f => `@font-face{font-family:${fontFamily(f.id)};src:url("${f.dataUrl.replace(/["\n\r]/g, '')}");}`).join('\n');
+function fontCss(fonts = loadedFonts, embedBuiltIns = false, families?: ReadonlySet<string>): string {
+  const projectFonts = fonts.map(f => `@font-face{font-family:${fontFamily(f.id)};src:url("${f.dataUrl.replace(/["\n\r]/g, '')}");}`);
+  const builtIns = builtInFontCss(embedBuiltIns
+    ? (font: BuiltInFont & { source: string }) => embeddedBuiltInSources.get(font.id) ?? font.source
+    : undefined, families);
+  return [builtIns, ...projectFonts].filter(Boolean).join('\n');
 }
 function applyStyle(el: HTMLElement, style: TextStyle, ppi: number): void {
   el.style.fontFamily = fontFamily(style.fontId);
@@ -92,7 +117,8 @@ export class TextRenderer {
   retain(ids: Set<string>): void { for (const id of this.cache.keys()) if (!ids.has(id)) this.cache.delete(id); }
   get(id: string): HTMLCanvasElement | null { return this.cache.get(id)?.canvas ?? null; }
   request(id: string, text: TextParams, ppi: number, onReady: () => void): void {
-    const key = JSON.stringify([{ ...text, x: 0, y: 0 }, ppi, fontEpoch]);
+    // Placement is applied by draw(), and does not change the local bitmap.
+    const key = JSON.stringify([{ ...text, x: 0, y: 0, rotation: 0 }, ppi, fontEpoch]);
     if (this.cache.get(id)?.key === key) return;
     const item: Cache = { key, canvas: this.get(id), ready: Promise.resolve() };
     this.cache.set(id, item);
@@ -122,7 +148,10 @@ export class TextRenderer {
         host.style.padding = `${offsetY}px ${Math.ceil(pad + right)}px ${Math.ceil(pad + bottom)}px ${offsetX}px`;
         const width = Math.max(1, Math.ceil(rect.width + left + right + pad * 2));
         const height = Math.max(1, Math.ceil(rect.height + top + bottom + pad * 2));
-        const canvas = await toCanvas(host, { width, height, pixelRatio: 1, fontEmbedCSS: fontCss(loadedFonts.filter(font => families.has(font.id))), style: { position: 'static', left: 'auto', top: 'auto', width: `${width}px`, height: `${height}px` } });
+        // html-to-image renders through a standalone SVG. Asset URLs that work
+        // in the live DOM are not resolvable there, so built-ins must be data URLs.
+        const fontEmbedCSS = fontCss(loadedFonts.filter(font => families.has(font.id)), true, families);
+        const canvas = await toCanvas(host, { width, height, pixelRatio: 1, fontEmbedCSS, skipFonts: !fontEmbedCSS, style: { position: 'static', left: 'auto', top: 'auto', width: `${width}px`, height: `${height}px` } });
         canvas.dataset.textPadding = String(pad);
         canvas.dataset.textOffsetX = String(offsetX);
         canvas.dataset.textOffsetY = String(offsetY);
