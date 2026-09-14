@@ -1,3 +1,4 @@
+import { isToolShortcut } from '../shortcuts';
 import type { PaintEngine } from '../engine/PaintEngine';
 import type { LayerType } from '../model';
 import type { ToolInstance } from '../model/tool';
@@ -129,6 +130,7 @@ export function normalizeToolInstance(raw: unknown): ToolInstance | null {
   if (typeof o.sizeMm !== 'number' || !Number.isFinite(o.sizeMm)) return null;
   if (typeof o.color !== 'string') return null;
 
+  if (o.shortcut !== undefined && !isToolShortcut(o.shortcut)) return null;
   const descriptor = TOOL_REGISTRY[o.kind];
   const base: ToolInstance = {
     id: o.id,
@@ -136,6 +138,7 @@ export function normalizeToolInstance(raw: unknown): ToolInstance | null {
     name: o.name,
     sizeMm: roundMm(clampSizeMm(o.sizeMm)),
     color: o.color,
+    ...(o.shortcut ? { shortcut: o.shortcut as string } : {}),
   };
   if (descriptor.settings || descriptor.autoDeactivateAfterUse) {
     return {

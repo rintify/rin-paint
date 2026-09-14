@@ -154,3 +154,31 @@ it('opens hover tools without a modal backdrop and closes after leaving both sur
   });
   expect(document.querySelector('.tool-stack-popover')).toBeNull();
 });
+
+it('assigns from the tool menu, confirms conflicts, and removes the assignment', async () => {
+  const [first, second] = useStore.getState().tools;
+  useStore.getState().assignToolShortcut(second.id, 'KeyA');
+  await renderPicker();
+  await click(document.querySelector('[aria-label="ツールを管理"]'));
+  const openAssignment = async () => {
+    await click(document.querySelector('.manage-tool-card-actions button'));
+    await click([...document.querySelectorAll('[role="menuitem"]')].find(el => el.textContent === 'ショートカット割り当て')!);
+  };
+  const button = (label: string) => [...document.querySelectorAll('button')].find(el => el.textContent === label)!;
+  await openAssignment();
+  expect(document.querySelector('select')).toBeNull();
+  await act(async () => document.querySelector('[role="combobox"]')!.dispatchEvent(
+    new KeyboardEvent('keydown', { bubbles: true, code: 'KeyA', key: 'a' }),
+  ));
+  await click(button('保存'));
+  expect(document.body.textContent).toContain('割り当てを上書きしますか？');
+  expect(useStore.getState().tools.find(t => t.id === first.id)?.shortcut).toBeUndefined();
+  await click(button('上書きする'));
+  expect(useStore.getState().tools.find(t => t.id === first.id)?.shortcut).toBe('KeyA');
+  expect(useStore.getState().tools.find(t => t.id === second.id)?.shortcut).toBeUndefined();
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 250)); });
+  await openAssignment();
+  await click(button('割り当てを解除'));
+  await click(button('保存'));
+  expect(useStore.getState().tools.find(t => t.id === first.id)?.shortcut).toBeUndefined();
+});

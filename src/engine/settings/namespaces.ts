@@ -4,7 +4,7 @@ import { SIZE_MM_MAX, SIZE_MM_MIN, DEFAULT_SIZE_MM } from '../units';
 import type { SavedAppSettings } from '../persistence/db';
 import { fillMissing, isPlainObject, type LoadResult } from '../schema';
 import { isToolKind, normalizeToolInstance } from '../../tools/registry';
-import { defaultShortcutBindings, loadShortcutBindings, type ShortcutBindings } from '../../shortcuts';
+import { isToolShortcut, defaultShortcutBindings, loadShortcutBindings, type ShortcutBindings } from '../../shortcuts';
 import type { ToolInstance, ToolLayoutItem, ToolStack } from '../../model';
 
 export interface SettingsNamespace<T> {
@@ -64,7 +64,8 @@ function readTool(raw: unknown): LoadResult<ToolInstance> {
   if (!tool || typeof tool.id !== 'string' || !tool.id || typeof tool.name !== 'string'
     || typeof tool.sizeMm !== 'number' || !Number.isFinite(tool.sizeMm)
     || tool.sizeMm < SIZE_MM_MIN || tool.sizeMm > SIZE_MM_MAX
-    || typeof tool.kind !== 'string' || !isColor(tool.color)) {
+    || typeof tool.kind !== 'string' || !isColor(tool.color)
+    || (tool.shortcut !== undefined && !isToolShortcut(tool.shortcut))) {
     return { status: 'invalid', reason: 'ツールの形式が不正です', raw };
   }
   if (!isToolKind(tool.kind)) {
@@ -76,6 +77,7 @@ function readTool(raw: unknown): LoadResult<ToolInstance> {
         name: tool.name,
         sizeMm: tool.sizeMm,
         color: tool.color,
+        ...(tool.shortcut ? { shortcut: tool.shortcut as string } : {}),
         ...(tool.settings !== undefined ? { settings: tool.settings } : {}),
       },
     };
@@ -115,6 +117,10 @@ function loadTools(raw: unknown): LoadResult<ToolsSettings> {
     const loaded = readTool(item);
     if (loaded.status !== 'ok') return loaded;
     tools.push(loaded.value);
+  }
+  const bindings = tools.map(tool => tool.shortcut).filter(Boolean);
+  if (new Set(bindings).size !== bindings.length) {
+    return { status: 'invalid', reason: 'ツールのショートカットが重複しています', raw };
   }
   const toolIds = new Set(tools.map((tool) => tool.id));
   if (toolIds.size !== tools.length) return { status: 'invalid', reason: 'ツールIDが重複しています', raw };

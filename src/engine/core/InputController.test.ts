@@ -200,3 +200,52 @@ it('starts transform manipulation on pointer down only when layer gizmos are ena
     input.detachListeners();
   }
 });
+
+describe('tool instance shortcuts', () => {
+  it('selects the assigned instance and ignores modifiers, repeat, composition, fields and dialogs', async () => {
+    const { useStore } = await import('../../state/store');
+    const previous = useStore.getState();
+    const selectToolInstance = vi.fn();
+    const input = new InputController({ selectToolInstance } as unknown as PaintEngine);
+    useStore.setState({ tools: [{ id: 'shortcut-tool', kind: 'pen', name: 'Pen', sizeMm: 1, color: '#000000', shortcut: 'KeyA' }] });
+    const area = document.createElement('div');
+    input.attachListeners(area);
+    try {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, code: 'KeyA' }));
+      expect(selectToolInstance).toHaveBeenCalledWith('shortcut-tool', 'shortcut');
+      selectToolInstance.mockClear();
+      for (const extra of [{ shiftKey: true }, { ctrlKey: true }, { altKey: true }, { repeat: true }, { isComposing: true }]) {
+        document.body.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, code: 'KeyA', ...extra }));
+      }
+      const field = document.body.appendChild(document.createElement('input'));
+      field.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, code: 'KeyA' }));
+      field.remove();
+      const dialog = document.body.appendChild(document.createElement('div'));
+      dialog.setAttribute('role', 'dialog');
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, code: 'KeyA' }));
+      dialog.remove();
+      expect(selectToolInstance).not.toHaveBeenCalled();
+    } finally {
+      input.detachListeners();
+      useStore.setState(previous, true);
+    }
+  });
+});
+
+describe('tool selection shortcut', () => {
+  it('deselects the current tool with F by default', async () => {
+    const { useStore } = await import('../../state/store');
+    const previous = useStore.getState();
+    const deselectTool = vi.fn();
+    const input = new InputController({ deselectTool } as unknown as PaintEngine);
+    const area = document.createElement('div');
+    input.attachListeners(area);
+    try {
+      document.body.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, code: 'KeyF' }));
+      expect(deselectTool).toHaveBeenCalledOnce();
+    } finally {
+      input.detachListeners();
+      useStore.setState(previous, true);
+    }
+  });
+});

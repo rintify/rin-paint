@@ -8,6 +8,7 @@ export const shortcutDefinitions = [
   { id: 'selection.delete', category: '選択', label: '選択中のレイヤー／ツールを削除・グループを解除', defaultBinding: 'Delete' },
   { id: 'view.reset', category: '表示', label: '表示位置をリセット', defaultBinding: 'Mod+Digit0' },
   { id: 'view.pan', category: '表示', label: 'ページを移動', defaultBinding: 'Space' },
+  { id: 'tools.deselect', category: 'ツール', label: 'ツール選択を解除', defaultBinding: 'KeyF' },
   { id: 'operation.cancel', category: '操作', label: '現在の操作をキャンセル', defaultBinding: 'Escape' },
 ] as const;
 
@@ -56,6 +57,8 @@ export function shortcutLabel(binding: string): string {
     if (part === 'Escape') return 'Esc';
     if (part === 'Space') return 'スペース';
     if (part === 'Enter') return '↩';
+    const symbol = toolShortcutKeys.find(key => key.code === part);
+    if (symbol) return symbol.label;
     return part.replace(/^Key/, '').replace(/^Digit/, '');
   }).join(mac ? '' : ' + ');
 }
@@ -104,5 +107,33 @@ function validBinding(binding: string): boolean {
   const modifiers = parts;
   if (new Set(modifiers).size !== modifiers.length || modifiers.some(value => !['Mod', 'Alt', 'Shift'].includes(value))) return false;
   if (modifiers.join('+') !== ['Mod', 'Alt', 'Shift'].filter(value => modifiers.includes(value)).join('+')) return false;
-  return /^(Key[A-Z]|Digit[0-9]|F(?:[1-9]|1[0-9]|2[0-4])|Enter|Delete|Escape|Space|Tab|Home|End|PageUp|PageDown|Arrow(?:Up|Down|Left|Right)|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash|IntlBackslash)$/.test(code);
+  return /^(Key[A-Z]|Digit[0-9]|F(?:[1-9]|1[0-9]|2[0-4])|Enter|Delete|Escape|Space|Tab|Home|End|PageUp|PageDown|Arrow(?:Up|Down|Left|Right)|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash|IntlBackslash|IntlRo|IntlYen)$/.test(code);
+}
+
+// Physical key codes share the application's chord format, leaving modifiers extensible.
+export const toolShortcutKeys = [
+  ...Array.from('ABCDEFGHIJKLMNOPQRSTUVWXYZ', letter => ({ code: `Key${letter}`, label: letter })),
+  ...Array.from('0123456789', digit => ({ code: `Digit${digit}`, label: digit })),
+  ...Object.entries({
+    Backquote: '`', Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']',
+    Backslash: '\\', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/',
+    IntlBackslash: '追加のバックスラッシュ', IntlRo: 'ろ / _', IntlYen: '¥',
+  }).map(([code, label]) => ({ code, label })),
+];
+
+export function isToolShortcut(binding: unknown): binding is string {
+  return typeof binding === 'string' && (binding === '' || toolShortcutKeys.some(key => key.code === binding));
+}
+
+export function toolShortcutConflicts(
+  tools: readonly { id: string; name: string; shortcut?: string }[],
+  shortcuts: ShortcutBindings,
+  toolId: string,
+  binding: string,
+): string[] {
+  if (!binding) return [];
+  return [
+    ...tools.filter(tool => tool.id !== toolId && tool.shortcut === binding).map(tool => tool.name),
+    ...shortcutDefinitions.filter(item => shortcuts[item.id] === binding).map(item => item.label),
+  ];
 }

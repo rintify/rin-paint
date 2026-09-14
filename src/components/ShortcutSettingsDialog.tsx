@@ -23,6 +23,7 @@ import {
 import { useStore } from '../state/store';
 
 export function ShortcutSettingsDialog({ onClose }: { onClose: () => void }) {
+  const tools = useStore(state => state.tools);
   const saved = useStore(state => state.shortcuts);
   const [draft, setDraft] = useState<ShortcutBindings>(() => ({ ...saved }));
   const [recording, setRecording] = useState<ShortcutId | null>(null);
@@ -32,8 +33,11 @@ export function ShortcutSettingsDialog({ onClose }: { onClose: () => void }) {
       const binding = draft[item.id];
       if (binding) owners.set(binding, [...(owners.get(binding) ?? []), item.id]);
     }
-    return new Set([...owners.values()].filter(ids => ids.length > 1).flat());
-  }, [draft]);
+    return new Set([
+      ...[...owners.values()].filter(ids => ids.length > 1).flat(),
+      ...shortcutDefinitions.filter(item => draft[item.id] && tools.some(tool => tool.shortcut === draft[item.id])).map(item => item.id),
+    ]);
+  }, [draft, tools]);
   const categories = [...new Set(shortcutDefinitions.map(item => item.category))];
 
   const record = (event: React.KeyboardEvent, id: ShortcutId) => {
@@ -53,7 +57,7 @@ export function ShortcutSettingsDialog({ onClose }: { onClose: () => void }) {
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           アプリのショートカット定義から自動で一覧化しています。キー欄を押し、新しいキーを入力してください。
         </Typography>
-        {conflicts.size > 0 && <Alert severity="error" sx={{ mb: 2 }}>同じキーの割り当てが重複しています。</Alert>}
+        {conflicts.size > 0 && <Alert severity="error" sx={{ mb: 2 }}>同じキーの割り当てが重複しています。ツールの割り当ては「ツールを管理」から変更できます。</Alert>}
         {categories.map((category, categoryIndex) => (
           <Box key={category}>
             {categoryIndex > 0 && <Divider sx={{ my: 1.5 }} />}

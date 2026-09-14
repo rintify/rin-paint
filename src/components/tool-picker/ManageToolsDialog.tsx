@@ -24,6 +24,8 @@ import { useEngine } from '../EngineContext';
 import { useFlipAnimation } from '../hooks/useFlipAnimation';
 import { useOutsideClick } from '../hooks/useOutsideClick';
 import { NameEditor } from '../NameEditor';
+import { ToolShortcutDialog } from './ToolShortcutDialog';
+import { shortcutLabel } from '../../shortcuts';
 import { AddToolDialog } from './AddToolDialog';
 
 function toolSummary(tool: ToolInstance): string {
@@ -37,6 +39,7 @@ export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
   const stacks = useStore(state => state.toolStacks);
   const layout = useStore(state => state.toolLayout);
   const activeId = useStore(state => state.activeToolId);
+  const [shortcutToolId, setShortcutToolId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [openStackId, setOpenStackId] = useState<string | null>(null);
   const [floatingCard, setFloatingCard] = useState<{
@@ -348,7 +351,7 @@ export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
                           onEditingChange={() => setEditing(null)}
                         />
                         <Typography variant="caption" color="text.secondary" noWrap>
-                          {toolSummary(tool)}
+                          {toolSummary(tool)}{tool.shortcut ? `・${shortcutLabel(tool.shortcut)}` : ''}
                         </Typography>
                       </Box>
                       {activeId === tool.id && (
@@ -498,7 +501,7 @@ export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
                                     onEditingChange={() => setEditing(null)}
                                   />
                                   <Typography variant="caption" color="text.secondary" noWrap>
-                                    {toolSummary(tool)}
+                                    {toolSummary(tool)}{tool.shortcut ? `・${shortcutLabel(tool.shortcut)}` : ''}
                                   </Typography>
                                 </Box>
                                 <IconButton
@@ -550,6 +553,12 @@ export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
             名称変更
           </MenuItem>
           {menu?.type === 'tool' && (
+            <MenuItem onClick={() => {
+              setShortcutToolId(menu.id);
+              setMenu(null);
+            }}>ショートカット割り当て</MenuItem>
+          )}
+          {menu?.type === 'tool' && (
             <MenuItem
               sx={{ color: 'error.main' }}
               onClick={() => {
@@ -592,6 +601,7 @@ export function ManageToolsDialog({ onClose }: { onClose: () => void }) {
         </div>,
         document.body,
       )}
+      {shortcutToolId && <ToolShortcutDialog toolId={shortcutToolId} onClose={() => setShortcutToolId(null)} />}
       {addOpen && <AddToolDialog onClose={() => setAddOpen(false)} />}
     </>
   );

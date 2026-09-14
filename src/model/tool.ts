@@ -10,6 +10,8 @@ export interface ToolInstance {
   name: string;
   sizeMm: number;
   color: string;
+  /** Uses the shared chord format (e.g. KeyA); absent means unassigned. */
+  shortcut?: string;
   settings?: unknown;
 }
 

@@ -35,6 +35,16 @@ describe('app settings file', () => {
     expect(JSON.stringify(file)).not.toMatch(/pageOrder|fonts|rootLayerIds|activeLayerId|referenceImage/i);
   });
 
+  it('round-trips tool shortcuts and rejects duplicate or modified assignments', () => {
+    const value = settings();
+    value.tools[0].shortcut = 'Slash';
+    expect(parseAppSettingsFile(JSON.parse(JSON.stringify(makeAppSettingsFile(value))))).toEqual(value);
+    value.tools[1].shortcut = 'Slash';
+    expect(() => validateAppSettings(value)).toThrow();
+    value.tools[1].shortcut = 'Shift+KeyA';
+    expect(() => validateAppSettings(value)).toThrow();
+  });
+
   it('keeps existing layouts that do not include a cursor tool', () => {
     expect(validateAppSettings(settings()).tools.map(tool => tool.kind)).toEqual(['lasso', 'blur']);
   });

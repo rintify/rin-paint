@@ -3,7 +3,7 @@ import { TRANSPARENT, type StrokePoint } from '../../model';
 import { checkerPattern } from '../brush';
 import type { ViewState } from '../view';
 import type { PaintEngine } from '../PaintEngine';
-import { shortcutIdForEvent } from '../../shortcuts';
+import { shortcutFromEvent, shortcutIdForEvent } from '../../shortcuts';
 import type { EyedropperSource } from '../../tools/eyedropper/settings';
 
 interface Loupe {
@@ -456,6 +456,16 @@ export class InputController {
       )
     )
       return;
+    if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+    const state = useStore.getState();
+    const binding = shortcutFromEvent(e);
+    const tool = state.tools.find(item => item.shortcut && item.shortcut === binding);
+    if (tool) {
+      if (e.repeat || document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) return;
+      e.preventDefault();
+      eng.selectToolInstance(tool.id, 'shortcut');
+      return;
+    }
     const command = shortcutIdForEvent(e, useStore.getState().shortcuts);
     if (command === 'history.undo') {
       e.preventDefault();
@@ -481,6 +491,9 @@ export class InputController {
     } else if (command === 'selection.delete') {
       e.preventDefault();
       eng.events.emit('shortcutCommand', { command: 'delete-selection' });
+    } else if (command === 'tools.deselect') {
+      e.preventDefault();
+      eng.deselectTool();
     } else if (command === 'view.pan') {
       if (!this.spaceDown) {
         this.spaceDown = true;

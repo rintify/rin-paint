@@ -186,6 +186,13 @@ export class PaintEngine {
     this.toolActivationOrigin = null;
   }
 
+  deselectTool(): void {
+    if (this.busy || !useStore.getState().tool) return;
+    this.clearActiveToolSelection();
+    this.requestRender();
+    this.syncStore();
+  }
+
   /** @internal */ activeSession(): ToolSession | null {
     return this.activeTool().session ?? null;
   }

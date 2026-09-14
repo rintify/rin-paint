@@ -13,7 +13,7 @@ import { clampSizeMm, roundMm } from '../engine/units';
 import { defaultToolSettings, getToolDescriptor, isToolKind, normalizeToolSettings, type ToolKind } from '../tools/registry';
 import { defaultToolSetup, type DefaultToolSetup } from '../tools/setup';
 import { normalizeToolLayout } from './toolLayout';
-import { defaultShortcutBindings, type ShortcutBindings, type ShortcutId } from '../shortcuts';
+import { isToolShortcut, defaultShortcutBindings, type ShortcutBindings, type ShortcutId } from '../shortcuts';
 
 export interface RedoBranch {
   index: number;
@@ -110,6 +110,7 @@ export interface PaintState {
   moveToolToStack: (toolId: string, stackId: string, targetIndex?: number) => void;
   unstackTool: (toolId: string, targetIndex?: number) => void;
   dissolveToolStack: (stackId: string) => void;
+  assignToolShortcut: (id: string, binding: string) => void;
   setShortcut: (id: ShortcutId, binding: string) => void;
   resetShortcuts: () => void;
 }
@@ -361,6 +362,16 @@ export const useStore = create<PaintState>((set) => ({
     const layout = s.toolLayout.filter((item) => item.type !== 'stack' || item.stackId !== stackId);
     layout.splice(Math.max(0, index), 0, ...stack.toolIds.map((toolId) => ({ type: 'tool' as const, toolId })));
     return normalizeToolLayout(s.tools, layout, s.toolStacks.filter((item) => item.id !== stackId));
+  }),
+  assignToolShortcut: (id, binding) => set(s => {
+    if (!isToolShortcut(binding) || !s.tools.some(tool => tool.id === id)) return s;
+    return {
+      tools: s.tools.map(tool => tool.id === id
+        ? { ...tool, shortcut: binding || undefined }
+        : binding && tool.shortcut === binding ? { ...tool, shortcut: undefined } : tool),
+      shortcuts: Object.fromEntries(Object.entries(s.shortcuts).map(([key, value]) =>
+        [key, binding && value === binding ? '' : value])) as ShortcutBindings,
+    };
   }),
   setShortcut: (id, binding) => set((s) => ({ shortcuts: { ...s.shortcuts, [id]: binding } })),
   resetShortcuts: () => set({ shortcuts: defaultShortcutBindings() }),
