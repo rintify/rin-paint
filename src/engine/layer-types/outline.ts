@@ -1,10 +1,12 @@
 import { DEFAULT_OUTLINE, type OutlineParams } from '../../model';
 import { SIZE_MM_MAX, SIZE_MM_MIN, roundMm } from '../units';
 import { createOutlineLayer } from '../layers';
+import { LAYER_KIND_IDS } from '../modules/ids';
 import { buildCatalog } from '../parameters/catalog';
 import type { LayerDefinition } from './definition';
 import type { OutlineState } from '../../model';
 import { applyOutline, SHARP_OUTLINE_MITER_LIMIT } from './effectUtils';
+import { loadOwned } from './loadOwned';
 
 function normalize(value: Partial<OutlineParams> | undefined): OutlineParams {
   const width = Number(value?.widthMm);
@@ -41,13 +43,23 @@ const SURFACES = ['single', 'multi', 'link'] as const;
 export const outlineLayerType: LayerDefinition<'outline'> = {
   info: {
     type: 'outline',
+    kindId: LAYER_KIND_IDS.outline,
+    revision: 1,
     canMask: true,
     maskSourceLabel: '縁どり',
     supportsBlend: false,
     defaultName: (index) => `縁どり ${index}`,
+    addMenu: { group: 'effect', label: '縁どりを追加', historyLabel: '縁どりレイヤー追加' },
+    effectBadge: '縁',
+  },
+  factory: { create: (name, id) => createOutlineLayer(name, id) },
+  schema: {
+    loadDefaults: { outline: { ...DEFAULT_OUTLINE } },
+    createDefaults: { outline: { ...DEFAULT_OUTLINE } },
+    load: (raw) => loadOwned({ outline: { ...DEFAULT_OUTLINE } }, raw, (value) => asOutlineState(value)),
   },
   state: {
-    initial: () => createOutlineLayer('tmp').state,
+    initial: () => ({ outline: { ...DEFAULT_OUTLINE } }),
     clone: cloneState,
     normalize: (state) => ({ outline: normalize(state.outline) }),
     applyPatch: (state, patch) => ({

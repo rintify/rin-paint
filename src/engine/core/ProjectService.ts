@@ -2,6 +2,7 @@ import { cloneRuntimeLayers, runtimeCheckpoint } from './RuntimeCheckpoint';
 import { useStore } from '../../state/store';
 import {
   DEFAULT_PAGE,
+  isLayerType,
   type LayerType,
   type PageSpec,
   type ProjectFont,
@@ -10,6 +11,7 @@ import { HistoryTree, type PageSnapshot } from '../history/historyTree';
 import { isPersistedHistory } from '../persistence/schema';
 import { PROJECT_VERSION } from '../persistence/version';
 import {
+  inspectLayerRecord,
   restoreLayerFrom,
   savedLayerFrom,
   scaleLayerAsync,
@@ -53,16 +55,32 @@ export class ProjectService {
     const pixels = pagePixels(this.pageSpec);
     eng.artboard.resize(pixels.width, pixels.height);
     eng.compositor.syncWorkCanvases();
+    const reasons: string[] = [];
+    for (const sl of page.layers) {
+      const inspected = inspectLayerRecord(sl);
+      if (inspected.status !== 'ok') reasons.push(inspected.reason);
+    }
     await loadRasterAssets(page);
     for (const sl of page.layers) {
       const layer = await restoreLayerFrom(sl, { artboard: eng.artboard });
       if (layer) ls.layers.push(layer);
     }
-    if (!validateLayerTree(ls.rootLayerIds, ls.layers))
-      throw new Error('invalid layer tree');
+    if (reasons.length) {
+      eng.document.mode = 'view-only';
+      eng.document.reasons = reasons;
+      useStore.getState().set({
+        projectOpenMode: 'view-only',
+        toolNotice: '未対応のデータを含むため閲覧専用で開きました。元のまま保存できます。',
+      });
+    }
+    if (!validateLayerTree(ls.rootLayerIds, ls.layers)) {
+      if (!reasons.length) throw new Error('invalid layer tree');
+      ls.layers = [];
+      ls.rootLayerIds = [];
+    }
     ls.activeLayerId = page.activeLayerId;
     eng.history = new HistoryTree();
-    if (isPersistedHistory(page.history)) eng.history.restore(page.history);
+    if (!reasons.length && isPersistedHistory(page.history)) eng.history.restore(page.history);
     eng.view.restore(page.view);
     eng.pages.thumbnailVersion = page.thumbnailVersion;
     ls.resetCountersFromLayers();
@@ -271,11 +289,8 @@ export class ProjectService {
     this.projectGeneration++;
     try {
       await eng.recorderPublic().reset();
-      if (eng.autosave.saveTimer !== null) {
-        clearTimeout(eng.autosave.saveTimer);
-        eng.autosave.saveTimer = null;
-      }
-      await eng.autosave.saving;
+      this.engine.autosave.cancelPending();
+      await this.engine.autosave.inflight;
       const layer = createRasterLayer(
         'レイヤー 1',
         eng.artboard.w,
@@ -313,7 +328,7 @@ export class ProjectService {
       ls.clearVersions();
       eng.compositor.textRenderer.clear();
       await loadFonts([]);
-      eng.autosave.persistedRevision = eng.autosave.saveRevision;
+      eng.autosave.markClean();
       useStore.getState().set({
         fonts: [],
         textEditingId: null,
@@ -380,8 +395,33 @@ export class ProjectService {
     );
   }
 
+  async exportOriginal(): Promise<void> {
+    const bytes = this.engine.document.originalBytes;
+    if (bytes) {
+      downloadBlob(new Blob([bytes]), 'rin-paint.rinpaint');
+      return;
+    }
+    const meta = await loadProjectMeta();
+    if (!meta) throw new Error('元データを保存できませんでした');
+    const pages = (
+      await Promise.all(meta.pageOrder.map((id) => loadPage(id)))
+    ).filter((page): page is SavedPage => !!page);
+    if (pages.length !== meta.pageOrder.length)
+      throw new Error('一部のページを読み込めませんでした');
+    downloadBlob(
+      await packProjectFile({
+        app: 'rin-paint',
+        version: PROJECT_VERSION,
+        meta,
+        pages,
+      }),
+      `rin-paint-${new Date().toISOString().slice(0, 10)}.rinpaint`,
+    );
+  }
+
   async exportProject(): Promise<void> {
     const eng = this.engine;
+    if (eng.document.mode === 'view-only') return this.exportOriginal();
     if (eng.isBusy()) throw new Error('処理の完了後に保存してください');
     eng.layerService.finishFloating();
     await eng.links.flush();
@@ -410,8 +450,9 @@ export class ProjectService {
     const ls = eng.layerService;
     const pages = eng.pages;
     if (eng.isBusy()) throw new Error('busy');
+    const originalBytes = await file.arrayBuffer();
     const archive = await unpackProjectFile(file);
-    // Decode and validate every page before replacing any persisted data.
+    let unsupported = false;
     for (const page of archive.pages) {
       if (!new HistoryTree().restore(page.history))
         throw new Error('履歴構造が不正です');
@@ -420,6 +461,12 @@ export class ProjectService {
       const size = pagePixels(page.pageSpec),
         layers: Layer[] = [];
       for (const record of page.layers) {
+        const inspected = inspectLayerRecord(record);
+        if (inspected.status === 'invalid') throw new Error(inspected.reason);
+        if (inspected.status === 'unsupported') {
+          unsupported = true;
+          continue;
+        }
         const layer = await restoreLayerFrom(record, {
           artboard: { w: size.width, h: size.height },
         });
@@ -427,8 +474,10 @@ export class ProjectService {
         layers.push(layer);
       }
       if (
-        !validateLayerTree(page.rootLayerIds, layers) ||
-        !layers.some((l) => l.id === page.activeLayerId)
+        !unsupported && (
+          !validateLayerTree(page.rootLayerIds, layers) ||
+          !layers.some((l) => l.id === page.activeLayerId)
+        )
       )
         throw new Error('レイヤー構造が不正です');
     }
@@ -448,11 +497,8 @@ export class ProjectService {
     this.projectGeneration++;
     try {
       await eng.recorderPublic().reset();
-      if (eng.autosave.saveTimer !== null) {
-        clearTimeout(eng.autosave.saveTimer);
-        eng.autosave.saveTimer = null;
-      }
-      await eng.autosave.saving;
+      this.engine.autosave.cancelPending();
+      await this.engine.autosave.inflight;
       const meta: SavedProjectMeta = {
         ...archive.meta,
         activePageId: proj.id,
@@ -469,8 +515,9 @@ export class ProjectService {
       const layers: Layer[] = [];
       const counters = new Map<LayerType, number>();
       for (const pl of proj.layers) {
-        const index = (counters.get(pl.type) ?? 0) + 1;
-        counters.set(pl.type, index);
+        const type = isLayerType(pl.type) ? pl.type : undefined;
+        const index = type ? (counters.get(type) ?? 0) + 1 : 0;
+        if (type) counters.set(type, index);
         const layer = await restoreLayerFrom(
           pl,
           { artboard: eng.artboard },
@@ -478,7 +525,9 @@ export class ProjectService {
         );
         if (layer) layers.push(layer);
       }
-      if (!layers.some((l) => l.type === 'raster')) {
+      if (unsupported) {
+        eng.document.originalBytes = originalBytes;
+      } else if (!layers.some((l) => l.type === 'raster')) {
         const fallback = createRasterLayer(
           'レイヤー 1',
           eng.artboard.w,
@@ -487,8 +536,11 @@ export class ProjectService {
         layers.push(fallback);
         proj.rootLayerIds.push(fallback.id);
       }
-      if (!validateLayerTree(proj.rootLayerIds, layers))
-        throw new Error('invalid layer tree');
+      if (!validateLayerTree(proj.rootLayerIds, layers)) {
+        if (!unsupported) throw new Error('invalid layer tree');
+        layers.length = 0;
+        proj.rootLayerIds = [];
+      }
       pages.pageOrder = [...meta.pageOrder];
       pages.activePageId = meta.activePageId;
       setPersistencePageId(pages.activePageId);

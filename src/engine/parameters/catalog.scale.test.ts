@@ -40,6 +40,6 @@ describe('parameter catalog scale', () => {
     });
     const shared = [...maps[0].keys()].filter(id => maps.every(map => map.has(id)));
     expect(shared).toHaveLength(size);
-    expect(commonParametersOf(hosts, 'multi').map(item => item.id)).toEqual(['visible', 'opacity', 'blend']);
+    expect(commonParametersOf(hosts, 'multi', 300).map(item => item.id)).toEqual(['visible', 'opacity', 'blend']);
   });
 });

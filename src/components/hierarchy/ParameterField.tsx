@@ -1,6 +1,5 @@
 import type { LayerMeta } from '../../model';
 import { hostFromLayer } from '../../engine/parameters/host';
-import { parameterById } from '../../engine/parameters/host';
 import type { ParameterValue, ResolvedParameter } from '../../engine/parameters/types';
 import { useEngine } from '../EngineContext';
 import { useStore } from '../../state/store';
@@ -19,13 +18,18 @@ export function ParameterField({
   const fonts = useStore(s => s.fonts);
   const ppi = useStore(s => s.pageSpec.ppi);
   const values = layers.map(layer => {
-    const own = parameterById(hostFromLayer(layer), parameter.semanticId) ?? parameter;
-    return own.read(layer, layer.state);
+    const resolved = engine.links.effectiveValue(hostFromLayer(layer), parameter.semanticId);
+    return resolved;
   });
-  const mixed = values.some(value => !Object.is(value, values[0]));
-  const value = mixed ? null : values[0];
+  const mixed = values.some(item => item.status === 'owned' || item.status === 'linked'
+    ? !Object.is(item.value, values[0].value)
+    : item.status !== values[0].status);
+  const unresolved = values.some(item => item.status === 'unresolved');
+  const value = mixed ? null : values[0].value;
   const linkedLayers = layers.filter(layer => layer.parameterLink?.linkedParameterIds.includes(parameter.semanticId));
-  const labelColor = linkedLayers.length === layers.length
+  const labelColor = unresolved
+    ? 'warning.main'
+    : linkedLayers.length === layers.length
     ? 'secondary'
     : linkedLayers.length
       ? 'warning.main'

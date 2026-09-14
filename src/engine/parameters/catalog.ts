@@ -2,10 +2,40 @@ import type {
   CommonParameterDefinition,
   ParameterCatalog,
   ParameterDefinition,
+  ParameterEditor,
   ParameterGroup,
   ParameterValue,
+  ParameterValueKind,
   ResolvedParameter,
+  UnitSpec,
 } from './types';
+
+export function valueKindOf(editor: ParameterEditor): ParameterValueKind {
+  if (editor.kind === 'color') return 'color';
+  if (editor.kind === 'switch') return 'boolean';
+  if (editor.kind === 'select') return 'string';
+  return 'number';
+}
+
+export function unitOf(editor: ParameterEditor): UnitSpec | undefined {
+  return editor.kind === 'slider' || editor.kind === 'number' ? editor.unit : undefined;
+}
+
+function contractFields(definition: {
+  editor: ParameterEditor;
+  surfaces: readonly string[];
+  valueKind?: ParameterValueKind;
+  unit?: UnitSpec;
+  linkable?: boolean;
+  multiCompatible?: boolean;
+}) {
+  return {
+    valueKind: definition.valueKind ?? valueKindOf(definition.editor),
+    unit: definition.unit ?? unitOf(definition.editor),
+    linkable: definition.linkable ?? definition.surfaces.includes('link'),
+    multiCompatible: definition.multiCompatible ?? definition.surfaces.includes('multi'),
+  };
+}
 
 export function buildCatalog<S>(
   groups: readonly ParameterGroup[],
@@ -33,6 +63,7 @@ export function resolveKindParameter<S>(definition: ParameterDefinition<S>, type
     label: definition.label,
     editor: definition.editor,
     surfaces: definition.surfaces,
+    ...contractFields(definition),
     scope: 'state',
     type,
     read: (_common, state) => definition.read(state as S),
@@ -49,6 +80,7 @@ export function resolveCommonParameter(definition: CommonParameterDefinition): R
     label: definition.label,
     editor: definition.editor,
     surfaces: definition.surfaces,
+    ...contractFields(definition),
     scope: 'common',
     read: common => definition.read(common),
     write: (common, _state, value) => definition.write(common, value),

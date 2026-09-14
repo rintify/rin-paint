@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { SavedAppSettings, SavedAppSettingsFile } from './db';
 import { makeAppSettingsFile, parseAppSettingsFile, validateAppSettings } from './settingsFile';
+import { SETTINGS_CONTAINER_VERSION } from './version';
+import { SETTINGS_NAMESPACE_IDS } from '../modules/ids';
 import { defaultShortcutBindings } from '../../shortcuts';
+import { registerSettingsNamespace, unregisterSettingsNamespace } from '../settings/namespaces';
 
 function settings(): SavedAppSettings {
   return {
@@ -22,10 +25,13 @@ function settings(): SavedAppSettings {
 }
 
 describe('app settings file', () => {
-  it('round-trips only the app settings envelope', () => {
+  it('round-trips namespaced app settings', () => {
     const file = makeAppSettingsFile(settings());
     expect(parseAppSettingsFile(file)).toEqual(settings());
-    expect(file).toEqual({ app: 'rin-paint', kind: 'settings', version: 1, settings: settings() });
+    expect(file.version).toBe(SETTINGS_CONTAINER_VERSION);
+    expect(file.app).toBe('rin-paint');
+    expect(file.kind).toBe('settings');
+    expect(file.namespaces?.[SETTINGS_NAMESPACE_IDS.tools]).toBeTruthy();
     expect(JSON.stringify(file)).not.toMatch(/pageOrder|fonts|rootLayerIds|activeLayerId|referenceImage/i);
   });
 
@@ -33,9 +39,24 @@ describe('app settings file', () => {
     expect(validateAppSettings(settings()).tools.map(tool => tool.kind)).toEqual(['lasso', 'blur']);
   });
 
-  it('ignores a legacy app-wide auto-deselect flag', () => {
-    const value = { ...settings(), autoDeselectPaletteTools: false };
-    expect(validateAppSettings(value)).toEqual(settings());
+  it('fills a missing view flag from load defaults', () => {
+    const file = makeAppSettingsFile(settings());
+    const view = file.namespaces![SETTINGS_NAMESPACE_IDS.view]!;
+    const data = { ...(view.data as Record<string, unknown>) };
+    delete data.showEffectRangeGuides;
+    view.data = data;
+    expect(parseAppSettingsFile(file).showEffectRangeGuides).toBe(true);
+  });
+
+  it('keeps an unknown tool unusable without dropping it', () => {
+    const file = makeAppSettingsFile(settings());
+    file.settings.tools[0]!.kind = 'unknown';
+    file.namespaces![SETTINGS_NAMESPACE_IDS.tools]!.data = {
+      ...(file.namespaces![SETTINGS_NAMESPACE_IDS.tools]!.data as object),
+      tools: file.settings.tools,
+    };
+    const loaded = parseAppSettingsFile(file);
+    expect(loaded.tools[0]?.kind).toBe('unknown');
   });
 
   it('accepts a per-tool auto-deselect flag', () => {
@@ -57,9 +78,18 @@ describe('app settings file', () => {
     expect(validateAppSettings(value).tools.map(tool => tool.kind)).toEqual(['lasso', 'blur', 'cursor']);
   });
 
+  it('preserves an unknown settings namespace without touching known values', () => {
+    const file = makeAppSettingsFile(settings());
+    file.namespaces!.future = { revision: 1, data: { hello: true } };
+    const loaded = parseAppSettingsFile(file);
+    expect(loaded.penColor).toBe('#112233');
+    expect(makeAppSettingsFile(loaded, { future: { revision: 1, data: { hello: true } } }).namespaces?.future).toEqual({
+      revision: 1, data: { hello: true },
+    });
+  });
+
   it.each([
-    ['wrong version', (file: SavedAppSettingsFile) => { (file as { version: number }).version = 2; }],
-    ['unknown tool', (file: SavedAppSettingsFile) => { file.settings.tools[0]!.kind = 'unknown'; }],
+    ['wrong version', (file: SavedAppSettingsFile) => { (file as { version: number }).version = 1; }],
     ['duplicate tool id', (file: SavedAppSettingsFile) => { file.settings.tools[1]!.id = 'select'; }],
     ['dangling active tool', (file: SavedAppSettingsFile) => { file.settings.activeToolId = 'missing'; }],
     ['dangling stack member', (file: SavedAppSettingsFile) => { file.settings.toolStacks[0]!.toolIds[1] = 'missing'; }],
@@ -67,23 +97,38 @@ describe('app settings file', () => {
     ['missing layout item', (file: SavedAppSettingsFile) => { file.settings.toolLayout = []; }],
     ['invalid color', (file: SavedAppSettingsFile) => { file.settings.colorHistory[0] = 'red'; }],
     ['out-of-range size', (file: SavedAppSettingsFile) => { file.settings.tools[0]!.sizeMm = 999; }],
-    ['unexpected tool setting', (file: SavedAppSettingsFile) => { file.settings.tools[0]!.settings = { surprise: true }; }],
     ['duplicate shortcut', (file: SavedAppSettingsFile) => { file.settings.shortcuts['view.reset'] = file.settings.shortcuts['history.undo']; }],
   ])('rejects %s without returning a partial value', (_label, mutate) => {
     const file = structuredClone(makeAppSettingsFile(settings()));
     mutate(file);
+    if (file.namespaces) {
+      file.namespaces = makeAppSettingsFile(file.settings).namespaces;
+    }
     expect(() => parseAppSettingsFile(file)).toThrow();
   });
 
-  it('rejects clamped tool-specific values instead of silently changing imported data', () => {
-    const value = settings();
-    value.tools = [{
-      id: 'pen', kind: 'pen', name: 'ペン', sizeMm: 1, color: '#000000',
-      settings: { pressureStabilization: 101, taperIn: 0, taperOut: 0 },
-    }];
-    value.toolLayout = [{ type: 'tool', toolId: 'pen' }];
-    value.toolStacks = [];
-    value.activeToolId = 'pen';
-    expect(() => validateAppSettings(value)).toThrow('ツール固有設定');
+  it('registers a probe namespace without changing the save service', () => {
+    registerSettingsNamespace({
+      id: 'rin.settings.probe',
+      revision: 1,
+      loadDefaults: { enabled: true },
+      fromFlat: () => ({ enabled: true }),
+      toFlat: () => ({}),
+      load: (raw) => {
+        const enabled = !raw || typeof raw !== 'object' || (raw as { enabled?: unknown }).enabled === undefined
+          ? true
+          : (raw as { enabled: unknown }).enabled;
+        return typeof enabled === 'boolean'
+          ? { status: 'ok', value: { enabled } }
+          : { status: 'invalid', reason: 'probe', raw };
+      },
+      extras: () => ({}),
+    });
+    try {
+      const file = makeAppSettingsFile(settings());
+      expect(file.namespaces?.['rin.settings.probe']).toEqual({ revision: 1, data: { enabled: true } });
+    } finally {
+      unregisterSettingsNamespace('rin.settings.probe');
+    }
   });
 });

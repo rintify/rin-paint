@@ -1,4 +1,4 @@
-import { Accordion, AccordionDetails, AccordionSummary, Stack, TextField, Typography } from '@mui/material';
+import { Accordion, AccordionDetails, AccordionSummary, Button, Stack, TextField, Typography } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useMemo, useState } from 'react';
 import type { LayerMeta } from '../../model';
@@ -7,8 +7,9 @@ import { hostFromLayer } from '../../engine/parameters/host';
 import { kindCatalog } from '../../engine/layer-types/registry';
 import { ParameterField } from './ParameterField';
 import { inspectorConfig } from './inspectorRegistry';
+import { useStore } from '../../state/store';
 
-const VIRTUALIZE_AFTER = 40;
+const PAGE_SIZE = 40;
 
 function groupLabel(id: string, layers: LayerMeta[]): string {
   if (id === 'layer') return 'レイヤー';
@@ -22,10 +23,12 @@ function groupLabel(id: string, layers: LayerMeta[]): string {
 export function ParameterPanel({ layers }: { layers: LayerMeta[] }) {
   const [query, setQuery] = useState('');
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [shown, setShown] = useState<Record<string, number>>({});
   const surface = layers.length > 1 ? 'multi' as const : 'single' as const;
+  const ppi = useStore(s => s.pageSpec.ppi);
   const parameters = useMemo(
-    () => commonParametersOf(layers.map(hostFromLayer), surface),
-    [layers, surface],
+    () => commonParametersOf(layers.map(hostFromLayer), surface, ppi),
+    [layers, surface, ppi],
   );
   const filtered = parameters.filter(item => !query || item.label.includes(query) || item.id.includes(query));
   const groups = useMemo(() => {
@@ -53,9 +56,8 @@ export function ParameterPanel({ layers }: { layers: LayerMeta[] }) {
       )}
       {groups.map(group => {
         const expanded = openGroups[group.id] !== false;
-        const visible = expanded
-          ? (group.items.length > VIRTUALIZE_AFTER ? group.items.slice(0, VIRTUALIZE_AFTER) : group.items)
-          : [];
+        const limit = shown[group.id] ?? PAGE_SIZE;
+        const visible = expanded ? group.items.slice(0, limit) : [];
         return (
           <Accordion
             key={group.id}
@@ -69,10 +71,10 @@ export function ParameterPanel({ layers }: { layers: LayerMeta[] }) {
             <AccordionDetails>
               <Stack spacing={1.5}>
                 {visible.map(item => <ParameterField key={item.semanticId} parameter={item} layers={layers} />)}
-                {expanded && group.items.length > VIRTUALIZE_AFTER && (
-                  <Typography variant="caption" color="text.secondary">
-                    先頭{VIRTUALIZE_AFTER}件を表示しています。検索で絞り込んでください。
-                  </Typography>
+                {expanded && limit < group.items.length && (
+                  <Button size="small" onClick={() => setShown(current => ({ ...current, [group.id]: limit + PAGE_SIZE }))}>
+                    さらに表示
+                  </Button>
                 )}
               </Stack>
             </AccordionDetails>

@@ -77,6 +77,10 @@ describe('SettingsService', () => {
     const before = service.snapshot();
     const malformed = makeAppSettingsFile(saved());
     malformed.settings.activeToolId = 'missing';
+    const tools = malformed.namespaces!['rin.settings.tools'];
+    if (tools && tools.data && typeof tools.data === 'object') {
+      (tools.data as { activeToolId: string }).activeToolId = 'missing';
+    }
     await expect(service.importFile(new File([JSON.stringify(malformed)], 'bad.rinsettings'))).rejects.toThrow();
     expect(service.snapshot()).toEqual(before);
     expect(engine.layerService.finishFloating).not.toHaveBeenCalled();

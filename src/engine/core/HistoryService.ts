@@ -48,7 +48,7 @@ export class HistoryService {
 
   async undo(): Promise<void> {
     const eng = this.engine;
-    if (eng.isBusy()) return;
+    if (eng.isBusy() || eng.document.mode !== 'edit') return;
     if (eng.finishTextEditing()) return;
     if (eng.hasOpenSession()) {
       eng.cancelSessions();
@@ -79,7 +79,7 @@ export class HistoryService {
 
   async redo(childIndex?: number): Promise<void> {
     const eng = this.engine;
-    if (eng.isBusy()) return;
+    if (eng.isBusy() || eng.document.mode !== 'edit') return;
     if (eng.finishTextEditing()) return;
     if (eng.hasOpenSession()) {
       eng.cancelSessions();
@@ -175,10 +175,6 @@ export class HistoryService {
       case 'layerProps': {
         const l = ls.byId(op.layerId);
         if (l) ls.assignProps(l, dir === 'undo' ? op.before : op.after);
-        break;
-      }
-      case 'layerParameter': {
-        eng.parameters.applyHistory(op, dir === 'undo' ? op.before : op.after);
         break;
       }
       case 'layerLink': {

@@ -6,6 +6,8 @@ import {
 } from '../../model';
 import { scaleShape } from '../pageSpec';
 import { createShapeLayer } from '../layers';
+import { LAYER_KIND_IDS } from '../modules/ids';
+import { loadEnvelope } from './loadOwned';
 import {
   cloneShape,
   drawShape,
@@ -346,10 +348,67 @@ function shapeCatalog(kind: ShapeParams['kind']): ParameterCatalog<ShapeState> {
 export const shapeLayerType: LayerDefinition<'shape'> = {
   info: {
     type: 'shape',
+    kindId: LAYER_KIND_IDS.shape,
+    revision: 1,
     canMask: true,
     maskSourceLabel: '図形',
     supportsBlend: true,
     defaultName: () => '図形',
+  },
+  factory: {
+    create: (name, id) =>
+      createShapeLayer(name, {
+        kind: 'rect',
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+        color: '#000',
+        strokeWidth: 1,
+        paintMode: 'stroke',
+      }, id),
+  },
+  schema: {
+    loadDefaults: {
+      snapEnabled: true,
+      shape: {
+        kind: 'rect',
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+        color: '#000',
+        strokeWidth: 1,
+        paintMode: 'stroke',
+      },
+    },
+    createDefaults: {
+      snapEnabled: true,
+      shape: {
+        kind: 'rect',
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+        color: '#000',
+        strokeWidth: 1,
+        paintMode: 'stroke',
+      },
+    },
+    load: (raw) =>
+      loadEnvelope(['shape', 'snapEnabled'], {
+        snapEnabled: true,
+        shape: {
+          kind: 'rect',
+          x: 0,
+          y: 0,
+          width: 1,
+          height: 1,
+          color: '#000',
+          strokeWidth: 1,
+          paintMode: 'stroke',
+        },
+      }, raw, asShapeState),
   },
   state: {
     initial: () =>
@@ -406,6 +465,12 @@ export const shapeLayerType: LayerDefinition<'shape'> = {
       );
     },
     contentCanvas: () => null,
+    drawThumbnail(ctx, layer, env) {
+      ctx.save();
+      ctx.scale(env.width / env.artboard.w, env.height / env.artboard.h);
+      drawShape(ctx, layer.state.shape, false, env.artboard);
+      ctx.restore();
+    },
     eraser: {
       applies: (layer) => layer.state.shape.color === TRANSPARENT,
       draw(ctx, layer, env) {

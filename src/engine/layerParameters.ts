@@ -62,9 +62,9 @@ export function layerParameterDescriptors(layer: LayerParameterLayer): LayerPara
   return parametersFor(hostFromLayer(layer)).map(item => asDescriptor(layer, item.id)!);
 }
 
-export function commonLayerParameterDescriptors(layers: LayerParameterLayer[], _ppi = 300): LayerParameterDescriptor[] {
+export function commonLayerParameterDescriptors(layers: LayerParameterLayer[], ppi = 300): LayerParameterDescriptor[] {
   const hosts = layers.map(hostFromLayer);
-  return commonParametersOf(hosts, 'multi').map(item => asDescriptor(layers[0], item.semanticId)!).filter(Boolean);
+  return commonParametersOf(hosts, 'multi', ppi).map(item => asDescriptor(layers[0], item.semanticId)!).filter(Boolean);
 }
 
 export function linkableParameterMap(layer: LayerParameterLayer): Map<string, LayerParameterDescriptor> {

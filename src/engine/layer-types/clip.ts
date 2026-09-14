@@ -1,8 +1,10 @@
 import type { ClipState } from '../../model';
 import { createClipLayer, type ClipLayer } from '../layers';
+import { LAYER_KIND_IDS } from '../modules/ids';
 import { emptyCatalog } from '../parameters/catalog';
 import { applyClip } from './effectUtils';
 import type { LayerDefinition } from './definition';
+import { loadOwned } from './loadOwned';
 
 function cloneState(state: ClipState): ClipState {
   return { maskLayerIds: [...state.maskLayerIds] };
@@ -21,13 +23,23 @@ function asClipState(value: unknown): ClipState | null {
 export const clipLayerType: LayerDefinition<'clip'> = {
   info: {
     type: 'clip',
+    kindId: LAYER_KIND_IDS.clip,
+    revision: 1,
     canMask: false,
     maskSourceLabel: null,
     supportsBlend: false,
     defaultName: (index) => `クリップ ${index}`,
+    addMenu: { group: 'effect', label: 'クリップを追加', historyLabel: 'クリップレイヤー追加' },
+    effectBadge: 'クリップ',
+  },
+  factory: { create: (name, id) => createClipLayer(name, id) },
+  schema: {
+    loadDefaults: { maskLayerIds: [] },
+    createDefaults: { maskLayerIds: [] },
+    load: (raw) => loadOwned({ maskLayerIds: [] }, raw, asClipState),
   },
   state: {
-    initial: () => createClipLayer('tmp').state,
+    initial: () => ({ maskLayerIds: [] }),
     clone: cloneState,
     normalize: cloneState,
     applyPatch: (state, patch) => cloneState({ ...state, ...patch }),
@@ -59,6 +71,7 @@ export const clipLayerType: LayerDefinition<'clip'> = {
   },
   parameters: emptyCatalog(),
   capabilities: {},
+  enumerateLayerIds: (state) => [...state.maskLayerIds],
 };
 
 export type { ClipLayer };

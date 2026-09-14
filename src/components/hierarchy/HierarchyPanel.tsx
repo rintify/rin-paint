@@ -27,6 +27,7 @@ import { useStore } from '../../state/store';
 import type { LayerMeta } from '../../model';
 import { appAlert } from '../AppDialogs';
 import { useEngine } from '../EngineContext';
+import { addMenuItems, findLayerModule } from '../../engine/layer-types/registry';
 import { useLongPress } from '../hooks/useLongPress';
 import { NameEditor } from '../NameEditor';
 import { LayerControlsPalette } from './LayerControlsPalette';
@@ -314,10 +315,11 @@ export function HierarchyPanel() {
             </IconButton>
           </Tooltip>
           <Menu anchorEl={addEffectAnchor} open={!!addEffectAnchor} onClose={() => setAddEffectAnchor(null)}>
-            <MenuItem onClick={() => { engine.addAdjustLayer(); setAddEffectAnchor(null); }}>色調補正を追加</MenuItem>
-            <MenuItem onClick={() => { engine.addOutlineLayer(); setAddEffectAnchor(null); }}>縁どりを追加</MenuItem>
-            <MenuItem onClick={() => { engine.addTransformLayer(); setAddEffectAnchor(null); }}>トランスフォームを追加</MenuItem>
-            <MenuItem onClick={() => { engine.addClipLayer(); setAddEffectAnchor(null); }}>クリップを追加</MenuItem>
+            {addMenuItems('effect').map(item => (
+              <MenuItem key={item.type} onClick={() => { engine.addLayer(item.type); setAddEffectAnchor(null); }}>
+                {item.label}
+              </MenuItem>
+            ))}
           </Menu>
         </Stack>
       </Stack>
@@ -501,8 +503,8 @@ export function HierarchyPanel() {
                     : <VisibilityOffIcon sx={{ fontSize: 16 }} />}
                 </IconButton>
                 </Tooltip>
-                {meta.type === 'transform' || meta.type === 'adjust' || meta.type === 'outline' || meta.type === 'clip'
-                  ? <Box className={`effect-badge ${meta.type}`}>{meta.type === 'transform' ? '変形' : meta.type === 'adjust' ? '補正' : meta.type === 'outline' ? '縁' : 'クリップ'}</Box>
+                {findLayerModule(meta.type)?.definition.info.effectBadge
+                  ? <Box className={`effect-badge ${meta.type}`}>{findLayerModule(meta.type)!.definition.info.effectBadge}</Box>
                   : <Thumb meta={meta} />}
                 <Typography variant="body2" noWrap sx={{ flex: 1, opacity: meta.visible ? 1 : 0.5 }}>
                   {meta.name}

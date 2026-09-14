@@ -1,26 +1,31 @@
 import { useStore } from '../../state/store';
 import { isToolKind } from '../../tools/registry';
 import { downloadBlob } from '../timelapse/exporter';
-import { loadAppSettings, saveAppSettings, type SavedAppSettings } from '../persistence/db';
-import { makeAppSettingsFile, parseAppSettingsFile, validateAppSettings } from '../persistence/settingsFile';
+import { loadAppSettingsDetailed, saveAppSettings, type SavedAppSettings } from '../persistence/db';
+import {
+  makeAppSettingsFile,
+  parseAppSettingsFileDetailed,
+  type LoadedAppSettings,
+} from '../persistence/settingsFile';
+import { settingsNamespaces } from '../settings/namespaces';
+import { SaveScheduler } from '../persistence/SaveScheduler';
 import type { PaintEngine } from '../PaintEngine';
 
 /** App-wide tool and preference persistence, deliberately independent of projects. */
 export class SettingsService {
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private saving: Promise<void> | null = null;
   private initialized = false;
+  private retained: LoadedAppSettings['retained'] = {};
+  private namespaceExtras: LoadedAppSettings['namespaceExtras'] = {};
+  private readonly scheduler: SaveScheduler;
 
   constructor(private engine: PaintEngine) {
+    this.scheduler = new SaveScheduler(
+      () => saveAppSettings(this.snapshot(), this.retained, this.namespaceExtras),
+      200,
+    );
     useStore.subscribe((state, previous) => {
-      if (
-        state.penColor !== previous.penColor || state.penSizeMm !== previous.penSizeMm
-        || state.colorHistory !== previous.colorHistory || state.tools !== previous.tools
-        || state.toolLayout !== previous.toolLayout || state.toolStacks !== previous.toolStacks
-        || state.activeToolId !== previous.activeToolId || state.timelapseEnabled !== previous.timelapseEnabled
-        || state.showEffectRangeGuides !== previous.showEffectRangeGuides
-        || state.shortcuts !== previous.shortcuts
-      ) this.scheduleSave();
+      if (!this.settingsChanged(state, previous)) return;
+      this.scheduleSave();
     });
     window.addEventListener('pagehide', () => void this.flush());
     document.addEventListener('visibilitychange', () => {
@@ -29,30 +34,58 @@ export class SettingsService {
   }
 
   snapshot(): SavedAppSettings {
-    const state = useStore.getState();
+    return this.snapshotOf(useStore.getState());
+  }
+
+  private asSettings(state: ReturnType<typeof useStore.getState>): SavedAppSettings {
+    return state as unknown as SavedAppSettings;
+  }
+
+  private snapshotOf(state: ReturnType<typeof useStore.getState>): SavedAppSettings {
+    const settings = {} as SavedAppSettings;
+    for (const namespace of settingsNamespaces()) {
+      Object.assign(settings, namespace.toFlat(namespace.fromFlat(this.asSettings(state))));
+    }
     return {
-      tools: structuredClone(state.tools),
-      toolLayout: structuredClone(state.toolLayout),
-      toolStacks: structuredClone(state.toolStacks),
-      activeToolId: state.activeToolId,
-      penColor: state.penColor,
-      penSizeMm: state.penSizeMm,
-      colorHistory: [...state.colorHistory],
-      timelapseEnabled: state.timelapseEnabled,
-      showEffectRangeGuides: state.showEffectRangeGuides,
-      shortcuts: { ...state.shortcuts },
+      ...settings,
+      tools: structuredClone(settings.tools),
+      toolLayout: structuredClone(settings.toolLayout),
+      toolStacks: structuredClone(settings.toolStacks),
+      colorHistory: [...settings.colorHistory],
+      shortcuts: { ...settings.shortcuts },
     };
+  }
+
+  private settingsChanged(
+    state: ReturnType<typeof useStore.getState>,
+    previous: ReturnType<typeof useStore.getState>,
+  ): boolean {
+    const current = this.asSettings(state);
+    const last = this.asSettings(previous);
+    return settingsNamespaces().some((namespace) => {
+      const currentValue = namespace.fromFlat(current) as Record<string, unknown>;
+      const lastValue = namespace.fromFlat(last) as Record<string, unknown>;
+      const keys = Object.keys(currentValue);
+      return keys.length !== Object.keys(lastValue).length
+        || keys.some((key) => currentValue[key] !== lastValue[key]);
+    });
   }
 
   async init(): Promise<void> {
     try {
-      const saved = await loadAppSettings();
-      if (saved) this.apply(saved);
+      const saved = await loadAppSettingsDetailed();
+      if (saved) this.applyLoaded(saved);
     } catch {
       // Invalid app settings do not prevent the project from opening.
     }
     this.initialized = true;
     this.scheduleSave();
+  }
+
+  private applyLoaded(loaded: LoadedAppSettings): void {
+    this.retained = loaded.retained;
+    this.namespaceExtras = loaded.namespaceExtras;
+    this.apply(loaded.settings);
   }
 
   private apply(settings: SavedAppSettings): void {
@@ -79,40 +112,35 @@ export class SettingsService {
 
   scheduleSave(): void {
     if (!this.initialized) return;
-    if (this.timer !== null) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      void this.flush();
-    }, 200);
+    this.scheduler.schedule();
   }
 
   flush(): Promise<void> {
     if (!this.initialized) return Promise.resolve();
-    if (this.timer !== null) { clearTimeout(this.timer); this.timer = null; }
-    if (this.saving) return this.saving;
-    this.saving = saveAppSettings(this.snapshot()).finally(() => { this.saving = null; });
-    return this.saving;
+    return this.scheduler.flush();
   }
 
   async exportFile(): Promise<void> {
-    const file = makeAppSettingsFile(validateAppSettings(this.snapshot()));
+    const file = makeAppSettingsFile(this.snapshot(), this.retained, this.namespaceExtras);
     const blob = new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' });
     downloadBlob(blob, `rin-paint-settings-${new Date().toISOString().slice(0, 10)}.rinsettings`);
   }
 
   async importFile(file: File): Promise<void> {
-    const settings = parseAppSettingsFile(JSON.parse(await file.text()) as unknown);
+    const loaded = parseAppSettingsFileDetailed(JSON.parse(await file.text()) as unknown);
     if (this.engine.isBusy()) throw new Error('処理の完了後に設定を読み込んでください');
     const before = this.snapshot();
+    const beforeRetained = this.retained;
+    const beforeExtras = this.namespaceExtras;
     this.engine.layerService.finishFloating();
     this.engine.activeTool().cancel?.();
-    this.apply(settings);
-    if (this.timer !== null) { clearTimeout(this.timer); this.timer = null; }
+    this.applyLoaded(loaded);
     try {
-      await saveAppSettings(this.snapshot());
+      await saveAppSettings(this.snapshot(), this.retained, this.namespaceExtras);
     } catch (error) {
+      this.retained = beforeRetained;
+      this.namespaceExtras = beforeExtras;
       this.apply(before);
-      if (this.timer !== null) { clearTimeout(this.timer); this.timer = null; }
       throw error;
     }
     this.engine.requestRender();

@@ -33,7 +33,7 @@ describe('shortcut registry', () => {
     expect(shortcutFromEvent(key({ code: 'KeyR', altKey: true }))).toBe('Alt+KeyR');
     expect(shortcutIdForEvent(key({ code: 'KeyR', altKey: true }), bindings)).toBe('view.reset');
     expect(validateShortcutBindings(bindings)).toEqual(bindings);
-    expect(() => validateShortcutBindings({ ...bindings, extra: 'KeyA' })).toThrow();
+    expect(validateShortcutBindings({ ...bindings, extra: 'KeyA' })).toEqual(bindings);
     expect(() => validateShortcutBindings({ ...bindings, 'view.reset': 'not-a-key' })).toThrow();
   });
 });

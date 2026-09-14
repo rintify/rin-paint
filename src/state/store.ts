@@ -9,17 +9,9 @@ import {
   type ToolLayoutItem,
   type ToolStack,
 } from '../model/tool';
-import { DEFAULT_SIZE_MM, clampSizeMm, roundMm } from '../engine/units';
-import { DEFAULT_PEN_DETAIL_SETTINGS } from '../tools/pen/settings';
-import { DEFAULT_FILL_TOOL_SETTINGS } from '../tools/fill/settings';
-import { DEFAULT_SHAPE_TOOL_SETTINGS } from '../tools/shape/settings';
-import { DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS } from '../tools/polygonSplit/settings';
-import { DEFAULT_TEXT_TOOL_SETTINGS } from '../tools/text/settings';
-import { DEFAULT_IMAGE_TOOL_SETTINGS } from '../tools/image/settings';
-import { DEFAULT_EYEDROPPER_TOOL_SETTINGS } from '../tools/eyedropper/settings';
-import { DEFAULT_PANEL_FRAME_TOOL_SETTINGS } from '../tools/panelFrame/settings';
-import { DEFAULT_SPEECH_BUBBLE_TOOL_SETTINGS } from '../tools/speechBubble/settings';
+import { clampSizeMm, roundMm } from '../engine/units';
 import { defaultToolSettings, getToolDescriptor, isToolKind, normalizeToolSettings, type ToolKind } from '../tools/registry';
+import { defaultToolSetup, type DefaultToolSetup } from '../tools/setup';
 import { normalizeToolLayout } from './toolLayout';
 import { defaultShortcutBindings, type ShortcutBindings, type ShortcutId } from '../shortcuts';
 
@@ -36,71 +28,8 @@ export interface StorageUsage {
   total: number;
 }
 
-export interface DefaultToolSetup {
-  tools: ToolInstance[];
-  toolLayout: ToolLayoutItem[];
-  toolStacks: ToolStack[];
-}
-
-/** 初回起動用。全種類を1つずつ作り、図形系だけを1つのスタックへまとめる。 */
-export function defaultToolSetup(): DefaultToolSetup {
-  // registry -> PaintEngine -> store の循環初期化を避けるため、初期値はデータだけで定義する。
-  const definitions: { kind: ToolKind; name: string; shape?: boolean; settings?: unknown; color?: string; sizeMm?: number; autoDeactivateAfterUse?: boolean }[] = [
-    { kind: 'cursor', name: 'カーソル', autoDeactivateAfterUse: true },
-    { kind: 'pen', name: 'ペン', settings: { ...DEFAULT_PEN_DETAIL_SETTINGS } },
-    { kind: 'line', name: '直線', shape: true },
-    { kind: 'rect', name: '四角', shape: true, settings: { ...DEFAULT_SHAPE_TOOL_SETTINGS } },
-    { kind: 'ellipse', name: '楕円', shape: true, settings: { ...DEFAULT_SHAPE_TOOL_SETTINGS } },
-    { kind: 'polygon', name: '多角形', shape: true, settings: { ...DEFAULT_SHAPE_TOOL_SETTINGS } },
-    { kind: 'panelFrame', name: 'コマ', shape: true, color: '#ffffff', sizeMm: 1, settings: { ...DEFAULT_PANEL_FRAME_TOOL_SETTINGS }, autoDeactivateAfterUse: true },
-    { kind: 'speechBubble', name: '吹き出し', shape: true, color: '#ffffff', sizeMm: 1, settings: { ...DEFAULT_SPEECH_BUBBLE_TOOL_SETTINGS }, autoDeactivateAfterUse: true },
-    { kind: 'fill', name: '塗りつぶし', settings: { ...DEFAULT_FILL_TOOL_SETTINGS } },
-    { kind: 'eyedropper', name: 'スポイト', settings: { ...DEFAULT_EYEDROPPER_TOOL_SETTINGS } },
-    { kind: 'polygonSplit', name: '多角形分断', settings: { ...DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS }, autoDeactivateAfterUse: true },
-    { kind: 'lasso', name: '選択' },
-    { kind: 'move', name: '移動変形' },
-    { kind: 'blur', name: 'ぼかし' },
-    { kind: 'text', name: '文字', settings: { ...DEFAULT_TEXT_TOOL_SETTINGS }, autoDeactivateAfterUse: true },
-    { kind: 'image', name: '画像', settings: { ...DEFAULT_IMAGE_TOOL_SETTINGS }, autoDeactivateAfterUse: true },
-  ];
-  const tools = definitions.map(({ kind, name, settings, color, sizeMm, autoDeactivateAfterUse }) => {
-    const normalizedSettings = {
-      ...(settings && typeof settings === 'object' ? settings : {}),
-      ...(autoDeactivateAfterUse ? { autoDeactivateAfterUse: true } : {}),
-    };
-    return {
-      id: newToolInstanceId(),
-      kind,
-      name,
-      sizeMm: sizeMm ?? DEFAULT_SIZE_MM,
-      color: color ?? '#222222',
-      ...(settings !== undefined || autoDeactivateAfterUse
-        ? { settings: normalizedSettings }
-        : {}),
-    } satisfies ToolInstance;
-  });
-  const shapeKinds = new Set(definitions.filter(item => item.shape).map(item => item.kind));
-  const shapeTools = tools.filter(tool => shapeKinds.has(tool.kind as ToolKind));
-  const shapeStack: ToolStack = {
-    id: newToolStackId(),
-    name: '図形',
-    toolIds: shapeTools.map(tool => tool.id),
-  };
-  const shapeIds = new Set(shapeStack.toolIds);
-  const toolLayout: ToolLayoutItem[] = [];
-  let insertedShapeStack = false;
-  for (const tool of tools) {
-    if (shapeIds.has(tool.id)) {
-      if (!insertedShapeStack) {
-        toolLayout.push({ type: 'stack', stackId: shapeStack.id });
-        insertedShapeStack = true;
-      }
-    } else {
-      toolLayout.push({ type: 'tool', toolId: tool.id });
-    }
-  }
-  return { tools, toolLayout, toolStacks: [shapeStack] };
-}
+export type { DefaultToolSetup } from '../tools/setup';
+export { defaultToolSetup } from '../tools/setup';
 
 export function defaultTools(): ToolInstance[] { return defaultToolSetup().tools; }
 
@@ -155,6 +84,8 @@ export interface PaintState {
   shapeHandleEdgeConstrained: boolean;
   fillProgress: number | null;
   toolNotice: string | null;
+  saveFailed: boolean;
+  projectOpenMode: 'edit' | 'view-only';
   exportProgress: number | null;
 
   viewScale: number;
@@ -183,17 +114,28 @@ export interface PaintState {
   resetShortcuts: () => void;
 }
 
-const initialToolSetup = defaultToolSetup();
+const FALLBACK_TOOL_SETUP: DefaultToolSetup = { tools: [], toolLayout: [], toolStacks: [] };
+
+function initialSetup(): DefaultToolSetup {
+  try {
+    const setup = defaultToolSetup();
+    return setup.tools.length ? setup : FALLBACK_TOOL_SETUP;
+  } catch {
+    return FALLBACK_TOOL_SETUP;
+  }
+}
+
+const initialToolSetup = initialSetup();
 const initialTools = initialToolSetup.tools;
 
 export const useStore = create<PaintState>((set) => ({
   tools: initialTools,
   toolLayout: initialToolSetup.toolLayout,
   toolStacks: initialToolSetup.toolStacks,
-  activeToolId: initialTools[0].id,
-  tool: initialTools[0].kind as ToolKind,
-  penSizeMm: initialTools[0].sizeMm,
-  penColor: initialTools[0].color,
+  activeToolId: initialTools[0]?.id ?? null,
+  tool: (initialTools[0]?.kind as ToolKind | undefined) ?? null,
+  penSizeMm: initialTools[0]?.sizeMm ?? 1.19,
+  penColor: initialTools[0]?.color ?? '#222222',
   colorHistory: ['#222222', '#e74c3c', '#e67e22', '#f1c40f', '#2ecc71', '#3498db', '#9b59b6', '#ffffff'],
   shortcuts: defaultShortcutBindings(),
   shortcutTarget: null,
@@ -237,6 +179,8 @@ export const useStore = create<PaintState>((set) => ({
   shapeHandleEdgeConstrained: false,
   fillProgress: null,
   toolNotice: null,
+  saveFailed: false,
+  projectOpenMode: 'edit',
   exportProgress: null,
 
   viewScale: 1,
@@ -421,3 +365,23 @@ export const useStore = create<PaintState>((set) => ({
   setShortcut: (id, binding) => set((s) => ({ shortcuts: { ...s.shortcuts, [id]: binding } })),
   resetShortcuts: () => set({ shortcuts: defaultShortcutBindings() }),
 }));
+
+queueMicrotask(() => {
+  try {
+    if (useStore.getState().tools.length) return;
+    const setup = defaultToolSetup();
+    const tools = setup.tools;
+    if (!tools.length) return;
+    useStore.setState({
+      tools,
+      toolLayout: setup.toolLayout,
+      toolStacks: setup.toolStacks,
+      activeToolId: tools[0]?.id ?? null,
+      tool: (tools[0]?.kind as ToolKind | undefined) ?? null,
+      penSizeMm: tools[0]?.sizeMm ?? 1.19,
+      penColor: tools[0]?.color ?? '#222222',
+    });
+  } catch {
+    // 循環初期化中はレジストリがまだ揃っていない。
+  }
+});

@@ -33,6 +33,8 @@ export interface ParameterGroup {
   label: string;
 }
 
+export type ParameterValueKind = 'number' | 'string' | 'boolean' | 'color';
+
 export interface ParameterDefinition<S> {
   id: string;
   semanticId: string;
@@ -40,6 +42,17 @@ export interface ParameterDefinition<S> {
   label: string;
   editor: ParameterEditor;
   surfaces: readonly ParameterSurface[];
+  /** 値の契約。未指定なら editor から導出する。リンク判定には editor.kind を使わない。 */
+  valueKind?: ParameterValueKind;
+  unit?: UnitSpec;
+  linkable?: boolean;
+  multiCompatible?: boolean;
+  presentations?: readonly {
+    groupId: string;
+    label: string;
+    editor: ParameterEditor;
+    surfaces: readonly ParameterSurface[];
+  }[];
   read(state: S): ParameterValue;
   write(state: S, value: ParameterValue): S;
   canonical?: ParameterValueCodec;
@@ -59,6 +72,10 @@ export interface CommonParameterDefinition {
   label: string;
   editor: ParameterEditor;
   surfaces: readonly ParameterSurface[];
+  valueKind?: ParameterValueKind;
+  unit?: UnitSpec;
+  linkable?: boolean;
+  multiCompatible?: boolean;
   blendOnly?: boolean;
   read(common: LayerCommon): ParameterValue;
   write(common: LayerCommon, value: ParameterValue): Partial<LayerCommon>;
@@ -72,6 +89,10 @@ export interface ResolvedParameter {
   label: string;
   editor: ParameterEditor;
   surfaces: readonly ParameterSurface[];
+  valueKind: ParameterValueKind;
+  unit?: UnitSpec;
+  linkable: boolean;
+  multiCompatible: boolean;
   scope: 'common' | 'state';
   type?: LayerType;
   read(common: LayerCommon, state: unknown): ParameterValue;

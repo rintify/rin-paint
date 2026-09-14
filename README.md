@@ -32,9 +32,44 @@ npm run build   # 型チェック + 本番ビルド
 
 ## 構成
 
-- `src/engine/` — React に依存しない描画エンジン (合成、ツール、履歴、タイムラプス、永続化)
-- `src/state/` — zustand ストア (UI と エンジンの同期)
+- `src/engine/` — React に依存しない描画エンジン (合成、履歴、永続化)
+- `src/engine/layer-types/` — レイヤーモジュール (スキーマ、描画、パラメータ、参照列挙)
+- `src/tools/` — ツールの定義・実行・設定 UI
+- `src/engine/settings/` — アプリ設定の名前空間
+- `src/state/` — zustand ストア (UI とエンジンの同期)
 - `src/components/` — 左パネル UI とキャンバスビュー
 
-ツールは `src/engine/tools/types.ts` の `Tool` インターフェースを実装して
-`PaintEngine` の `tools` に登録するだけで追加できます。
+## 機能の追加手順
+
+### レイヤー
+
+1. `src/engine/layer-types/` にモジュールを追加し、`LayerDefinition`（`kindId` / `revision` / スキーマ / 描画 / パラメータ）を実装する。
+2. `src/engine/layer-types/registry.ts` の `definitions` に1行追加する。
+3. React UI が必要なら同じ機能単位のコンポーネントを別入口から公開する。エンジンから UI を import しない。
+
+既定値付きの項目追加は、そのモジュールのスキーマに載せるだけで古いデータを読める。中央の移行処理は不要。
+
+### ツール
+
+1. `src/tools/<kind>/` に settings（データ）、tool（実行）、Panel（UI）、index（記述子）を置く。
+2. `src/tools/registry.ts` の `TOOL_REGISTRY` に1行追加する。初期一覧は記述子から `defaultToolSetup()` が組み立てる。
+
+### パラメータ
+
+値の契約（安定 ID、意味 ID、型、範囲、既定値）と表示の契約（ラベル、スライダー等）を分ける。リンク可否は意味 ID で判定し、エディター種類では判定しない。
+
+### アプリ設定
+
+`src/engine/settings/namespaces.ts` に名前空間を追加する。初期値と load を名前空間が持てば、保存サービスのフィールド列挙は不要。
+
+## バージョンを上げる判断
+
+| 対象 | 上げるとき |
+|---|---|
+| ファイルコンテナ (`FILE_CONTAINER_VERSION`) | バイナリの格納方法や外側の構造が変わるとき |
+| プロジェクト共通構造 (`PROJECT_STRUCTURE_VERSION`) | ページや階層など、共通モデルの解釈が変わるとき |
+| レイヤー／ツール／設定モジュール | その機能の保存値の意味や構造が変わるとき |
+| 履歴操作 (`HISTORY_OP_VERSION`) | 操作記録の構造や復元方法が変わるとき |
+| IndexedDB (`DB_VERSION`) | オブジェクトストアやインデックスを変更するとき |
+
+レイヤーパラメータを1つ追加するだけでは、プロジェクトや履歴全体のバージョンは上げない。項目名変更・単位変更・型変更には、そのモジュール内の移行を用意する。パラメータの意味が変わる場合は新しい意味 ID を付け、既存 ID を流用しない。

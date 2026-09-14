@@ -17,13 +17,13 @@ import type { PersistedHistory } from '../history/historyTree';
 import type { LayerRecord } from '../layer-types/definition';
 import { payloadBytes } from '../history/bytes';
 import type { ViewState } from '../view';
-import { CLIPBOARD_VERSION, DB_VERSION, PROJECT_VERSION } from './version';
+import { CLIPBOARD_VERSION, DB_VERSION, PROJECT_VERSION, SETTINGS_CONTAINER_VERSION } from './version';
 import {
   migrateClipboard,
   migrateProjectMeta,
   migrateSavedPage,
 } from './migrate';
-import { validateAppSettings } from './settingsFile';
+import { loadSettingsDocument, settingsDocumentFromFlat, type LoadedAppSettings } from './settingsFile';
 import type { ShortcutBindings } from '../../shortcuts';
 
 export type SavedLayer = LayerRecord;
@@ -59,8 +59,9 @@ export interface SavedAppSettings {
 export interface SavedAppSettingsFile {
   app: 'rin-paint';
   kind: 'settings';
-  version: 1;
+  version: typeof SETTINGS_CONTAINER_VERSION;
   settings: SavedAppSettings;
+  namespaces?: Record<string, { revision: number; data: unknown }>;
 }
 export interface LayerClipboard {
   version: typeof CLIPBOARD_VERSION;
@@ -168,13 +169,25 @@ export async function loadProjectMeta(): Promise<SavedProjectMeta | undefined> {
 }
 export async function saveAppSettings(
   settings: SavedAppSettings,
+  retained: LoadedAppSettings['retained'] = {},
+  extras: LoadedAppSettings['namespaceExtras'] = {},
 ): Promise<void> {
-  await (await db()).put('kv', settings, 'app-settings');
+  await (await db()).put('kv', settingsDocumentFromFlat(settings, retained, extras), 'app-settings');
 }
 export async function loadAppSettings(): Promise<SavedAppSettings | undefined> {
+  const loaded = await loadAppSettingsDetailed();
+  return loaded?.settings;
+}
+export async function loadAppSettingsDetailed(): Promise<LoadedAppSettings | undefined> {
   const value = (await (await db()).get('kv', 'app-settings')) as unknown;
   if (value === undefined) return undefined;
-  return validateAppSettings(value);
+  const loaded = loadSettingsDocument(
+    value && typeof value === 'object' && 'namespaces' in value
+      ? value
+      : settingsDocumentFromFlat(value as SavedAppSettings),
+  );
+  if (loaded.status !== 'ok') throw new Error(loaded.reason);
+  return loaded.value;
 }
 let saveQueue: Promise<unknown> = Promise.resolve();
 function queued<T>(work: () => Promise<T>): Promise<T> {

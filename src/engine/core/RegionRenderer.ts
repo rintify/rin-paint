@@ -3,6 +3,10 @@ import type { CanvasLease, LayerDrawEnv } from '../layer-types/types';
 import type { Layer } from '../layers';
 import type { PaintEngine } from '../PaintEngine';
 import type { PixelRect as RenderRect } from '../raster/geometry';
+
+function resolvedLayer(engine: PaintEngine, layer: Layer): Layer {
+  return engine.links?.resolvedView(layer) ?? layer;
+}
 export interface LayerHitCapture {
   layerId: string;
   contribution: CanvasLease | null;
@@ -101,7 +105,7 @@ export class RegionRenderer {
     target.save();
     try {
       target.setTransform(1, 0, 0, 1, -originX, -originY);
-      layerHandler(layer).renderer.draw(target, layer, env);
+      layerHandler(layer).renderer.draw(target, resolvedLayer(this.host.engine, layer) as never, env);
     } finally {
       target.restore();
     }
@@ -164,7 +168,7 @@ export class RegionRenderer {
         ) {
           target.save();
           try {
-            layerHandler(layer).renderer.draw(target, layer, env);
+            layerHandler(layer).renderer.draw(target, resolvedLayer(this.host.engine, layer) as never, env);
           } finally {
             target.restore();
           }
@@ -392,7 +396,7 @@ export class RegionRenderer {
                         }
                       : {}),
                 },
-                layer,
+                resolvedLayer(this.host.engine, layer) as never,
                 activeEnv,
               );
             } finally {

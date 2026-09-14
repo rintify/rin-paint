@@ -30,11 +30,7 @@ import { layerMaskIds } from '../layer-types/definition';
 import { shapeLayerName } from '../layer-types/shape';
 import { textFrame } from '../layer-types/text';
 import {
-  createTransformLayer,
-  createAdjustLayer,
-  createClipLayer,
   createImageLayer,
-  createOutlineLayer,
   createRasterLayer,
   createShapeLayer,
   createTextLayer,
@@ -50,25 +46,14 @@ import {
   structuralLowerId,
 } from '../layerTree';
 import { placedImage } from '../image/frame';
-import { isEmptyText, newText } from '../text/model';
+import { isEmptyText } from '../text/model';
 import type { PaintEngine } from '../PaintEngine';
 import { cloneShape, polygonFromWorldPoints, shapeCorners } from '../shapes';
 import type { LayerParameterValue } from '../parameters/types';
 import type { DirtyRect } from '../brush';
 
-export interface PanelFrameLayerOptions {
-  outlineColor: string;
-  outlineWidthMm: number;
-}
-
-export interface SpeechBubbleLayerOptions {
-  outlineColor: string;
-  outlineWidthMm: number;
-  textColor: string;
-  fontId: string;
-  fontSizePt: number;
-  textFrame: { x: number; y: number; w: number; h: number };
-}
+export type { PanelFrameLayerOptions } from '../../tools/panelFrame/assemble';
+export type { SpeechBubbleLayerOptions } from '../../tools/speechBubble/assemble';
 
 /** Owns layer tree state and layer CRUD / tree mutation helpers. */
 export class LayerService {
@@ -405,7 +390,7 @@ export class LayerService {
     preview = false,
   ): void {
     const layer = this.byId(id);
-    if (this.engine.isBusy() || layer?.type !== 'text') return;
+    if (!this.engine.canMutate() || layer?.type !== 'text') return;
     const linkChange = !preview
       ? this.engine.links.detachChanged(
           layer,
@@ -467,7 +452,7 @@ export class LayerService {
   }
 
   addTextLayer(text: TextParams): void {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     this.finishFloating();
     const parentId = closestRasterOrRoot(this.layers, this.activeLayerId);
     const location = { parentId, index: this.siblingIds(parentId).length };
@@ -523,14 +508,14 @@ export class LayerService {
   }
 
   editTextLayer(id: string): void {
-    if (this.engine.isBusy() || this.byId(id)?.type !== 'text') return;
+    if (!this.engine.canMutate() || this.byId(id)?.type !== 'text') return;
     this.setActiveLayer(id);
     useStore.getState().set({ textEditingId: id });
     this.engine.requestRender();
   }
 
   addRasterLayer(): void {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     this.finishFloating();
     const activeLocation = this.locationOf(this.activeLayerId);
     const location = activeLocation
@@ -556,23 +541,25 @@ export class LayerService {
   }
 
   addAdjustLayer(): void {
-    this.addEffectLayer('adjust', createAdjustLayer, '補正レイヤー追加');
+    this.addLayer('adjust');
   }
 
   addOutlineLayer(): void {
-    this.addEffectLayer('outline', createOutlineLayer, '縁どりレイヤー追加');
+    this.addLayer('outline');
   }
 
   addTransformLayer(): void {
-    this.addEffectLayer(
-      'transform',
-      createTransformLayer,
-      'トランスフォームレイヤー追加',
-    );
+    this.addLayer('transform');
   }
 
   addClipLayer(): void {
-    this.addEffectLayer('clip', createClipLayer, 'クリップレイヤー追加');
+    this.addLayer('clip');
+  }
+
+  addLayer(type: LayerType): void {
+    const def = layerTypeHandler(type);
+    const label = def.info.addMenu?.historyLabel ?? 'レイヤー追加';
+    this.addEffectLayer(type, (name) => def.factory.create(name) as Layer, label);
   }
 
   private addEffectLayer(
@@ -580,7 +567,7 @@ export class LayerService {
     create: (name: string) => Layer,
     label: string,
   ): void {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     this.finishFloating();
     const activeLocation = this.locationOf(this.activeLayerId);
     const location = activeLocation
@@ -609,7 +596,7 @@ export class LayerService {
   }
 
   addShapeLayer(shape: ShapeParams): void {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     const parentId = closestRasterOrRoot(this.layers, this.activeLayerId);
     const siblings = this.siblingIds(parentId);
     const location: LayerLocation = { parentId, index: siblings.length };
@@ -642,13 +629,14 @@ export class LayerService {
     };
   }
 
-  private addGeneratedTree(
+  addGeneratedTree(
     root: Layer,
     layers: Layer[],
     selectedId: string,
     label: string,
     textEditingId: string | null = null,
   ): void {
+    if (!this.engine.canMutate()) return;
     const before = this.generatedSelection();
     const activeLocation = this.locationOf(this.activeLayerId);
     const rootLocation: LayerLocation = activeLocation
@@ -695,95 +683,6 @@ export class LayerService {
     this.engine.committed();
   }
 
-  addPanelFrame(shape: ShapeParams, options: PanelFrameLayerOptions): void {
-    if (this.engine.isBusy()) return;
-    this.finishFloating();
-    const root = createShapeLayer('コマ', shape);
-    const raster = createRasterLayer(
-      'コマ描画',
-      this.engine.artboard.w,
-      this.engine.artboard.h,
-      undefined,
-      true,
-    );
-    const clip = createClipLayer('コマ内クリップ');
-    const outline = createOutlineLayer('コマ枠');
-    root.childIds = [raster.id, clip.id];
-    raster.parentId = root.id;
-    clip.parentId = root.id;
-    clip.childIds = [outline.id];
-    clip.state.maskLayerIds = [root.id];
-    outline.parentId = clip.id;
-    outline.state.outline = {
-      ...outline.state.outline,
-      color: options.outlineColor,
-      widthMm: options.outlineWidthMm,
-      cornerStyle: 'sharp',
-    };
-    this.addGeneratedTree(
-      root,
-      [root, raster, clip, outline],
-      raster.id,
-      'コマを追加',
-    );
-    useStore.getState().pushColor(shape.color);
-  }
-
-  addSpeechBubble(
-    bodyShape: ShapeParams,
-    tailShape: ShapeParams | null,
-    options: SpeechBubbleLayerOptions,
-  ): void {
-    if (this.engine.isBusy()) return;
-    this.finishFloating();
-    const body = createShapeLayer('吹き出し', bodyShape);
-    const tail = tailShape ? createShapeLayer('しっぽ', tailShape) : null;
-    const outline = createOutlineLayer('吹き出し枠');
-    const frame = options.textFrame;
-    const text = createTextLayer(
-      '文字',
-      newText(frame.x, frame.y, options.textColor, frame.w, frame.h, {
-        fontId: options.fontId,
-        sizePt: options.fontSizePt,
-        direction: 'vertical',
-        horizontalAlign: 'left',
-        verticalAlign: 'top',
-        lineHeight: 1.5,
-      }),
-    );
-    body.childIds = [...(tail ? [tail.id] : []), outline.id, text.id];
-    if (tail) {
-      tail.parentId = body.id;
-      tail.parameterLink = {
-        source: { pageId: this.engine.pages.activePageId, layerId: body.id },
-        sourceNameHint: body.name,
-        sourcePageIndexHint: Math.max(
-          0,
-          this.engine.pages.pageOrder.indexOf(this.engine.pages.activePageId),
-        ),
-        linkedParameterIds: ['appearance.color'],
-        fallbackValues: { 'appearance.color': bodyShape.color },
-      };
-    }
-    outline.parentId = body.id;
-    outline.state.outline = {
-      ...outline.state.outline,
-      color: options.outlineColor,
-      widthMm: options.outlineWidthMm,
-      cornerStyle: bodyShape.kind === 'rect' ? 'sharp' : 'round',
-    };
-    text.parentId = body.id;
-    this.addGeneratedTree(
-      body,
-      [body, ...(tail ? [tail] : []), outline, text],
-      text.id,
-      '吹き出しを追加',
-      text.id,
-    );
-    useStore.getState().pushColor(bodyShape.color);
-    useStore.getState().pushColor(options.textColor);
-  }
-
   addImageLayer(
     canvas: HTMLCanvasElement,
     x: number,
@@ -791,7 +690,7 @@ export class LayerService {
     maxWidth: number,
     maxHeight: number,
   ): void {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     this.finishFloating();
     const parentId = closestRasterOrRoot(this.layers, this.activeLayerId);
     const siblings = this.siblingIds(parentId);
@@ -833,7 +732,7 @@ export class LayerService {
   }
 
   removeLayer(id: string): void {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     this.finishFloating();
     const state = useStore.getState();
     const requested = state.multiSelectMode && state.selectedLayerIds.includes(id)
@@ -886,7 +785,7 @@ export class LayerService {
   }
 
   moveLayer(id: string, to: LayerLocation): boolean {
-    if (this.engine.isBusy()) return false;
+    if (!this.engine.canMutate()) return false;
     const from = this.locationOf(id);
     if (!from || !canReparent(this.layers, id, to.parentId)) return false;
     const adjusted = { ...to };
@@ -946,7 +845,7 @@ export class LayerService {
   }
 
   async mergeLayerDown(id = this.activeLayerId): Promise<void> {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     await this.engine.commitFloatSelection();
     const upper = this.byId(id);
     if (!upper) return;
@@ -977,7 +876,7 @@ export class LayerService {
   }
 
   async transferShapeLayerAsync(): Promise<void> {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     await this.engine.commitFloatSelection();
     if (!this.canTransferShape()) return;
     const layer = this.byId(this.activeLayerId)!,
@@ -1006,7 +905,7 @@ export class LayerService {
   }
 
   transferShapeLayer(): void {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     this.finishFloating();
     if (!this.canTransferShape()) return;
     const layer = this.byId(this.activeLayerId)!;
@@ -1036,7 +935,7 @@ export class LayerService {
   }
 
   replaceImageContent(id: string, canvas: HTMLCanvasElement): void {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     const layer = this.imageById(id);
     if (!layer || canvas.width <= 0 || canvas.height <= 0) return;
     const before = this.snapshotLayer(layer, true, true);
@@ -1054,7 +953,7 @@ export class LayerService {
   }
 
   fitImageAspect(id: string): void {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     const layer = this.imageById(id);
     if (!layer) return;
     const afterImage = fitImageParamsToSource(
@@ -1076,7 +975,7 @@ export class LayerService {
   }
 
   setActiveLayer(id: string): void {
-    if (this.engine.isBusy() || !this.byId(id)) return;
+    if (!this.engine.canMutate() || !this.byId(id)) return;
     const state = useStore.getState();
     state.set({ shortcutTarget: { type: 'layer', id } });
     if (state.multiSelectMode) {
@@ -1116,7 +1015,7 @@ export class LayerService {
   }
 
   previewLayerProps(id: string, props: LayerProps): void {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     const l = this.byId(id);
     if (!l) return;
     this.assignProps(l, props);
@@ -1156,7 +1055,7 @@ export class LayerService {
     after: LayerProps,
     label: string,
   ): void {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     this.engine.events.emit('textCommitRequest');
     const l = this.byId(id);
     if (!l) return;
@@ -1196,7 +1095,7 @@ export class LayerService {
   }
 
   convertRectToPolygon(id = this.activeLayerId): void {
-    if (this.engine.isBusy()) return;
+    if (!this.engine.canMutate()) return;
     const layer = this.shapeById(id);
     if (!layer || layer.state.shape.kind !== 'rect') return;
     const beforeShape = cloneShape(layer.state.shape);

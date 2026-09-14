@@ -67,7 +67,6 @@ function isLayerLink(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const link = value as Record<string, unknown>;
   const source = link.source as Record<string, unknown> | undefined;
-  const fallback = link.fallbackValues as Record<string, unknown> | undefined;
   return (
     !!source &&
     typeof source.pageId === 'string' &&
@@ -75,15 +74,7 @@ function isLayerLink(value: unknown): boolean {
     typeof link.sourceNameHint === 'string' &&
     typeof link.sourcePageIndexHint === 'number' &&
     Array.isArray(link.linkedParameterIds) &&
-    link.linkedParameterIds.every((id) => typeof id === 'string') &&
-    !!fallback &&
-    Object.values(fallback).every(
-      (item) =>
-        item === null ||
-        typeof item === 'string' ||
-        typeof item === 'boolean' ||
-        (typeof item === 'number' && Number.isFinite(item)),
-    )
+    link.linkedParameterIds.every((id) => typeof id === 'string')
   );
 }
 
@@ -138,21 +129,8 @@ function isAtomicOp(value: unknown): value is PersistedAtomicOp {
         isLocation(op.from) &&
         isLocation(op.to)
       );
-    case 'layerProps':
-      return typeof op.layerId === 'string' && !!op.before && !!op.after;
-    case 'layerParameter':
-      return (
-        typeof op.layerId === 'string' &&
-        typeof op.parameterId === 'string' &&
-        (op.before === null ||
-          typeof op.before === 'string' ||
-          typeof op.before === 'boolean' ||
-          (typeof op.before === 'number' && Number.isFinite(op.before))) &&
-        (op.after === null ||
-          typeof op.after === 'string' ||
-          typeof op.after === 'boolean' ||
-          (typeof op.after === 'number' && Number.isFinite(op.after)))
-      );
+      case 'layerProps':
+        return typeof op.layerId === 'string' && !!op.before && !!op.after;
     case 'layerLink': {
       const target = op.target as Record<string, unknown> | undefined;
       return (

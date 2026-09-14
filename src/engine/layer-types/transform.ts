@@ -4,6 +4,8 @@ import {
   normalizeTransform,
   type TransformState,
 } from '../../model/transform';
+import { createTransformLayer } from '../layers';
+import { LAYER_KIND_IDS } from '../modules/ids';
 import { buildCatalog } from '../parameters/catalog';
 import {
   inverseMatrix,
@@ -12,6 +14,7 @@ import {
 } from '../transform/projective';
 import type { LayerDefinition } from './definition';
 import type { ParameterDefinition } from '../parameters/types';
+import { loadOwned } from './loadOwned';
 
 const fields: ParameterDefinition<TransformState>[] = [
   ...(['translateX', 'translateY'] as const).map((key, index) => ({
@@ -72,10 +75,20 @@ function scaleState(state: TransformState, factor: number): TransformState {
 export const transformLayerType: LayerDefinition<'transform'> = {
   info: {
     type: 'transform',
+    kindId: LAYER_KIND_IDS.transform,
+    revision: 1,
     canMask: false,
     maskSourceLabel: null,
     supportsBlend: false,
     defaultName: (i) => `トランスフォーム ${i}`,
+    addMenu: { group: 'effect', label: 'トランスフォームを追加', historyLabel: 'トランスフォームレイヤー追加' },
+    effectBadge: '変形',
+  },
+  factory: { create: (name, id) => createTransformLayer(name, id) },
+  schema: {
+    loadDefaults: { ...DEFAULT_TRANSFORM },
+    createDefaults: { ...DEFAULT_TRANSFORM },
+    load: (raw) => loadOwned({ ...DEFAULT_TRANSFORM }, raw, (value) => normalizeTransform(value)),
   },
   state: {
     initial: () => ({ ...DEFAULT_TRANSFORM }),

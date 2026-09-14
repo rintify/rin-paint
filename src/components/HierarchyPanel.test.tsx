@@ -7,6 +7,7 @@ import type { LayerMeta } from '../types';
 import type { PaintEngine } from '../engine/PaintEngine';
 import { EngineProvider } from './EngineContext';
 import { HierarchyPanel, maskCandidateRows } from './HierarchyPanel';
+import { parameterById } from '../engine/parameters/host';
 
 const actions = vi.hoisted(() => ({
   remove: vi.fn(),
@@ -105,12 +106,30 @@ const mockEngine = vi.hoisted(() => ({
   addAdjustLayer: actions.addAdjust,
   addOutlineLayer: actions.addOutline,
   addClipLayer: actions.addClip,
+  addLayer(type: string) {
+    if (type === 'adjust') actions.addAdjust();
+    if (type === 'outline') actions.addOutline();
+    if (type === 'clip') actions.addClip();
+    if (type === 'transform') return;
+  },
+  links: {
+    effectiveValue: () => ({ status: 'owned' as const, value: null }),
+    resolvedView: (layer: unknown) => layer,
+  },
 })) as unknown as PaintEngine;
 
 vi.mock('../engine/shapes', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../engine/shapes')>();
   return { ...actual, drawShape() {} };
 });
+
+(mockEngine as unknown as { links: { effectiveValue: (host: { type: string; state: unknown }, semanticId: string) => { status: 'owned'; value: unknown } } }).links.effectiveValue = (host, semanticId) => {
+  const parameter = parameterById(host as never, semanticId);
+  return {
+    status: 'owned',
+    value: parameter ? parameter.read(host as never, host.state) : null,
+  };
+};
 
 const caps = { canMergeDown: false, canRemove: false, canTransferShape: false };
 const base = {

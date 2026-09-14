@@ -20,6 +20,7 @@
     "polygon-clipping": "0.15.7",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "zod": "^4.6.5",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

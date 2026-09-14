@@ -28,6 +28,7 @@ function setup(layers: Layer[]) {
       assignProps(layer: Layer, props: Record<string, unknown>) {
         applyLayerProps(layer, props);
       },
+      bumpLayer() {},
     },
     getPageSpec: () => ({ widthMm: 10, heightMm: 10, ppi: 254 }),
     history: { push: (op: unknown) => history.push(op) },
@@ -48,8 +49,10 @@ describe('ParameterLinkService', () => {
     service.createPasteLink('c', { pageId: 'p1', layerId: 'b' });
     a.state.shape.color = '#abcdef';
     service.propagateFrom({ pageId: 'p1', layerId: 'a' });
-    expect(b.state.shape.color).toBe('#abcdef');
-    expect(c.state.shape.color).toBe('#abcdef');
+    expect(b.state.shape.color).toBe('#222222');
+    expect(c.state.shape.color).toBe('#333333');
+    expect(service.effectiveValue(b, 'appearance.color').value).toBe('#abcdef');
+    expect(service.effectiveValue(c, 'appearance.color').value).toBe('#abcdef');
     expect(c.parameterLink?.source.layerId).toBe('b');
   });
 
@@ -72,9 +75,9 @@ describe('ParameterLinkService', () => {
     const b = shape('b', '#222222');
     const { service, history } = setup([a, b]);
     service.createPasteLink('b', { pageId: 'p1', layerId: 'a' });
-    const color = b.state.shape.color;
+    expect(service.effectiveValue(b, 'appearance.color').value).toBe('#111111');
     service.unlinkParameter('b', 'appearance.color');
-    expect(b.state.shape.color).toBe(color);
+    expect(b.state.shape.color).toBe('#111111');
     expect(b.parameterLink?.linkedParameterIds).not.toContain('appearance.color');
     expect(b.parameterLink?.linkedParameterIds).toContain('layer.opacity');
     expect(history).toHaveLength(1);

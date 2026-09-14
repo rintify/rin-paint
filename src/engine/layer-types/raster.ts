@@ -1,15 +1,32 @@
 import type { RasterLayer, Layer } from '../layers';
+import { createRasterLayer } from '../layers';
 import { RasterSurface } from '../raster/RasterSurface';
 import { RasterResampler } from '../raster/RasterResampler';
 import { emptyCatalog } from '../parameters/catalog';
+import { LAYER_KIND_IDS } from '../modules/ids';
 import type { LayerDefinition } from './definition';
+import { loadOwned } from './loadOwned';
+
+const EMPTY = {};
+
 export const rasterLayerType: LayerDefinition<'raster'> = {
   info: {
     type: 'raster',
+    kindId: LAYER_KIND_IDS.raster,
+    revision: 1,
     canMask: true,
     maskSourceLabel: 'ラスター',
     supportsBlend: true,
     defaultName: (index) => `レイヤー ${index}`,
+    addMenu: { group: 'raster', label: 'レイヤーを追加', historyLabel: 'レイヤー追加' },
+  },
+  factory: {
+    create: (name, id) => createRasterLayer(name, 0, 0, id),
+  },
+  schema: {
+    loadDefaults: {},
+    createDefaults: {},
+    load: (raw) => loadOwned(EMPTY, raw, () => ({})),
   },
   state: {
     initial: () => ({}),
@@ -79,9 +96,23 @@ export const rasterLayerType: LayerDefinition<'raster'> = {
       layer.runtime.surface.drawRegion(ctx, env.outputRegion);
     },
     contentCanvas: () => null,
+    drawThumbnail(ctx, layer, env) {
+      ctx.save();
+      ctx.scale(env.width / env.artboard.w, env.height / env.artboard.h);
+      layer.runtime.surface.drawRegion(ctx, {
+        x: 0,
+        y: 0,
+        w: env.artboard.w,
+        h: env.artboard.h,
+      });
+      ctx.restore();
+    },
   },
   parameters: emptyCatalog(),
   capabilities: { maskSource: { drawOpacity: (layer) => layer.opacity } },
+  enumerateAssetIds(layer) {
+    return layer.runtime.surface.snapshot().tiles.map((tile) => tile.assetId);
+  },
 };
 export function scaleRasterRuntime(
   layer: RasterLayer,

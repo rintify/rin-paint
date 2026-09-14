@@ -165,7 +165,6 @@ describe('shape history persistence', () => {
       sourceNameHint: '元',
       sourcePageIndexHint: 0,
       linkedParameterIds: ['layer.opacity'],
-      fallbackValues: { 'layer.opacity': 75 },
     };
     history.push(
       {

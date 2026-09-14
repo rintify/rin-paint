@@ -1,8 +1,8 @@
 import {
-  collectAssetIds,
   setRasterRootsProvider,
   releaseUnusedCanvases,
 } from '../raster/RasterAssetRepository';
+import { collectHistoryAssetIds, collectLayerAssetIds } from '../persistence/assetRefs';
 import { useStore } from '../../state/store';
 import { savedLayerFrom } from '../layer-types/registry';
 import { canvasToBlob } from '../layers';
@@ -12,24 +12,38 @@ import {
   type SavedLayer,
 } from '../persistence/db';
 import { PROJECT_VERSION } from '../persistence/version';
+import { SaveScheduler } from '../persistence/SaveScheduler';
 import type { PaintEngine } from '../PaintEngine';
 
 /** Debounced project persistence and storage usage refresh. */
 export class AutosaveService {
-  saveTimer: ReturnType<typeof setTimeout> | null = null;
   initialized = false;
-  saveRevision = 0;
-  persistedRevision = 0;
-  saving: Promise<void> | null = null;
   storageTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly scheduler: SaveScheduler;
 
   constructor(private engine: PaintEngine) {
+    this.scheduler = new SaveScheduler(
+      () => this.saveSnapshot(),
+      200,
+      {
+        ready: () =>
+          this.initialized
+          && this.engine.document.mode === 'edit'
+          && !this.engine.isBusy()
+          && !this.engine.hasOpenSession(),
+        onFailure: () => {
+          useStore.getState().set({
+            toolNotice:
+              '自動保存に失敗しました。内容を保持しています。保存を再試行してください。',
+            saveFailed: true,
+          });
+        },
+      },
+    );
     setRasterRootsProvider(() => {
-      if (engine.isBusy() || engine.hasOpenSession()) return null;
-      const ids = collectAssetIds(engine.history.root);
-      for (const layer of engine.layerService.layers)
-        if (layer.type === 'raster')
-          collectAssetIds(layer.runtime.surface.snapshot(), ids);
+      if (engine.isBusy() || engine.hasOpenSession() || engine.document.mode !== 'edit') return null;
+      const ids = collectHistoryAssetIds(engine.history.root);
+      for (const layer of engine.layerService.layers) collectLayerAssetIds(layer, ids);
       return ids;
     });
   }
@@ -40,57 +54,30 @@ export class AutosaveService {
   }
 
   scheduleSave(): void {
-    if (!this.initialized) return;
-    this.saveRevision++;
-    if (this.saveTimer !== null) clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => {
-      this.saveTimer = null;
-      void this.flushSave().catch(() => undefined);
-    }, 200);
+    if (!this.initialized || this.engine.document.mode !== 'edit') return;
+    useStore.getState().set({ saveFailed: false });
+    this.scheduler.schedule();
   }
 
   flushSave(): Promise<void> {
-    const eng = this.engine;
     if (!this.initialized) return Promise.resolve();
-    if (eng.isBusy()) return this.saving ?? Promise.resolve();
-    if (this.saveTimer !== null) {
-      clearTimeout(this.saveTimer);
-      this.saveTimer = null;
-    }
-    if (eng.hasOpenSession()) return Promise.resolve();
-    if (this.saving) return this.saving;
-    let failed = false;
-    this.saving = (async () => {
-      while (
-        this.persistedRevision < this.saveRevision &&
-        !eng.hasOpenSession() &&
-        !eng.isBusy()
-      ) {
-        const targetRevision = this.saveRevision;
-        try {
-          await this.saveSnapshot();
-          this.persistedRevision = targetRevision;
-        } catch (error) {
-          failed = true;
-          useStore.getState().set({
-            toolNotice:
-              '自動保存に失敗しました。内容を保持しています。保存を再試行してください。',
-          });
-          throw error;
-        }
-      }
-    })().finally(() => {
-      this.saving = null;
-      if (
-        !failed &&
-        !eng.hasOpenSession() &&
-        !eng.isBusy() &&
-        this.persistedRevision < this.saveRevision
-      ) {
-        queueMicrotask(() => void this.flushSave().catch(() => undefined));
-      }
-    });
-    return this.saving;
+    return this.scheduler.flush() ?? Promise.resolve();
+  }
+
+  cancelPending(): void {
+    this.scheduler.cancel();
+  }
+
+  markClean(): void {
+    this.scheduler.markClean();
+  }
+
+  get inflight(): Promise<void> | null {
+    return this.scheduler.inflight;
+  }
+
+  get failed(): boolean {
+    return this.scheduler.failed;
   }
 
   async saveSnapshot(): Promise<void> {
@@ -149,14 +136,11 @@ export class AutosaveService {
       fonts,
     });
     eng.links.noteSavedPage(page);
-    if (!eng.hasOpenSession() && !eng.isBusy())
-      releaseUnusedCanvases(
-        collectAssetIds(
-          ls.layers
-            .filter((l) => l.type === 'raster')
-            .map((l) => l.runtime.surface.snapshot()),
-        ),
-      );
+    if (!eng.hasOpenSession() && !eng.isBusy() && eng.document.mode === 'edit') {
+      const ids = new Set<string>();
+      for (const layer of ls.layers) collectLayerAssetIds(layer, ids);
+      releaseUnusedCanvases(ids);
+    }
     this.scheduleStorageRefresh();
   }
 

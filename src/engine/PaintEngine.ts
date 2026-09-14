@@ -10,6 +10,7 @@ import {
   type ShapeParams,
   type StrokePoint,
   type TextParams,
+  type LayerType,
   type PageSpec,
   type ProjectFont,
 } from '../model';
@@ -42,6 +43,8 @@ import {
 } from './history/historyTree';
 import type { SavedPage } from './persistence/db';
 import { TimelapseRecorder } from './timelapse/recorder';
+import { assemblePanelFrame } from '../tools/panelFrame/assemble';
+import { assembleSpeechBubble } from '../tools/speechBubble/assemble';
 import { ViewController, type ViewState } from './view';
 import { Compositor } from './core/Compositor';
 import { LayerPicker, type LayerPickHit } from './core/LayerPicker';
@@ -62,6 +65,7 @@ import {
   type LayerLinkCandidate,
 } from './core/ParameterLinkService';
 import { ParameterService } from './parameters/ParameterService';
+import { DocumentStore } from './document/DocumentStore';
 import { layerHandler } from './layer-types/registry';
 import type { RasterLayer } from './layers';
 import type { LayerParameterValue } from './parameters/types';
@@ -79,6 +83,7 @@ export interface SelectedObjectTransform {
 export class PaintEngine {
   readonly artboard = new Artboard();
   readonly events = new EngineEvents();
+  readonly document = new DocumentStore();
 
   /** @internal */ readonly compositor = new Compositor(this);
   /** @internal */ readonly layerPicker = new LayerPicker(this);
@@ -193,6 +198,7 @@ export class PaintEngine {
     );
   }
   cancelSessions(): void {
+    this.parameters.cancelPreview();
     this.transformEdit.cancel();
     if (this.shapeEdit.hasEdit()) this.shapeEdit.cancelShapeEdit();
     this.activeSession()?.cancel();
@@ -226,6 +232,9 @@ export class PaintEngine {
 
   /** @internal */ isBusy(): boolean {
     return this.busy;
+  }
+  /** @internal */ canMutate(): boolean {
+    return !this.busy && this.document.mode === 'edit';
   }
   /** @internal */ setBusy(v: boolean): void {
     this.busy = v;
@@ -328,6 +337,17 @@ export class PaintEngine {
   }
 
   committed(requestFullRender = true): void {
+    if (this.pages.activePageId && this.document.mode === 'edit') {
+      this.document.captureActive({
+        pageId: this.pages.activePageId,
+        spec: this.project.pageSpec,
+        rootLayerIds: this.layerService.rootLayerIds,
+        activeLayerId: this.layerService.activeLayerId,
+        layers: this.layerService.layers,
+        view: this.view.snapshot(),
+        thumbnailVersion: this.pages.thumbnailVersion,
+      });
+    }
     this.compositor.syncTextRenders();
     if (requestFullRender) this.requestRender();
     this.syncStore();
@@ -639,6 +659,9 @@ export class PaintEngine {
   addRasterLayer(): void {
     this.layerService.addRasterLayer();
   }
+  addLayer(type: LayerType): void {
+    this.layerService.addLayer(type);
+  }
   addAdjustLayer(): void {
     this.layerService.addAdjustLayer();
   }
@@ -656,16 +679,31 @@ export class PaintEngine {
   }
   addPanelFrame(
     shape: ShapeParams,
-    options: import('./core/LayerService').PanelFrameLayerOptions,
+    options: import('../tools/panelFrame/assemble').PanelFrameLayerOptions,
   ): void {
-    this.layerService.addPanelFrame(shape, options);
+    if (!this.canMutate()) return;
+    this.layerService.finishFloating();
+    const tree = assemblePanelFrame(this.artboard, shape, options);
+    this.layerService.addGeneratedTree(tree.root, tree.layers, tree.selectedId, tree.label);
+    useStore.getState().pushColor(shape.color);
   }
   addSpeechBubble(
     body: ShapeParams,
     tail: ShapeParams | null,
-    options: import('./core/LayerService').SpeechBubbleLayerOptions,
+    options: import('../tools/speechBubble/assemble').SpeechBubbleLayerOptions,
   ): void {
-    this.layerService.addSpeechBubble(body, tail, options);
+    if (!this.canMutate()) return;
+    this.layerService.finishFloating();
+    const tree = assembleSpeechBubble(this.pages, body, tail, options);
+    this.layerService.addGeneratedTree(
+      tree.root,
+      tree.layers,
+      tree.selectedId,
+      tree.label,
+      tree.textEditingId,
+    );
+    useStore.getState().pushColor(body.color);
+    useStore.getState().pushColor(options.textColor);
   }
   addImageLayer(
     canvas: HTMLCanvasElement,
@@ -1100,6 +1138,14 @@ export class PaintEngine {
   async exportProject(): Promise<void> {
     return this.project.exportProject();
   }
+  async exportOriginal(): Promise<void> {
+    return this.project.exportOriginal();
+  }
+  retrySave(): Promise<void> {
+    useStore.getState().set({ saveFailed: false, toolNotice: null });
+    this.scheduleSave();
+    return this.flushSavePublic();
+  }
   async importProject(file: File): Promise<void> {
     return this.project.importProject(file);
   }
@@ -1193,6 +1239,7 @@ export class PaintEngine {
       selectionActive: this.activeFloat()?.phase === 'float',
       freeTransform:
         this.activeFloat()?.phase === 'float' && !!this.activeFloat()?.free,
+      projectOpenMode: this.document.mode,
     });
     this.syncActiveToolToLayer();
   }

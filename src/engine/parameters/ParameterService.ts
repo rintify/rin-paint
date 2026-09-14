@@ -1,14 +1,16 @@
 import { useStore } from '../../state/store';
 import type { Layer } from '../layers';
-import { applyLayerProps, applyRecordProps, layerHandler, layerTypeProps } from '../layer-types/registry';
+import { applyLayerProps, applyRecordProps, layerTypeProps } from '../layer-types/registry';
 import type { LayerProps } from '../layer-types/definition';
-import { editorAllowsNull, fromCanonical, toCanonical } from './codec';
+import { fromCanonical, toCanonical } from './codec';
 import { parameterById, type ParameterHost } from './host';
 import type { ParameterValue } from './types';
 import type { PaintEngine } from '../PaintEngine';
-import type { LayerParameterOp } from '../history/historyTree';
+import { EditSession } from '../editing/EditSession';
 
 export class ParameterService {
+  private session = new EditSession();
+
   constructor(private engine: PaintEngine) {}
 
   private hosts(ids: string[]): { layer: Layer; host: ParameterHost }[] {
@@ -21,6 +23,10 @@ export class ParameterService {
   private selectedIds(): string[] {
     const state = useStore.getState();
     return state.multiSelectMode ? state.selectedLayerIds : [this.engine.layerService.activeLayerId];
+  }
+
+  private selectedLayers(): Layer[] {
+    return this.hosts(this.selectedIds()).map(item => item.layer);
   }
 
   read(layer: ParameterHost, parameterId: string): ParameterValue {
@@ -41,10 +47,25 @@ export class ParameterService {
     record.apply(parameter.write(host, host.state, value));
   }
 
+  private beginIfNeeded(): void {
+    if (!this.session.active) this.session.begin(this.selectedLayers());
+  }
+
   preview(parameterId: string, value: ParameterValue): void {
     if (this.engine.isBusy()) return;
+    this.beginIfNeeded();
     for (const { layer } of this.hosts(this.selectedIds())) {
+      const start = this.session.startProps(layer.id);
       this.writeState(layer, parameterId, value);
+      const linkOp = start
+        ? this.engine.layerService.linkOpForUserChange(layer, start, {
+            opacity: layer.opacity,
+            visible: layer.visible,
+            blend: layer.blend,
+            ...layerTypeProps(layer),
+          })
+        : null;
+      if (linkOp) applyLayerProps(layer, { parameterLink: linkOp.after });
       this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id }, true);
     }
     this.engine.requestRender();
@@ -55,51 +76,27 @@ export class ParameterService {
     this.commitRange(parameterId, undefined, value, label);
   }
 
-  commitRange(parameterId: string, beforeValue: ParameterValue | undefined, value: ParameterValue, label = 'パラメータを変更'): void {
+  commitRange(parameterId: string, _beforeValue: ParameterValue | undefined, value: ParameterValue, label = 'パラメータを変更'): void {
     if (this.engine.isBusy()) return;
     this.engine.events.emit('textCommitRequest');
-    const ops: Array<LayerParameterOp | import('../history/historyTree').LayerLinkOp | import('../history/historyTree').AtomicOp> = [];
+    this.beginIfNeeded();
     for (const { layer } of this.hosts(this.selectedIds())) {
-      const parameter = parameterById(layer, parameterId);
-      if (!parameter) continue;
-      const before = beforeValue !== undefined ? beforeValue : parameter.read(layer, layer.state);
-      const beforeState = layerHandler(layer).state.clone(layer.state as never);
       this.writeState(layer, parameterId, value);
       this.engine.layerService.bumpLayer(layer.id);
-      const after = parameter.read(layer, layer.state);
-      const mixed = before === null && !editorAllowsNull(parameter);
-      const afterProps: LayerProps = mixed && parameter.scope === 'state'
-        ? layerTypeProps(layer)
-        : parameter.write(layer, layer.state, after);
-      const beforeProps: LayerProps = mixed && parameter.scope === 'state'
-        ? { state: beforeState }
-        : parameter.write(layer, layer.state, before);
-      const historyOp = mixed && parameter.scope === 'state'
-        ? { kind: 'layerProps' as const, layerId: layer.id, before: beforeProps, after: afterProps }
-        : {
-          kind: 'layerParameter' as const,
-          layerId: layer.id,
-          parameterId: parameter.id,
-          before,
-          after,
-        };
-      const linkOp = this.engine.layerService.linkOpForUserChange(layer, beforeProps, afterProps, true);
-      ops.push(historyOp);
-      if (linkOp) ops.push(linkOp);
     }
-    if (!ops.length) return;
-    this.engine.history.push(ops.length === 1 ? ops[0] : { kind: 'batch', ops }, label);
-    for (const { layer } of this.hosts(this.selectedIds())) {
+    const layers = this.selectedLayers();
+    this.session.commit(layers, this.engine.history, label);
+    for (const layer of layers) {
       this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });
     }
     this.engine.committed();
   }
 
-  applyHistory(op: LayerParameterOp, value: ParameterValue): void {
-    const layer = this.engine.layerService.byId(op.layerId);
-    if (!layer) return;
-    this.writeState(layer, op.parameterId, value);
-    this.engine.layerService.bumpLayer(layer.id);
+  cancelPreview(): void {
+    if (!this.session.active) return;
+    this.session.cancel(this.selectedLayers());
+    this.engine.requestRender();
+    this.engine.syncStore();
   }
 
   canonicalRead(host: ParameterHost, parameterId: string, ppi: number): ParameterValue {

@@ -1,5 +1,7 @@
 import type { TextParams, TextState } from '../../model';
 import { createTextLayer } from '../layers';
+import { LAYER_KIND_IDS } from '../modules/ids';
+import { loadEnvelope } from './loadOwned';
 import { rotatedRectBounds } from '../shapes/snap';
 import type { TextRenderer } from '../text/render';
 import { buildCatalog } from '../parameters/catalog';
@@ -46,6 +48,25 @@ function cloneState(state: TextState): TextState {
   return { text: structuredClone(state.text), snapEnabled: state.snapEnabled };
 }
 
+const TEXT_LOAD_DEFAULTS: TextState = {
+  snapEnabled: true,
+  text: {
+    content: '',
+    x: 0,
+    y: 0,
+    width: null,
+    height: null,
+    rotation: 0,
+    direction: 'horizontal',
+    horizontalAlign: 'left',
+    verticalAlign: 'top',
+    lineHeight: 1.5,
+    style: { fontId: 'sans', color: '#000000', sizePt: 12 },
+    ranges: [],
+    ruby: [],
+  },
+};
+
 function asTextState(value: unknown): TextState | null {
   if (!value || typeof value !== 'object') return null;
   const record = value as { text?: TextParams; snapEnabled?: unknown };
@@ -89,10 +110,35 @@ const MULTI = ['multi'] as const;
 export const textLayerType: LayerDefinition<'text'> = {
   info: {
     type: 'text',
+    kindId: LAYER_KIND_IDS.text,
+    revision: 1,
     canMask: true,
     maskSourceLabel: '文字',
     supportsBlend: true,
     defaultName: () => '文字',
+  },
+  factory: {
+    create: (name, id) =>
+      createTextLayer(name, {
+        content: '',
+        x: 0,
+        y: 0,
+        width: null,
+        height: null,
+        rotation: 0,
+        direction: 'horizontal',
+        horizontalAlign: 'left',
+        verticalAlign: 'top',
+        lineHeight: 1.5,
+        style: { fontId: 'sans', color: '#000000', sizePt: 12 },
+        ranges: [],
+        ruby: [],
+      }, id),
+  },
+  schema: {
+    loadDefaults: structuredClone(TEXT_LOAD_DEFAULTS),
+    createDefaults: structuredClone(TEXT_LOAD_DEFAULTS),
+    load: (raw) => loadEnvelope(['text', 'snapEnabled'], TEXT_LOAD_DEFAULTS, raw, asTextState),
   },
   state: {
     initial: () =>

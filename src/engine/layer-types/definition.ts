@@ -2,6 +2,7 @@ import type { StoredRasterContent } from '../raster/RasterAssetRepository';
 import type { LayerCommonRecord, LayerType } from '../../model';
 import type { Layer, LayerOf } from '../layers';
 import type { ParameterCatalog } from '../parameters/types';
+import type { LoadResult } from '../schema';
 import type {
   ArtboardSize,
   CanvasLease,
@@ -30,10 +31,14 @@ export type {
 
 export interface LayerTypeInfo {
   type: LayerType;
+  kindId: string;
+  revision: number;
   canMask: boolean;
   maskSourceLabel: string | null;
   supportsBlend: boolean;
   defaultName(index: number): string;
+  addMenu?: { group: 'raster' | 'effect'; label: string; historyLabel: string };
+  effectBadge?: string;
 }
 
 export interface LayerStateAdapter<K extends LayerType> {
@@ -76,6 +81,11 @@ export interface LayerRenderer<K extends LayerType> {
     ctx: CanvasRenderingContext2D,
     layer: LayerOf<K>,
     env: LayerDrawEnv,
+  ): void;
+  drawThumbnail?(
+    ctx: CanvasRenderingContext2D,
+    layer: LayerOf<K>,
+    env: { width: number; height: number; artboard: ArtboardSize },
   ): void;
   drawMask?(
     ctx: CanvasRenderingContext2D,
@@ -170,8 +180,20 @@ export interface LayerCapabilities<K extends LayerType> {
   renderLifecycle?: RenderLifecycleCapability<K>;
 }
 
+export interface LayerSchema<K extends LayerType> {
+  loadDefaults: LayerOf<K>['state'];
+  createDefaults: LayerOf<K>['state'];
+  load(raw: unknown): LoadResult<LayerOf<K>['state']>;
+}
+
+export interface LayerFactory<K extends LayerType> {
+  create(name: string, id?: string): LayerOf<K>;
+}
+
 export interface LayerDefinition<K extends LayerType> {
   info: LayerTypeInfo;
+  factory: LayerFactory<K>;
+  schema: LayerSchema<K>;
   state: LayerStateAdapter<K>;
   codec: LayerCodec<K>;
   renderer: LayerRenderer<K>;
@@ -181,11 +203,15 @@ export interface LayerDefinition<K extends LayerType> {
         layer: LayerOf<K> | { type: K; state: LayerOf<K>['state'] },
       ) => ParameterCatalog<LayerOf<K>['state']>);
   capabilities: LayerCapabilities<K>;
+  enumerateLayerIds?(state: LayerOf<K>['state']): string[];
+  enumerateAssetIds?(layer: LayerOf<K>): string[];
 }
 
 export interface LayerRecord {
   id: string;
-  type: LayerType;
+  type: string;
+  kindId?: string;
+  revision?: number;
   common: LayerCommonRecord;
   state: unknown;
   content?: Blob | StoredRasterContent;

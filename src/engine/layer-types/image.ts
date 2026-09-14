@@ -5,7 +5,9 @@ import {
   type ImageState,
   type ShapeParams,
 } from '../../model';
-import { canvasToBlob, makeCanvas } from '../layers';
+import { canvasToBlob, makeCanvas, createImageLayer } from '../layers';
+import { LAYER_KIND_IDS } from '../modules/ids';
+import { loadEnvelope } from './loadOwned';
 import { imageFrameShape, imageFromFrameShape } from '../image/frame';
 import { drawPlacedImage } from '../image/render';
 import { shapeBounds } from '../shapes';
@@ -86,10 +88,44 @@ const SURFACES = ['single', 'multi', 'link'] as const;
 export const imageLayerType: LayerDefinition<'image'> = {
   info: {
     type: 'image',
+    kindId: LAYER_KIND_IDS.image,
+    revision: 1,
     canMask: true,
     maskSourceLabel: '画像',
     supportsBlend: true,
     defaultName: (index) => `画像 ${index}`,
+  },
+  factory: {
+    create: (name, id) =>
+      createImageLayer(
+        name,
+        makeCanvas(1, 1),
+        { x: 0, y: 0, width: 1, height: 1, rotation: 0 },
+        id,
+      ),
+  },
+  schema: {
+    loadDefaults: {
+      placement: { x: 0, y: 0, width: 1, height: 1, rotation: 0 },
+      snapEnabled: true,
+      constrainAspect: true,
+    },
+    createDefaults: {
+      placement: { x: 0, y: 0, width: 1, height: 1, rotation: 0 },
+      snapEnabled: true,
+      constrainAspect: true,
+    },
+    load: (raw) =>
+      loadEnvelope(
+        ['placement', 'image', 'snapEnabled', 'constrainAspect'],
+        {
+          placement: { x: 0, y: 0, width: 1, height: 1, rotation: 0 },
+          snapEnabled: true,
+          constrainAspect: true,
+        },
+        raw,
+        asImageState,
+      ),
   },
   state: {
     initial: () => ({

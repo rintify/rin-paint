@@ -111,6 +111,10 @@ export function normalizeToolSettings(
   return normalized;
 }
 
+export function loadToolSettings(kind: ToolKind, value: unknown): Record<string, unknown> {
+  return normalizeToolSettings(kind, value);
+}
+
 export function defaultToolSettings(kind: ToolKind): Record<string, unknown> {
   const descriptor = TOOL_REGISTRY[kind];
   return normalizeToolSettings(kind, descriptor.settings?.default());

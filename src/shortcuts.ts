@@ -60,18 +60,41 @@ export function shortcutLabel(binding: string): string {
   }).join(mac ? '' : ' + ');
 }
 
-export function validateShortcutBindings(value: unknown): ShortcutBindings {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('ショートカット設定が不正です');
-  const raw = value as Record<string, unknown>;
-  const expected = new Set(shortcutDefinitions.map(item => item.id));
-  if (Object.keys(raw).some(key => !expected.has(key as ShortcutId))) throw new Error('未対応のショートカットが含まれています');
-  const result = defaultShortcutBindings();
-  for (const item of shortcutDefinitions) {
-    const binding = raw[item.id];
-    if (typeof binding !== 'string' || binding.length > 80 || !validBinding(binding)) throw new Error('ショートカット設定が不正です');
-    result[item.id] = binding;
+import type { LoadResult } from './engine/schema';
+
+export function loadShortcutBindings(value: unknown): LoadResult<ShortcutBindings> {
+  if (value === undefined) return { status: 'ok', value: defaultShortcutBindings() };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { status: 'invalid', reason: 'ショートカット設定が不正です', raw: value };
   }
-  return result;
+  const raw = value as Record<string, unknown>;
+  const result = defaultShortcutBindings();
+  const assigned = new Set<string>();
+  for (const item of shortcutDefinitions) {
+    if (!Object.prototype.hasOwnProperty.call(raw, item.id)) continue;
+    const binding = raw[item.id];
+    if (typeof binding !== 'string' || binding.length > 80 || !validBinding(binding)) {
+      return { status: 'invalid', reason: 'ショートカット設定が不正です', raw: value };
+    }
+    result[item.id] = binding;
+    if (binding) assigned.add(binding);
+  }
+  for (const item of shortcutDefinitions) {
+    if (Object.prototype.hasOwnProperty.call(raw, item.id)) continue;
+    result[item.id] = assigned.has(item.defaultBinding) ? '' : item.defaultBinding;
+    if (result[item.id]) assigned.add(result[item.id]);
+  }
+  const knownAssigned = Object.values(result).filter(Boolean);
+  if (new Set(knownAssigned).size !== knownAssigned.length) {
+    return { status: 'invalid', reason: 'ショートカットの割り当てが重複しています', raw: value };
+  }
+  return { status: 'ok', value: result };
+}
+
+export function validateShortcutBindings(value: unknown): ShortcutBindings {
+  const loaded = loadShortcutBindings(value);
+  if (loaded.status !== 'ok') throw new Error(loaded.reason);
+  return loaded.value;
 }
 
 function validBinding(binding: string): boolean {

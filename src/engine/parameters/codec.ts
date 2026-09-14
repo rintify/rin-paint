@@ -6,7 +6,8 @@ export const canvasMmCodec: ParameterValueCodec = {
   fromCanonical: (value, ppi) => typeof value === 'number' ? mmToPx(value, ppi) : value,
 };
 
-export function editorUnit(parameter: ResolvedParameter) {
+export function editorUnit(parameter: { editor: import('./types').ParameterEditor; unit?: import('./types').UnitSpec }) {
+  if (parameter.unit) return parameter.unit;
   return parameter.editor.kind === 'slider' || parameter.editor.kind === 'number'
     ? parameter.editor.unit
     : undefined;

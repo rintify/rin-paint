@@ -160,6 +160,8 @@ export function MainMenu() {
   const progress = useStore((s) => s.exportProgress);
   const timelapseEnabled = useStore((s) => s.timelapseEnabled);
   const historyPrunableCount = useStore((s) => s.historyPrunableCount);
+  const projectOpenMode = useStore((s) => s.projectOpenMode);
+  const saveFailed = useStore((s) => s.saveFailed);
 
   const close = () => setAnchor(null);
 
@@ -240,6 +242,26 @@ export function MainMenu() {
         >
           プロジェクトをダウンロード
         </MenuItem>
+        {projectOpenMode === 'view-only' && (
+          <MenuItem
+            onClick={() => {
+              void engine.exportOriginal().catch(error => appAlert(error instanceof Error ? error.message : '保存に失敗しました'));
+              close();
+            }}
+          >
+            元のまま保存
+          </MenuItem>
+        )}
+        {saveFailed && (
+          <MenuItem
+            onClick={() => {
+              void engine.retrySave().catch(error => appAlert(error instanceof Error ? error.message : '保存に失敗しました'));
+              close();
+            }}
+          >
+            保存を再試行
+          </MenuItem>
+        )}
         <MenuItem
           onClick={() => {
             close();

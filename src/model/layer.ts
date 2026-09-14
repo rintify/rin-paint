@@ -17,7 +17,6 @@ export interface LayerParameterLink {
   sourceNameHint: string;
   sourcePageIndexHint: number;
   linkedParameterIds: string[];
-  fallbackValues: Record<string, SemanticParameterValue>;
 }
 
 export interface LayerLinkEndpointSummary {

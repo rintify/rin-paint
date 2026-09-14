@@ -3,17 +3,8 @@ import type { LayerProps, LayerSnapshot } from '../layer-types/definition';
 import { HISTORY_VERSION } from '../persistence/version';
 import { opBytes } from './bytes';
 import type { TilePatch } from './tilePatch';
-import type { ParameterValue } from '../parameters/types';
 
 export type { LayerProps, LayerSnapshot };
-
-export interface LayerParameterOp {
-  kind: 'layerParameter';
-  layerId: string;
-  parameterId: string;
-  before: ParameterValue;
-  after: ParameterValue;
-}
 
 export interface LayerLinkOp {
   kind: 'layerLink';
@@ -90,7 +81,6 @@ export type AtomicOp =
       before: LayerProps;
       after: LayerProps;
     }
-  | LayerParameterOp
   | LayerLinkOp
   | LayerReplaceOp
   | LayerMergeOp
@@ -178,7 +168,6 @@ export type PersistedAtomicOp =
       before: LayerProps;
       after: LayerProps;
     }
-  | LayerParameterOp
   | LayerLinkOp
   | PersistedLayerReplaceOp
   | PersistedTileLayerMergeOp
@@ -287,8 +276,6 @@ export class HistoryTree {
           return { ...op };
         case 'layerProps':
           return { ...op, before: { ...op.before }, after: { ...op.after } };
-        case 'layerParameter':
-          return { ...op };
         case 'layerLink':
           return structuredClone(op);
         case 'layerReplace': {

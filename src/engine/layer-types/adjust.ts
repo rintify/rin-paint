@@ -1,29 +1,33 @@
-import {
-  DEFAULT_ADJUST,
-  type AdjustParams,
-  type AdjustState,
-} from '../../model';
+import { z } from 'zod';
+import { DEFAULT_ADJUST, type AdjustState } from '../../model';
 import { buildFilter, createAdjustLayer } from '../layers';
+import { LAYER_KIND_IDS } from '../modules/ids';
 import { buildCatalog } from '../parameters/catalog';
+import { finiteNumber, loadWithZod } from '../schema';
 import type { LayerDefinition } from './definition';
 import { mixCanvases } from './effectUtils';
 
+const ADJUST_LOAD_DEFAULTS: AdjustState = {
+  params: { ...DEFAULT_ADJUST },
+  maskLayerIds: [],
+};
+const ADJUST_CREATE_DEFAULTS: AdjustState = {
+  params: { ...DEFAULT_ADJUST },
+  maskLayerIds: [],
+};
+
+const adjustStateSchema = z.object({
+  params: z.object({
+    brightness: finiteNumber(),
+    contrast: finiteNumber(),
+    hue: finiteNumber(),
+    saturation: finiteNumber(),
+  }),
+  maskLayerIds: z.array(z.string()),
+});
+
 function cloneState(state: AdjustState): AdjustState {
   return { params: { ...state.params }, maskLayerIds: [...state.maskLayerIds] };
-}
-
-function asAdjustState(value: unknown): AdjustState {
-  const record =
-    value && typeof value === 'object'
-      ? (value as { params?: Partial<AdjustParams>; maskLayerIds?: unknown })
-      : {};
-  const maskLayerIds = Array.isArray(record.maskLayerIds)
-    ? record.maskLayerIds.filter((id): id is string => typeof id === 'string')
-    : [];
-  return {
-    params: { ...DEFAULT_ADJUST, ...(record.params ?? {}) },
-    maskLayerIds,
-  };
 }
 
 const SLIDERS = [
@@ -38,13 +42,25 @@ const SURFACES = ['single', 'multi', 'link'] as const;
 export const adjustLayerType: LayerDefinition<'adjust'> = {
   info: {
     type: 'adjust',
+    kindId: LAYER_KIND_IDS.adjust,
+    revision: 1,
     canMask: false,
     maskSourceLabel: null,
     supportsBlend: false,
     defaultName: (index) => `色調補正 ${index}`,
+    addMenu: { group: 'effect', label: '色調補正を追加', historyLabel: '補正レイヤー追加' },
+    effectBadge: '補正',
+  },
+  factory: {
+    create: (name, id) => createAdjustLayer(name, id),
+  },
+  schema: {
+    loadDefaults: structuredClone(ADJUST_LOAD_DEFAULTS),
+    createDefaults: structuredClone(ADJUST_CREATE_DEFAULTS),
+    load: (raw) => loadWithZod(adjustStateSchema, ADJUST_LOAD_DEFAULTS, raw),
   },
   state: {
-    initial: () => createAdjustLayer('tmp').state,
+    initial: () => structuredClone(ADJUST_CREATE_DEFAULTS),
     clone: cloneState,
     normalize: cloneState,
     applyPatch: (state, patch) =>
@@ -63,7 +79,10 @@ export const adjustLayerType: LayerDefinition<'adjust'> = {
   },
   codec: {
     encode: cloneState,
-    decode: asAdjustState,
+    decode: (value) => {
+      const loaded = loadWithZod(adjustStateSchema, ADJUST_LOAD_DEFAULTS, value);
+      return loaded.status === 'ok' ? loaded.value : null;
+    },
   },
   renderer: {
     draw() {},
@@ -111,4 +130,5 @@ export const adjustLayerType: LayerDefinition<'adjust'> = {
     })),
   ),
   capabilities: {},
+  enumerateLayerIds: (state) => [...state.maskLayerIds],
 };
