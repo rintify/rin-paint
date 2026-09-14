@@ -54,13 +54,11 @@ export const adjustLayerType: LayerDefinition<'adjust'> = {
       const work = env.borrowCanvas();
       work.ctx.save();
       work.ctx.filter = buildFilter(layer.state.params);
-      work.ctx.drawImage(target.runtime.canvas, 0, 0);
+      target.runtime.surface.drawTo(work.ctx);
       work.ctx.restore();
-      target.runtime.ctx.save();
-      target.runtime.ctx.globalAlpha = layer.opacity;
-      target.runtime.ctx.globalCompositeOperation = 'source-over';
-      target.runtime.ctx.drawImage(work.canvas, 0, 0);
-      target.runtime.ctx.restore();
+      target.runtime.surface.paint({x: 0, y: 0, w: work.canvas.width, h: work.canvas.height}, ctx => {
+        ctx.globalAlpha = layer.opacity; ctx.drawImage(work.canvas, 0, 0);
+      });
       work.release();
     },
     contentCanvas: () => null,

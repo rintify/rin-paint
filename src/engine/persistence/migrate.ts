@@ -26,7 +26,7 @@ export function migrateProjectMeta(value: unknown): SavedProjectMeta {
 }
 
 export function migrateClipboard(value: unknown): LayerClipboard | undefined {
-  if (!isRecord(value) || value.version !== CLIPBOARD_VERSION || typeof value.sourcePageIndex !== 'number' || !Array.isArray(value.layers)) {
+  if (!isRecord(value) || value.version !== CLIPBOARD_VERSION || !isRecord(value.sourceDocument) || !['page', 'bin-item'].includes(String(value.sourceDocument.kind)) || typeof value.sourceDocument.id !== 'string' || typeof value.sourcePageIndex !== 'number' || !Array.isArray(value.layers)) {
     return undefined;
   }
   return value as unknown as LayerClipboard;

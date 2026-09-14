@@ -1,3 +1,8 @@
+import { drawProjectedProcedure } from '../geometry/drawProjectedProcedure';
+import { layoutMatrixPixels, layoutBounds, readLayoutTransform } from '../geometry/layoutTransform';
+import { inverse, multiply } from '../geometry/homography';
+import { rasterToScope } from '../core/RasterCoordinates';
+import { paintProjectedDrawing } from '../raster/paintProjectedDrawing';
 import { TRANSPARENT, type ShapePaintMode, type ShapeParams, type ShapeState } from '../../model';
 import { scaleShape } from '../pageSpec';
 import { createShapeLayer } from '../layers';
@@ -8,6 +13,7 @@ import {
   setShapePaintMode,
   setShapeRotation,
   shapeBounds,
+  shapeVisualPadding,
   shapeFillable,
   shapeKindLabel,
   shapePaintMode,
@@ -25,14 +31,14 @@ export function shapeLayerName(shape: ShapeParams): string {
 }
 
 function cloneState(state: ShapeState): ShapeState {
-  return { shape: cloneShape(state.shape), snapEnabled: state.snapEnabled };
+  return { ...readLayoutTransform(state), shape: cloneShape(state.shape), snapEnabled: state.snapEnabled };
 }
 
 function asShapeState(value: unknown): ShapeState | null {
   if (!value || typeof value !== 'object') return null;
   const record = value as { shape?: ShapeParams; snapEnabled?: unknown };
   if (!record.shape) return null;
-  return { shape: normalizeShape(cloneShape(record.shape)), snapEnabled: record.snapEnabled !== false };
+  return { ...readLayoutTransform(value), shape: normalizeShape(cloneShape(record.shape)), snapEnabled: record.snapEnabled !== false };
 }
 
 const SURFACES = ['single', 'multi', 'link'] as const;
@@ -72,7 +78,7 @@ function shapeCatalog(kind: ShapeParams['kind']): ParameterCatalog<ShapeState> {
     },
     {
       id: 'strokeWidth', semanticId: 'appearance.widthMm', groupId: 'appearance', label: '線の太さ',
-      editor: { kind: 'slider', min: 0, max: 20, unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
+      editor: { kind: 'slider', min: 0, max: 20, unit: { kind: 'mm' } }, surfaces: SURFACES,
       read: state => state.shape.strokeWidth,
       write: (state, value) => ({ ...cloneState(state), shape: { ...state.shape, strokeWidth: Math.max(0, Number(value)) } }),
     },
@@ -117,7 +123,7 @@ function shapeCatalog(kind: ShapeParams['kind']): ParameterCatalog<ShapeState> {
     });
     definitions.push({
       id: 'cornerRadius', semanticId: 'shape.cornerRadiusMm', groupId: 'appearance', label: '角丸半径',
-      editor: { kind: 'number', min: 0, unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
+      editor: { kind: 'number', min: 0, unit: { kind: 'mm' } }, surfaces: SURFACES,
       read: state => state.shape.kind === 'rect' || state.shape.kind === 'polygon' ? state.shape.cornerRadius ?? 0 : 0,
       write: (state, value) => {
         const shape = cloneShape(state.shape);
@@ -145,7 +151,7 @@ function shapeCatalog(kind: ShapeParams['kind']): ParameterCatalog<ShapeState> {
     semanticId: semanticForShapeKey(field.key),
     groupId: field.key.startsWith('rect.') || field.key.startsWith('ellipse.') || field.key.startsWith('polygon.') || field.key.startsWith('line.') ? 'frame' : 'shape',
     label: field.label,
-    editor: { kind: 'number' as const, min: field.min, unit: field.canvasLength ? { kind: 'canvas-mm' as const } : undefined },
+    editor: { kind: 'number' as const, min: field.min, unit: field.physicalLength ? { kind: 'mm' as const } : undefined },
     surfaces: SURFACES,
     read: (state: ShapeState) => field.read(state.shape),
     write: (state: ShapeState, value: import('../parameters/types').ParameterValue) => ({
@@ -180,7 +186,7 @@ export const shapeLayerType: LayerDefinition<'shape'> = {
       kind: 'rect', x: 0, y: 0, width: 1, height: 1, color: '#000', strokeWidth: 1, paintMode: 'stroke',
     }).state,
     clone: cloneState,
-    normalize: state => ({ shape: normalizeShape(cloneShape(state.shape)), snapEnabled: state.snapEnabled !== false }),
+    normalize: state => ({ ...readLayoutTransform(state), shape: normalizeShape(cloneShape(state.shape)), snapEnabled: state.snapEnabled !== false }),
     applyPatch: (state, patch) => cloneState({
       ...state,
       ...patch,
@@ -191,42 +197,42 @@ export const shapeLayerType: LayerDefinition<'shape'> = {
   codec: {
     encode: cloneState,
     decode: asShapeState,
-    scaleStored(state, env) {
-      const decoded = asShapeState(state);
-      return decoded ? { ...decoded, shape: scaleShape(decoded.shape, env.factor) } : state;
-    },
+
   },
   renderer: {
     draw(ctx, layer, env) {
       if (layer.state.shape.color === TRANSPARENT) return;
       ctx.globalAlpha = layer.opacity;
       ctx.globalCompositeOperation = layer.blend;
-      drawShape(ctx, layer.state.shape, undefined, env.artboard);
+      const shape = scaleShape(layer.state.shape, env.ppi / 25.4), raw = shapeBounds(shape), pad = shapeVisualPadding(shape);
+      drawProjectedProcedure(ctx, shapePaintMode(shape)==='fill-outside' ? null : {x: raw.x - pad, y: raw.y - pad, w: raw.w + 2 * pad, h: raw.h + 2 * pad}, layoutMatrixPixels(layer.state, env.ppi), source => drawShape(source, shape, undefined, env.artboard));
     },
     drawMask(ctx, layer, env) {
       if (layer.state.shape.color === TRANSPARENT) return;
-      drawShape(ctx, { ...layer.state.shape, color: '#fff' }, false, env.artboard);
+      const shape = {...scaleShape(layer.state.shape, env.ppi / 25.4), color: '#fff'}, raw = shapeBounds(shape), pad = shapeVisualPadding(shape);
+      drawProjectedProcedure(ctx, shapePaintMode(shape)==='fill-outside' ? null : {x: raw.x-pad, y: raw.y-pad, w: raw.w+2*pad, h: raw.h+2*pad}, layoutMatrixPixels(layer.state, env.ppi), source => drawShape(source, shape, false, env.artboard));
     },
     bakeOnto(target, layer, env) {
-      target.runtime.ctx.save();
-      target.runtime.ctx.globalAlpha = layer.opacity;
-      target.runtime.ctx.globalCompositeOperation = layer.blend;
-      drawShape(target.runtime.ctx, layer.state.shape, undefined, env.artboard);
-      target.runtime.ctx.restore();
+      const matrix = inverse(rasterToScope(target, env.ppi)); if (!matrix) return;
+      const shape = scaleShape(layer.state.shape, env.ppi / 25.4);
+      const raw = shapeBounds(shape), pad = shapeVisualPadding(shape);
+      const bounds = {x: raw.x - pad, y: raw.y - pad, w: raw.w + pad * 2, h: raw.h + pad * 2};
+      paintProjectedDrawing(target.runtime.surface, [bounds], multiply(matrix, layoutMatrixPixels(layer.state, env.ppi)), ctx => drawShape(ctx, shape, undefined, env.artboard), layer.opacity, layer.blend);
     },
     contentCanvas: () => null,
     eraser: {
       applies: layer => layer.state.shape.color === TRANSPARENT,
       draw(ctx, layer, env) {
         ctx.globalAlpha = layer.opacity;
-        drawShape(ctx, layer.state.shape, undefined, env.artboard);
+        const shape = scaleShape(layer.state.shape, env.ppi / 25.4), raw = shapeBounds(shape), pad = shapeVisualPadding(shape);
+      drawProjectedProcedure(ctx, shapePaintMode(shape)==='fill-outside' ? null : {x: raw.x - pad, y: raw.y - pad, w: raw.w + 2 * pad, h: raw.h + 2 * pad}, layoutMatrixPixels(layer.state, env.ppi), source => drawShape(source, shape, undefined, env.artboard));
       },
     },
   },
   parameters: layer => shapeCatalog(layer.state.shape.kind),
   capabilities: {
     objectTransform: {
-      bounds: layer => shapeBounds(layer.state.shape),
+      bounds: (layer, env) => layoutBounds(layer.state, shapeBounds(scaleShape(layer.state.shape, env.ppi / 25.4)), env.ppi),
       apply(layer, context) {
         layer.state.shape = transformShape(context.before.shape, {
           transform: context.transform,
@@ -248,7 +254,7 @@ export const shapeLayerType: LayerDefinition<'shape'> = {
       drawOpacity: layer => layer.opacity,
     },
     transferToRaster: {
-      canTransfer: layer => layer.childIds.length === 0 && !!layer.parentId,
+      canTransfer: () => true,
     },
   },
 };

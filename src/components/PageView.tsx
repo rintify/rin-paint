@@ -1,7 +1,6 @@
 import { Box, Button, Chip, LinearProgress, Paper, Snackbar, Typography } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
 import { useEngine } from './EngineContext';
-import { canTransformObjectType } from '../engine/layer-types/registry';
 import { useStore } from '../state/store';
 import { appAlert } from './AppDialogs';
 import { TextEditor } from './TextEditor';
@@ -42,7 +41,6 @@ export function PageView() {
   const [dropActive, setDropActive] = useState(false);
   const selectionActive = useStore((s) => s.selectionActive);
   const freeTransform = useStore((s) => s.freeTransform);
-  const objectSelected = useStore((s) => s.selectedLayerIds.some(id => { const layer = s.layers.find(item => item.id === id); return !!layer && canTransformObjectType(layer.type); }));
   const pageW = useStore((s) => s.pageW);
   const pageH = useStore((s) => s.pageH);
   const polygonDraftActive = useStore((s) => s.polygonDraftActive);
@@ -145,8 +143,7 @@ export function PageView() {
         >
           <Button
             variant={freeTransform ? 'contained' : 'outlined'}
-            disabled={objectSelected}
-            title={objectSelected ? '図形・文字を含む選択では自由変形を使用できません' : '角を個別に動かして変形'}
+            title="角を個別に動かして射影変換"
             onClick={() => engine.setSelectionFreeTransform(!freeTransform)}
           >
             自由変形

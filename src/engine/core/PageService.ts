@@ -12,12 +12,6 @@ import {
 import { PROJECT_VERSION } from '../persistence/version';
 import type { PaintEngine } from '../PaintEngine';
 
-function toBlobP(c: HTMLCanvasElement): Promise<Blob> {
-  return new Promise((resolve, reject) =>
-    c.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png'),
-  );
-}
-
 /** Page order, active page, and page CRUD. */
 export class PageService {
   pageOrder: string[] = [];
@@ -36,7 +30,9 @@ export class PageService {
       version: PROJECT_VERSION,
       pageOrder: [...this.pageOrder],
       activePageId: this.activePageId,
+      activeBinId: this.engine.bins.activeId,
       fonts: structuredClone(st.fonts),
+      deletedSources: await this.engine.links.serializeDeletedSources(),
     });
   }
 
@@ -44,15 +40,15 @@ export class PageService {
     const eng = this.engine;
     await eng.flushSavePublic();
     const id = this.newPageId();
-    const layer = createRasterLayer('レイヤー 1', eng.artboard.w, eng.artboard.h);
+    const layer = createRasterLayer('レイヤー 1', eng.getPageSpec().ppi, undefined);
     const history = new HistoryTree();
     const page: SavedPage = {
       id,
       pageSpec: { ...eng.getPageSpec() },
       rootLayerIds: [layer.id],
       activeLayerId: layer.id,
-      layers: [{ ...eng.layerService.snapshotLayer(layer, false), content: await toBlobP(layer.runtime.canvas) }],
-      history: await history.serialize(toBlobP),
+      layers: [{ ...eng.layerService.snapshotLayer(layer, false), content: await layer.runtime.surface.encode() }],
+      history: await history.serialize(),
       view: { x: 0, y: 0, scale: 1, rot: 0 },
       thumbnailVersion: 0,
     };
@@ -66,12 +62,12 @@ export class PageService {
 
   async switchPage(id: string): Promise<void> {
     const eng = this.engine;
+    if (eng.bins.activeId) await eng.bins.returnToPage();
     if (useStore.getState().fillProgress !== null) eng.cancelFill();
     if (eng.isBusy() || id === this.activePageId || !this.pageOrder.includes(id)) return;
     eng.layerService.finishFloating();
     eng.cancelSessions();
     eng.cancelShapeEdit();
-    eng.layerService.exitMultiSelect();
     await eng.flushSavePublic();
     await eng.links.flush();
     await eng.recorderPublic().reset();
@@ -84,6 +80,7 @@ export class PageService {
       setPersistencePageId(id);
       await eng.restoreSavedPagePublic(page);
       eng.links.reconcileAll();
+      await eng.canvases.reconcile();
       await this.saveMeta();
       eng.events.emit('projectReset');
       eng.shapeEdit.refreshVertexState();
@@ -103,8 +100,11 @@ export class PageService {
       const target = this.pageOrder[index + 1] ?? this.pageOrder[index - 1];
       await this.switchPage(target);
     }
+    this.engine.links.archivePage(id);
     this.pageOrder = this.pageOrder.filter(pageId => pageId !== id);
     this.engine.links.removePage(id);
+    this.engine.links.reconcileAll();
+    await this.engine.canvases.reconcile();
     await deletePageData(id);
     await this.saveMeta();
     this.engine.syncStore();

@@ -60,12 +60,24 @@ export function LayerLinkControls({
                 sx={{ justifyContent: 'flex-start' }}
                 onClick={() => void engine.focusLayerReference(link.source)}
               >
-                ページ {(source?.pageIndex ?? link.sourcePageIndexHint) + 1} / {source?.name ?? link.sourceNameHint}
+                {link.source.document.kind === 'bin-item' ? 'ビン' : `ページ ${(source?.pageIndex ?? link.sourcePageIndexHint) + 1}`} / {source?.name ?? link.sourceNameHint}
               </Button>
             </Stack>
             <Typography variant="caption" color="text.secondary">
               {link.linkedParameterIds.length} / {(meta.compatibleLinkParameterIds ?? []).length}項目をリンク中
             </Typography>
+            {(meta.type === 'raster' || meta.type === 'image') && (
+              <Button size="small" disabled={!!link.linkedContent || !!source?.missing}
+                onClick={() => void engine.links.relinkContent(meta.id)}>
+                {link.linkedContent ? '描画内容をリンク中' : '描画内容を再リンク'}
+              </Button>
+            )}
+            {meta.type === 'canvas' && link.structure?.suppressed.map(sourceId => (
+              <Button key={sourceId} size="small" disabled={!!source?.missing}
+                onClick={() => engine.canvases.restoreChild(meta.id, sourceId)}>
+                元の子を復元：{engine.links.sourceRecord({document: link.source.document, layerId: sourceId})?.common.name ?? sourceId}
+              </Button>
+            ))}
             {source?.missing && (
               <Typography variant="caption" color="warning.main">リンク元が見つかりません</Typography>
             )}
@@ -76,14 +88,14 @@ export function LayerLinkControls({
             <Typography variant="caption" sx={{ fontWeight: 700 }}>このレイヤーはリンク元になっています（{targets.length}件）</Typography>
             {targets.slice(0, 4).map(target => (
               <Button
-                key={`${target.address.pageId}:${target.address.layerId}`}
+                key={`${target.address.document.id}:${target.address.layerId}`}
                 fullWidth
                 size="small"
                 color="secondary"
                 sx={{ justifyContent: 'flex-start' }}
                 onClick={() => void engine.focusLayerReference(target.address)}
               >
-                ページ {target.pageIndex + 1} / {target.name}（{target.linkedCount}項目）
+                {target.address.document.kind === 'bin-item' ? 'ビン' : `ページ ${target.pageIndex + 1}`}  / {target.name}（{target.linkedCount}項目）
               </Button>
             ))}
             {targets.length > 4 && <Button size="small" color="secondary" onClick={() => setTargetsOpen(true)}>すべて表示（{targets.length}件）</Button>}
@@ -105,7 +117,7 @@ export function LayerLinkControls({
           <List dense sx={{ maxHeight: 420, overflow: 'auto' }}>
             {filtered.map(candidate => (
               <ListItemButton
-                key={`${candidate.address.pageId}:${candidate.address.layerId}`}
+                key={`${candidate.address.document.id}:${candidate.address.layerId}`}
                 disabled={!!candidate.disabledReason}
                 onClick={() => {
                   void engine.changeLayerLinkSource(meta.id, candidate.address);
@@ -113,7 +125,7 @@ export function LayerLinkControls({
                 }}
               >
                 <ListItemText
-                  primary={`ページ ${candidate.pageIndex + 1} / ${candidate.name}`}
+                  primary={`${candidate.address.document.kind === 'bin-item' ? 'ビン' : `ページ ${candidate.pageIndex + 1}`} / ${candidate.name}`}
                   secondary={candidate.disabledReason ?? `${candidate.equalCount}件一致 / ${candidate.compatibleCount}件互換`}
                 />
               </ListItemButton>
@@ -129,10 +141,10 @@ export function LayerLinkControls({
           <List dense>
             {targets.map(target => (
               <ListItemButton
-                key={`${target.address.pageId}:${target.address.layerId}`}
+                key={`${target.address.document.id}:${target.address.layerId}`}
                 onClick={() => { setTargetsOpen(false); void engine.focusLayerReference(target.address); }}
               >
-                <ListItemText primary={`ページ ${target.pageIndex + 1} / ${target.name}`} secondary={`${target.linkedCount}項目をリンク中`} />
+                <ListItemText primary={`${target.address.document.kind === 'bin-item' ? 'ビン' : `ページ ${target.pageIndex + 1}`} / ${target.name}`} secondary={`${target.linkedCount}項目をリンク中`} />
               </ListItemButton>
             ))}
           </List>

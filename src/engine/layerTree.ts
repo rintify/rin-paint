@@ -3,8 +3,15 @@ import type { LayerType } from '../model';
 export interface TreeLayerLike {
   id: string;
   type: LayerType;
-  parentId: string | null;
-  childIds: string[];
+  childIds?: string[];
+}
+
+export function layerChildren(layer: TreeLayerLike | null | undefined): string[] {
+  return layer?.type === 'canvas' ? layer.childIds ?? [] : [];
+}
+
+export function scopeOwner(layers: readonly TreeLayerLike[], id: string): string | null {
+  return layers.find(layer => layer.type === 'canvas' && layerChildren(layer).includes(id))?.id ?? null;
 }
 
 /** Only ancestors and the selected layer are open; siblings remain visible. */
@@ -13,7 +20,7 @@ export function selectedLayerRows(roots: string[], layers: TreeLayerLike[], acti
   const open = new Set<string>();
   for (const selected of Array.isArray(activeId) ? activeId : [activeId]) {
     let cursor: string | null = selected;
-    while (cursor && !open.has(cursor)) { open.add(cursor); cursor = byId.get(cursor)?.parentId ?? null; }
+    while (cursor && !open.has(cursor)) { open.add(cursor); cursor = scopeOwner(layers, cursor); }
   }
   const rows: { id: string; depth: number }[] = [];
   const visit = (ids: string[], depth: number) => {
@@ -21,7 +28,7 @@ export function selectedLayerRows(roots: string[], layers: TreeLayerLike[], acti
       const layer = byId.get(id);
       if (!layer) continue;
       rows.push({ id, depth });
-      if (layer.type === 'canvas' && open.has(id)) visit(layer.childIds, depth);
+      if (layer.type === 'canvas' && open.has(id)) visit(layerChildren(layer), depth);
     }
   };
   visit(roots, 0);
@@ -36,7 +43,7 @@ export function canReparent(layers: TreeLayerLike[], id: string, parentId: strin
   let cursor: string | null = parentId;
   while (cursor) {
     if (cursor === id) return false;
-    cursor = byId.get(cursor)?.parentId ?? null;
+    cursor = scopeOwner(layers, cursor);
   }
   return true;
 }
@@ -49,17 +56,17 @@ export function validateLayerTree(roots: string[], layers: TreeLayerLike[]): boo
   }
   const seen = new Set<string>();
   const visiting = new Set<string>();
-  const visit = (id: string, parentId: string | null): boolean => {
+  const visit = (id: string): boolean => {
     const layer = byId.get(id);
-    if (!layer || layer.parentId !== parentId || visiting.has(id) || seen.has(id)) return false;
+    if (!layer || visiting.has(id) || seen.has(id)) return false;
     visiting.add(id);
-    if (layer.childIds.length && layer.type !== 'canvas') return false;
-    for (const childId of layer.childIds) if (!visit(childId, id)) return false;
+    if (layer.childIds?.length && layer.type !== 'canvas') return false;
+    for (const childId of layerChildren(layer)) if (!visit(childId)) return false;
     visiting.delete(id);
     seen.add(id);
     return true;
   };
-  for (const root of roots) if (!visit(root, null)) return false;
+  for (const root of roots) if (!visit(root)) return false;
   return seen.size === layers.length;
 }
 
@@ -70,7 +77,7 @@ export function flattenRenderOrder(roots: string[], layers: TreeLayerLike[]): st
     const layer = byId.get(id);
     if (!layer) return;
     result.push(id);
-    for (const child of layer.childIds) visit(child);
+    for (const child of layerChildren(layer)) visit(child);
   };
   for (const root of roots) visit(root);
   return result;
@@ -78,13 +85,14 @@ export function flattenRenderOrder(roots: string[], layers: TreeLayerLike[]): st
 
 export function closestRasterOrRoot(layers: TreeLayerLike[], activeId: string): string | null {
   const layer = layers.find(layer => layer.id === activeId);
-  return layer?.type === 'canvas' ? layer.id : layer?.parentId ?? null;
+  return layer?.type === 'canvas' ? layer.id : scopeOwner(layers, activeId);
 }
 
 export function structuralLowerId(layer: TreeLayerLike, roots: string[], layers: TreeLayerLike[]): string | null {
-  if (layer.childIds.length) return null;
+  if (layerChildren(layer).length) return null;
   const byId = new Map(layers.map((item) => [item.id, item]));
-  const siblings = layer.parentId ? byId.get(layer.parentId)?.childIds ?? [] : roots;
+  const owner = scopeOwner(layers, layer.id);
+  const siblings = owner ? byId.get(owner)?.childIds ?? [] : roots;
   const index = siblings.indexOf(layer.id);
   if (index < 0) return null;
   return index > 0 ? siblings[index - 1] : null;

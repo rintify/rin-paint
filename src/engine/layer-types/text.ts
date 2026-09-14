@@ -1,3 +1,8 @@
+import { drawProjectedProcedure } from '../geometry/drawProjectedProcedure';
+import { layoutMatrixPixels, layoutBounds, readLayoutTransform } from '../geometry/layoutTransform';
+import { inverse, multiply } from '../geometry/homography';
+import { rasterToScope } from '../core/RasterCoordinates';
+import { paintProjectedDrawing } from '../raster/paintProjectedDrawing';
 import type { TextParams, TextState } from '../../model';
 import { createTextLayer } from '../layers';
 import { rotatedRectBounds } from '../shapes/snap';
@@ -11,11 +16,12 @@ function textOf(state: TextState): TextParams {
   return state.text;
 }
 
-export function textFrame(layer: TextLayer, textRenderer: TextRenderer): ObjectBounds {
+export function textFrame(layer: TextLayer, textRenderer: TextRenderer, ppi = 25.4): ObjectBounds {
   const canvas = textRenderer.get(layer.id);
-  const width = layer.state.text.width ?? Math.max(24, Number(canvas?.dataset.textWidth ?? 100));
-  const height = layer.state.text.height ?? Math.max(24, Number(canvas?.dataset.textHeight ?? 60));
-  return { x: layer.state.text.x, y: layer.state.text.y, w: width, h: height, width, height };
+  const text = scaleText(layer.state.text, ppi / 25.4);
+  const width = text.width ?? Math.max(24, Number(canvas?.dataset.textWidth ?? 100));
+  const height = text.height ?? Math.max(24, Number(canvas?.dataset.textHeight ?? 60));
+  return { x: text.x, y: text.y, w: width, h: height, width, height };
 }
 
 function scaleText(text: TextParams, factor: number): TextParams {
@@ -29,7 +35,7 @@ function scaleText(text: TextParams, factor: number): TextParams {
 }
 
 function cloneState(state: TextState): TextState {
-  return { text: structuredClone(state.text), snapEnabled: state.snapEnabled };
+  return { ...readLayoutTransform(state), text: structuredClone(state.text), snapEnabled: state.snapEnabled };
 }
 
 function asTextState(value: unknown): TextState | null {
@@ -37,6 +43,7 @@ function asTextState(value: unknown): TextState | null {
   const record = value as { text?: TextParams; snapEnabled?: unknown };
   if (!record.text) return null;
   return {
+    ...readLayoutTransform(value),
     text: {
       ...structuredClone(record.text),
       horizontalAlign: record.text.horizontalAlign ?? 'left',
@@ -47,12 +54,12 @@ function asTextState(value: unknown): TextState | null {
   };
 }
 
-function uniformTextStyle(text: TextParams, key: 'color' | 'fontId' | 'sizePt'): string | number | null {
+function uniformTextStyle(text: TextParams, key: 'color' | 'fontId' | 'sizeMm'): string | number | null {
   const values = [text.style[key], ...text.ranges.map(range => range[key])];
   return values.every(value => Object.is(value, values[0])) ? values[0] : null;
 }
 
-function rewriteTextStyle(text: TextParams, key: 'color' | 'fontId' | 'sizePt', value: string | number): TextParams {
+function rewriteTextStyle(text: TextParams, key: 'color' | 'fontId' | 'sizeMm', value: string | number): TextParams {
   return {
     ...structuredClone(text),
     style: { ...text.style, [key]: value },
@@ -75,7 +82,7 @@ export const textLayerType: LayerDefinition<'text'> = {
     initial: () => createTextLayer('tmp', {
       content: '', x: 0, y: 0, width: null, height: null, rotation: 0, direction: 'horizontal',
       horizontalAlign: 'left', verticalAlign: 'top', lineHeight: 1.5,
-      style: { fontId: 'sans', color: '#000000', sizePt: 12 }, ranges: [], ruby: [],
+      style: { fontId: 'sans', color: '#000000', sizeMm: 12 * 25.4 / 72 }, ranges: [], ruby: [],
     }).state,
     clone: cloneState,
     normalize: state => asTextState(state) ?? cloneState(state),
@@ -89,26 +96,24 @@ export const textLayerType: LayerDefinition<'text'> = {
   codec: {
     encode: cloneState,
     decode: asTextState,
-    scaleStored(state, env) {
-      const decoded = asTextState(state);
-      return decoded ? { ...decoded, text: scaleText(decoded.text, env.factor) } : state;
-    },
+
   },
   renderer: {
     draw(ctx, layer, env) {
       ctx.globalAlpha = layer.opacity;
       ctx.globalCompositeOperation = layer.blend;
-      env.textRenderer.draw(ctx, layer.id, layer.state.text);
+      const text = scaleText(layer.state.text, env.ppi / 25.4);
+      drawProjectedProcedure(ctx, rotatedRectBounds(textFrame(layer, env.textRenderer, env.ppi), text.rotation ?? 0), layoutMatrixPixels(layer.state, env.ppi), source => env.textRenderer.draw(source, layer.id, text));
     },
     drawMask(ctx, layer, env) {
-      env.textRenderer.draw(ctx, layer.id, layer.state.text);
+      const text = scaleText(layer.state.text, env.ppi / 25.4);
+      drawProjectedProcedure(ctx, rotatedRectBounds(textFrame(layer, env.textRenderer, env.ppi), text.rotation ?? 0), layoutMatrixPixels(layer.state, env.ppi), source => env.textRenderer.draw(source, layer.id, text));
     },
     bakeOnto(target, layer, env) {
-      target.runtime.ctx.save();
-      target.runtime.ctx.globalAlpha = layer.opacity;
-      target.runtime.ctx.globalCompositeOperation = layer.blend;
-      env.textRenderer.draw(target.runtime.ctx, layer.id, layer.state.text);
-      target.runtime.ctx.restore();
+      const matrix = inverse(rasterToScope(target, env.ppi)); if (!matrix) return;
+      const text = scaleText(layer.state.text, env.ppi / 25.4);
+      const bounds = rotatedRectBounds(textFrame(layer, env.textRenderer, env.ppi), text.rotation ?? 0);
+      paintProjectedDrawing(target.runtime.surface, [bounds], multiply(matrix, layoutMatrixPixels(layer.state, env.ppi)), ctx => env.textRenderer.draw(ctx, layer.id, text), layer.opacity, layer.blend);
     },
     contentCanvas: (layer, env) => env.textRenderer.get(layer.id),
   },
@@ -129,25 +134,25 @@ export const textLayerType: LayerDefinition<'text'> = {
       },
       {
         id: 'text.x', semanticId: 'frame.leftMm', groupId: 'frame', label: 'X',
-        editor: { kind: 'number', unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
+        editor: { kind: 'number', unit: { kind: 'mm' } }, surfaces: SURFACES,
         read: state => textOf(state).x,
         write: (state, value) => ({ ...cloneState(state), text: { ...state.text, x: Number(value) } }),
       },
       {
         id: 'text.y', semanticId: 'frame.topMm', groupId: 'frame', label: 'Y',
-        editor: { kind: 'number', unit: { kind: 'canvas-mm' } }, surfaces: SURFACES,
+        editor: { kind: 'number', unit: { kind: 'mm' } }, surfaces: SURFACES,
         read: state => textOf(state).y,
         write: (state, value) => ({ ...cloneState(state), text: { ...state.text, y: Number(value) } }),
       },
       {
         id: 'text.width', semanticId: 'frame.widthMm', groupId: 'frame', label: '枠幅',
-        editor: { kind: 'number', unit: { kind: 'canvas-mm' }, nullable: true }, surfaces: SURFACES,
+        editor: { kind: 'number', unit: { kind: 'mm' }, nullable: true }, surfaces: SURFACES,
         read: state => textOf(state).width,
         write: (state, value) => ({ ...cloneState(state), text: { ...state.text, width: value === null ? null : Number(value) } }),
       },
       {
         id: 'text.height', semanticId: 'frame.heightMm', groupId: 'frame', label: '枠高さ',
-        editor: { kind: 'number', unit: { kind: 'canvas-mm' }, nullable: true }, surfaces: SURFACES,
+        editor: { kind: 'number', unit: { kind: 'mm' }, nullable: true }, surfaces: SURFACES,
         read: state => textOf(state).height,
         write: (state, value) => ({ ...cloneState(state), text: { ...state.text, height: value === null ? null : Number(value) } }),
       },
@@ -174,10 +179,11 @@ export const textLayerType: LayerDefinition<'text'> = {
           : cloneState(state),
       },
       {
-        id: 'fontSizePt', semanticId: 'text.fontSizePt', groupId: 'text', label: 'サイズ',
+        id: 'fontSizePt', semanticId: 'text.fontSizeMm',
+        canonical: {toCanonical: value => typeof value === 'number' ? value * 25.4 / 72 : value, fromCanonical: value => typeof value === 'number' ? value * 72 / 25.4 : value}, groupId: 'text', label: 'サイズ',
         editor: { kind: 'number', min: 1, max: 512, unit: { kind: 'pt' } }, surfaces: MULTI,
-        read: state => uniformTextStyle(textOf(state), 'sizePt'),
-        write: (state, value) => ({ ...cloneState(state), text: rewriteTextStyle(state.text, 'sizePt', Number(value)) }),
+        read: state => {const value = uniformTextStyle(textOf(state), 'sizeMm'); return typeof value === 'number' ? value * 72 / 25.4 : value;},
+        write: (state, value) => ({ ...cloneState(state), text: rewriteTextStyle(state.text, 'sizeMm', Number(value) * 25.4 / 72) }),
       },
       {
         id: 'text.direction', semanticId: 'text.direction', groupId: 'text', label: '文字全体の方向',
@@ -211,8 +217,9 @@ export const textLayerType: LayerDefinition<'text'> = {
   capabilities: {
     objectTransform: {
       bounds(layer, env) {
-        const bounds = textFrame(layer, env.textRenderer);
-        return { ...rotatedRectBounds(bounds, layer.state.text.rotation ?? 0), width: bounds.width, height: bounds.height };
+        const bounds = textFrame(layer, env.textRenderer, env.ppi);
+        const projected = layoutBounds(layer.state, rotatedRectBounds(bounds, layer.state.text.rotation ?? 0), env.ppi);
+        return projected ? {...projected, width: bounds.width, height: bounds.height} : null;
       },
       apply(layer, context) {
         const text = context.before.text;
@@ -228,8 +235,8 @@ export const textLayerType: LayerDefinition<'text'> = {
           width: text.width === null ? null : nextWidth,
           height: text.height === null ? null : nextHeight,
           rotation: (text.rotation ?? 0) + angle,
-          style: { ...text.style, sizePt: text.style.sizePt * scale },
-          ranges: text.ranges.map(range => ({ ...range, sizePt: range.sizePt * scale })),
+          style: { ...text.style, sizeMm: text.style.sizeMm * scale },
+          ranges: text.ranges.map(range => ({ ...range, sizeMm: range.sizeMm * scale })),
         };
       },
     },
@@ -238,7 +245,7 @@ export const textLayerType: LayerDefinition<'text'> = {
     },
     renderLifecycle: {
       prepare(layer, env, onReady) {
-        env.textRenderer.request(layer.id, layer.state.text, env.ppi, onReady ?? (() => undefined));
+        env.textRenderer.request(layer.id, scaleText(layer.state.text, env.ppi / 25.4), env.ppi, onReady ?? (() => undefined));
       },
     },
   },

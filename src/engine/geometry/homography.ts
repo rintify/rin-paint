@@ -15,7 +15,10 @@ export function inverse(m: Homography): Homography | null {
   const [a, b, c, d, e, f, g, h, i] = m;
   const cofactors = [e*i-f*h, c*h-b*i, b*f-c*e, f*g-d*i, a*i-c*g, c*d-a*f, d*h-e*g, b*g-a*h, a*e-b*d];
   const det = a * cofactors[0] + b * cofactors[3] + c * cofactors[6];
-  if (!Number.isFinite(det) || Math.abs(det) < EPSILON) return null;
+  const determinantScale = Math.abs(a*cofactors[0])+Math.abs(b*cofactors[3])+Math.abs(c*cofactors[6]);
+  // A small uniform scale is invertible. Reject cancellation relative to the determinant terms,
+  // rather than rejecting valid transforms because their determinant has small physical units.
+  if (!Number.isFinite(det) || Math.abs(det) <= Number.EPSILON*8*determinantScale) return null;
   const result = cofactors.map(v => v / det);
   return result.every(Number.isFinite) ? result as unknown as Homography : null;
 }
@@ -104,4 +107,10 @@ export function fromQuads(source: readonly PointMm[], target: readonly PointMm[]
   const normalized = [...rows.map(row => row[8]), 1] as unknown as Homography;
   const result = multiply(inverse(dst.matrix)!, multiply(normalized, src.matrix));
   return inverse(result) ? result : null;
+}
+
+/** CSS uses column-major 4×4 matrices; z=0 projects exactly like this 3×3. */
+export function cssMatrix(matrix: Homography): string {
+  const [a,b,c,d,e,f,g,h,i] = matrix;
+  return `matrix3d(${[a,d,0,g,b,e,0,h,0,0,1,0,c,f,0,i].join(',')})`;
 }

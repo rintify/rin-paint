@@ -1,7 +1,7 @@
 export interface TextStyle {
   fontId: string;
   color: string;
-  sizePt: number;
+  sizeMm: number;
 }
 
 export interface TextRange extends TextStyle {

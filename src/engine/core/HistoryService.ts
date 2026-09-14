@@ -1,11 +1,13 @@
+import { recordLocation } from '../layer-types/scopes';
+import { parameterById } from '../parameters/host';
+import { toCanonical, fromCanonical } from '../parameters/codec';
 import { rectValid, type DirtyRect } from '../brush';
 import { HISTORY_PRUNE_DEFAULT } from '../history/constants';
 import {
   HistoryTree,
   type Op,
 } from '../history/historyTree';
-import { applyTiles, extractTiles } from '../history/tilePatch';
-import { objectTransformProps } from '../layer-types/registry';
+import { applyTiles, extractSparseTiles } from '../history/tilePatch';
 import type { RasterLayer } from '../layers';
 import type { PaintEngine, SelectedObjectTransform } from '../PaintEngine';
 import { useStore } from '../../state/store';
@@ -15,6 +17,17 @@ export class HistoryService {
   history = new HistoryTree();
 
   constructor(private engine: PaintEngine) {}
+
+  normalize(op: Op): Op {
+    if (op.kind === 'batch') return {...op, ops: op.ops.map(item => this.normalize(item) as typeof item)};
+    const eng = this.engine;
+    if (op.kind === 'layerProps' && op.unit !== 'mm') return {...op, unit: 'mm'};
+    if (op.kind === 'layerParameter' && op.unit !== 'mm') {
+      const layer = eng.layerById(op.layerId), parameter = layer && parameterById(layer, op.parameterId);
+      if (parameter) return {...op, unit: 'mm', before: toCanonical(parameter, op.before, 25.4), after: toCanonical(parameter, op.after, 25.4)};
+    }
+    return op;
+  }
 
   async undo(): Promise<void> {
     const eng = this.engine;
@@ -36,7 +49,7 @@ export class HistoryService {
     } finally {
       eng.setBusy(false);
     }
-    this.afterHistoryNav();
+    await this.afterHistoryNav();
   }
 
   async redo(childIndex?: number): Promise<void> {
@@ -58,12 +71,13 @@ export class HistoryService {
     } finally {
       eng.setBusy(false);
     }
-    this.afterHistoryNav();
+    await this.afterHistoryNav();
   }
 
-  afterHistoryNav(): void {
+  async afterHistoryNav(): Promise<void> {
     const eng = this.engine;
     eng.links.reconcileAll();
+    await eng.canvases.reconcile();
     eng.layerService.fixActive();
     eng.syncTextRendersPublic();
     eng.requestRender();
@@ -80,6 +94,9 @@ export class HistoryService {
       return;
     }
     switch (op.kind) {
+      case 'layerStacks':
+        eng.stacks.restore(dir === 'undo' ? op.before : op.after);
+        break;
       case 'pageChange': {
         await eng.restorePageSnapshotPublic(dir === 'undo' ? op.before : op.after);
         break;
@@ -100,7 +117,7 @@ export class HistoryService {
       case 'layerRemove': {
         if (dir === 'undo') {
           const entries = op.snapshots.map((snapshot) => ({
-            location: snapshot.id === op.snapshots[0].id ? op.location : { parentId: snapshot.common.parentId, index: 0 },
+            location: snapshot.id === op.snapshots[0].id ? op.location : recordLocation(op.snapshots, snapshot.id),
             snapshot,
           }));
           await ls.restoreEntries(entries);
@@ -115,11 +132,16 @@ export class HistoryService {
       }
       case 'layerProps': {
         const l = ls.byId(op.layerId);
-        if (l) ls.assignProps(l, dir === 'undo' ? op.before : op.after);
+        if (l) {
+          const props = dir === 'undo' ? op.before : op.after;
+          ls.assignProps(l, props);
+        }
         break;
       }
       case 'layerParameter': {
-        eng.parameters.applyHistory(op, dir === 'undo' ? op.before : op.after);
+        const layer = ls.byId(op.layerId), parameter = layer && parameterById(layer, op.parameterId);
+        const value = dir === 'undo' ? op.before : op.after;
+        eng.parameters.applyHistory(op, op.unit === 'mm' && parameter ? fromCanonical(parameter, value, 25.4) : value);
         break;
       }
       case 'layerLink': {
@@ -178,7 +200,7 @@ export class HistoryService {
   }
 
   commitRasterBatch(
-    entries: { layer: RasterLayer; before: HTMLCanvasElement; rect: DirtyRect }[],
+    entries: { layer: RasterLayer; before: import("../raster/SparseRaster").SparseRasterSnapshot; rect: DirtyRect }[],
     label: string,
     objects: SelectedObjectTransform[] = [],
   ): void {
@@ -187,24 +209,23 @@ export class HistoryService {
     const ready: Promise<void>[] = [];
     for (const entry of entries) {
       if (!rectValid(entry.rect)) continue;
-      const before = entry.before.getContext('2d', { willReadFrequently: true })!;
-      const extraction = extractTiles(before, entry.layer.runtime.ctx, entry.rect, eng.artboard.w, eng.artboard.h);
-      if (extraction.tileCount === 0) continue;
+      const extraction = extractSparseTiles(entry.before, entry.layer.runtime.surface.snapshot());
+      if (extraction.tileCount === 0) {
+        if (entry.layer.runtime.surface.contentDetached) {entry.layer.runtime.surface.restore(entry.before); eng.links.resolveLayer(entry.layer);}
+        continue;
+      }
+      const contentOp = eng.links.detachRasterContent(entry.layer, entry.before);
+      if (contentOp) {
+        operations.push(contentOp);
+        eng.layerService.bumpLayer(entry.layer.id, entry.rect);
+        continue;
+      }
       const rasterOp: Extract<Op, { kind: 'raster' }> = { kind: 'raster', layerId: entry.layer.id, tiles: [] };
       operations.push(rasterOp);
       ready.push(extraction.ready.then((tiles) => { rasterOp.tiles = tiles; }));
       eng.layerService.bumpLayer(entry.layer.id, entry.rect);
     }
-    for (const entry of objects) {
-      const layer = eng.layerService.byId(entry.id);
-      if (!layer) continue;
-      const after = objectTransformProps(layer);
-      const propsOp = { kind: 'layerProps' as const, layerId: entry.id, before: entry.before, after };
-      operations.push(propsOp);
-      const linkOp = eng.layerService.linkOpForUserChange(layer, entry.before, after);
-      if (linkOp) operations.push(linkOp);
-      eng.links.propagateFrom({ pageId: eng.pages.activePageId, layerId: entry.id });
-    }
+    operations.push(...eng.objects.commitOps(objects));
     if (!operations.length) return;
     const node = this.history.push(operations.length === 1 ? operations[0] : { kind: 'batch', ops: operations }, label);
     node.ready = Promise.all(ready).then(() => undefined);
@@ -215,8 +236,19 @@ export class HistoryService {
   commitRasterEdit(layer: RasterLayer, rect: DirtyRect, label: string): void {
     const eng = this.engine;
     if (!rectValid(rect)) return;
-    const extraction = extractTiles(eng.compositor.scratchCtx, layer.runtime.ctx, rect, eng.artboard.w, eng.artboard.h);
-    if (extraction.tileCount === 0) return;
+    const before = eng.compositor.rasterBefore;
+    if (!before) return;
+    const extraction = extractSparseTiles(before, layer.runtime.surface.snapshot());
+    if (extraction.tileCount === 0) {
+      if (layer.runtime.surface.contentDetached) {layer.runtime.surface.restore(before); eng.links.resolveLayer(layer);}
+      return;
+    }
+    const contentOp = eng.links.detachRasterContent(layer, before);
+    if (contentOp) {
+      this.history.push(contentOp, label);
+      eng.layerService.bumpLayer(layer.id, rect); eng.committed(false);
+      return;
+    }
     const op: Extract<Op, { kind: 'raster' }> = { kind: 'raster', layerId: layer.id, tiles: [] };
     const node = this.history.push(op, label);
     node.ready = extraction.ready.then((tiles) => { op.tiles = tiles; });

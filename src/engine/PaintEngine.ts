@@ -1,3 +1,9 @@
+import { ScopeTransforms } from './core/ScopeTransforms';
+import { transformBounds } from './geometry/homography';
+import { CanvasLinkService } from './core/CanvasLinkService';
+import { BinEditorService } from './core/BinEditorService';
+import { TransformService, type TransformTarget } from './core/TransformService';
+import { StackService } from './core/StackService';
 import { useStore } from '../state/store';
 import { Artboard } from './artboard';
 import { EngineEvents } from './events';
@@ -57,7 +63,7 @@ import { mmToPx } from './units';
 import { imageToolBoxPx } from '../tools/image/settings';
 import { canvasFromImageFile } from './image/load';
 
-export interface SelectedObjectTransform { id: string; before: LayerProps; width?: number; height?: number }
+export interface SelectedObjectTransform extends TransformTarget { before: LayerProps; width?: number; height?: number; created?: boolean }
 
 export class PaintEngine {
   readonly artboard = new Artboard();
@@ -65,6 +71,10 @@ export class PaintEngine {
 
   /** @internal */ readonly compositor = new Compositor(this);
   /** @internal */ readonly layerPicker = new LayerPicker(this);
+  readonly canvases = new CanvasLinkService(this);
+  readonly bins = new BinEditorService(this);
+  readonly stacks = new StackService(this);
+  readonly transforms = new TransformService(this);
   /** @internal */ readonly layerService = new LayerService(this);
   /** @internal */ readonly historyService = new HistoryService(this);
   /** @internal */ readonly input = new InputController(this);
@@ -98,7 +108,9 @@ export class PaintEngine {
   };
 
   /** @internal — tests cast to HistoryTree */
-  get history(): HistoryTree { return this.historyService.history; }
+  get history(): HistoryTree {
+    const tree=this.historyService.history;tree.decorate=op=>this.stacks.capture(this.canvases.capture(this.historyService.normalize(op)));return tree;
+  }
   set history(value: HistoryTree) { this.historyService.history = value; }
 
   private toolInstance(kind: ToolKind): Tool {
@@ -164,7 +176,7 @@ export class PaintEngine {
   /** @internal */ recorderPublic(): TimelapseRecorder { return this.recorder; }
   /** @internal */ setLastViewState(view: ViewState): void { this.lastViewState = view; }
   /** @internal */ hasShapeEdit(): boolean { return this.shapeEdit.hasEdit(); }
-  /** @internal */ allLayers() { return this.layerService.layers; }
+  /** @internal */ allLayers() { return this.layerService.layers.map(layer=>this.links.resolveLayer(layer)); }
   /** @internal */ layerById(id: string) { return this.layerService.byId(id); }
   /** @internal */ getMaskRevision(id: string): number { return this.layerService.maskVersions.get(id) ?? 0; }
   /** @internal */ getRenderRevision(id: string): number { return this.layerService.versions.get(id) ?? 0; }
@@ -202,10 +214,12 @@ export class PaintEngine {
   /** @internal */ drawLoupeIfAny(ctx: CanvasRenderingContext2D): void { this.input.drawLoupeIfAny(ctx); }
 
   committed(requestFullRender = true): void {
+    this.links.reconcileAll();
+    void this.canvases.reconcile();
     this.compositor.syncTextRenders();
     if (requestFullRender) this.requestRender();
     this.syncStore();
-    this.recorder.schedule();
+    if (!this.bins.activeId) this.recorder.schedule();
     this.scheduleSave();
     this.scheduleStorageRefresh();
   }
@@ -248,7 +262,7 @@ export class PaintEngine {
   requestRender(): void { this.compositor.requestRender(); }
   requestOverlayRender(): void { this.compositor.requestOverlayRender(); }
   ensureComposited(): void { this.compositor.ensureComposited(); }
-  async readyToRender(): Promise<void> { await this.compositor.readyToRender(); }
+  async readyToRender(): Promise<void> { await this.canvases.flush(); await this.links.flush(); await this.compositor.readyToRender(); }
   compositeCanvas(): HTMLCanvasElement | null { return this.compositor.compositeCanvas(); }
   uiScale(): number { return 1 / this.view.displayScale(); }
 
@@ -323,7 +337,7 @@ export class PaintEngine {
   commitObjectGroup(entries: SelectedObjectTransform[]): void { this.objects.commitObjectGroup(entries); }
   restoreObjectGroup(entries: SelectedObjectTransform[]): void { this.objects.restoreObjectGroup(entries); }
 
-  commitRasterBatch(entries: { layer: RasterLayer; before: HTMLCanvasElement; rect: DirtyRect }[], label: string, objects: SelectedObjectTransform[] = []): void {
+  commitRasterBatch(entries: { layer: RasterLayer; before: import("./raster/SparseRaster").SparseRasterSnapshot; rect: DirtyRect }[], label: string, objects: SelectedObjectTransform[] = []): void {
     this.historyService.commitRasterBatch(entries, label, objects);
   }
   captureBefore(layer: RasterLayer): void { this.compositor.captureBefore(layer); }
@@ -336,7 +350,7 @@ export class PaintEngine {
   async redo(childIndex?: number): Promise<void> { return this.historyService.redo(childIndex); }
   pruneHistory(limit = 10): number { return this.historyService.pruneHistory(limit); }
 
-  isTimelapseEnabled(): boolean { return useStore.getState().timelapseEnabled; }
+  isTimelapseEnabled(): boolean { return !this.bins.activeId && useStore.getState().timelapseEnabled; }
   setTimelapseEnabled(enabled: boolean): void {
     const st = useStore.getState();
     if (st.timelapseEnabled === enabled) return;
@@ -352,10 +366,12 @@ export class PaintEngine {
     return layerHandler(layer).capabilities.objectTransform?.bounds(layer as never, this.compositor.measureEnv()) ?? null;
   }
   visibleObjectBounds(excludeId: string): { x: number; y: number; w: number; h: number }[] {
+    const transforms = new ScopeTransforms(this.getRootLayerIds(), this.allLayers(), this.getPageSpec().ppi);
     return this.layerService.layers.flatMap(layer => {
-      if (layer.parentId !== this.layerService.byId(excludeId)?.parentId || layer.id === excludeId || !layer.visible || !layerHandler(layer).capabilities.objectTransform) return [];
+      if (this.layerService.scopeOf(layer.id) !== this.layerService.scopeOf(excludeId) || layer.id === excludeId || !layer.visible || !layerHandler(layer).capabilities.objectTransform) return [];
       const bounds = this.objectBounds(layer.id);
-      return bounds ? [bounds] : [];
+      const displayed = bounds && transformBounds(transforms.layerToPage(layer.id), bounds);
+      return displayed ? [displayed] : [];
     });
   }
   bumpLayer(id: string, rect?: DirtyRect): void { this.layerService.bumpLayer(id, rect); }
@@ -416,8 +432,12 @@ export class PaintEngine {
   unlinkLayerParameters(targetIds: string[], semanticId: string): void { this.links.unlinkParameters(targetIds, semanticId); }
   async relinkLayerParameter(targetId: string, semanticId: string): Promise<void> { return this.links.relink(targetId, semanticId); }
   async relinkAllLayerParameters(targetId: string): Promise<void> { return this.links.relink(targetId); }
+  get documentKey(): import('../model/document/types').DocumentKey {
+    return this.bins.activeId ? {kind: 'bin-item', id: this.bins.activeId} : {kind: 'page', id: this.pages.activePageId};
+  }
   async focusLayerReference(address: LayerAddress): Promise<void> {
-    if (address.pageId !== this.pages.activePageId) await this.pages.switchPage(address.pageId);
+    if (address.document.kind === 'bin-item') await this.bins.open(address.document.id);
+    else if (address.document.id !== this.pages.activePageId || this.bins.activeId) await this.pages.switchPage(address.document.id);
     window.dispatchEvent(new CustomEvent<string>('rin-paint:focus-hierarchy-row', { detail: address.layerId }));
   }
 
@@ -631,6 +651,7 @@ export class PaintEngine {
   syncStore(): void {
     const ls = this.layerService;
       const metas: LayerMeta[] = ls.layers.map((l) => {
+      this.links.resolveLayer(l);
       const linkInfo = this.links.infoFor(l.id);
       return ({
       state: layerHandler(l).state.clone(l.state as never),
@@ -640,8 +661,8 @@ export class PaintEngine {
       opacity: l.opacity,
       blend: l.blend,
       visible: l.visible,
-      parentId: l.parentId,
-      childIds: [...l.childIds],
+      parentId: ls.scopeOf(l.id),
+      childIds: l.type === 'canvas' ? [...l.childIds] : [],
       ...(l.parameterLink ? { parameterLink: structuredClone(l.parameterLink) } : { parameterLink: undefined }),
       linkSource: linkInfo.source,
       directLinkTargets: linkInfo.targets,
@@ -665,6 +686,7 @@ export class PaintEngine {
     useStore.getState().set({
       layers: metas,
       rootLayerIds: ls.layerRootIds(),
+      layerStacks: this.stacks.snapshot(),
       activeLayerId: ls.activeLayerId,
       selectedLayerIds,
       multiSelectMode,

@@ -13,9 +13,8 @@ export interface LayerCommon {
   opacity: number;
   blend: BlendMode;
   visible: boolean;
-  parentId: string | null;
-  childIds: string[];
   parameterLink?: LayerParameterLink;
+  linkRecovery?: {link: LayerParameterLink; signature: string};
 }
 
 export interface LayerCommonRecord {
@@ -23,12 +22,11 @@ export interface LayerCommonRecord {
   opacity: number;
   blend: BlendMode;
   visible: boolean;
-  parentId: string | null;
-  childIds: string[];
   parameterLink?: LayerParameterLink;
+  linkRecovery?: {link: LayerParameterLink; signature: string};
 }
 
-export type RasterState = Record<string, never>;
+export interface RasterState { matrix: Homography }
 
 export interface CanvasState { propagateTransforms: boolean }
 export interface TransformState { matrix: Homography }
@@ -39,6 +37,7 @@ export interface AdjustState {
 }
 
 export interface OutlineState {
+  matrix?: Homography;
   outline: OutlineParams;
 }
 
@@ -47,31 +46,25 @@ export interface ClipState {
 }
 
 export interface ShapeState {
+  matrix?: Homography;
   shape: ShapeParams;
   snapEnabled: boolean;
 }
 
 export interface TextState {
+  matrix?: Homography;
   text: TextParams;
   snapEnabled: boolean;
 }
 
 export interface ImageState {
+  matrix?: Homography;
   placement: ImageParams;
   snapEnabled: boolean;
   constrainAspect: boolean;
 }
 
-export interface CanvasRuntime {
-  canvas: HTMLCanvasElement;
-  ctx: CanvasRenderingContext2D;
-  /** Empty raster layers can postpone their artboard-sized allocation. */
-  deferred?: boolean;
-  logicalWidth?: number;
-  logicalHeight?: number;
-  /** null means known empty; undefined means unknown/full for legacy content. */
-  contentBounds?: { x: number; y: number; w: number; h: number } | null;
-}
+export interface ImageRuntime {asset: import('../engine/image/ImageAsset').ImageAsset}
 
 export interface KindSpec<S, R> {
   state: S;
@@ -81,13 +74,13 @@ export interface KindSpec<S, R> {
 export interface LayerKindMap {
   canvas: KindSpec<CanvasState, undefined>;
   transform: KindSpec<TransformState, undefined>;
-  raster: KindSpec<RasterState, CanvasRuntime>;
+  raster: KindSpec<RasterState, {surface: import('../engine/raster/RasterSurface').RasterSurface}>;
   adjust: KindSpec<AdjustState, undefined>;
   outline: KindSpec<OutlineState, undefined>;
   clip: KindSpec<ClipState, undefined>;
   shape: KindSpec<ShapeState, undefined>;
   text: KindSpec<TextState, undefined>;
-  image: KindSpec<ImageState, CanvasRuntime>;
+  image: KindSpec<ImageState, ImageRuntime>;
 }
 
 export type LayerType = keyof LayerKindMap;

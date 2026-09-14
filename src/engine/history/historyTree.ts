@@ -1,3 +1,5 @@
+import { RasterSurface } from '../raster/RasterSurface';
+import type { LayerStack } from '../../model/layerStack';
 import type { LayerAddress, LayerParameterLink, PageSpec } from '../../model';
 import type { LayerProps, LayerSnapshot } from '../layer-types/definition';
 import { HISTORY_VERSION } from '../persistence/version';
@@ -8,6 +10,7 @@ import type { ParameterValue } from '../parameters/types';
 export type { LayerProps, LayerSnapshot };
 
 export interface LayerParameterOp {
+  unit?: 'mm';
   kind: 'layerParameter';
   layerId: string;
   parameterId: string;
@@ -73,13 +76,16 @@ export interface LayerContentOp {
   after: LayerSnapshot;
 }
 
+export interface LayerStacksOp { kind: 'layerStacks'; before: LayerStack[]; after: LayerStack[] }
+
 export type AtomicOp =
+  | LayerStacksOp
   | { kind: 'pageChange'; before: PageSnapshot; after: PageSnapshot }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
   | { kind: 'layerAdd'; location: LayerLocation; snapshot: LayerSnapshot }
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: LayerSnapshot[] }
   | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
-  | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
+  | { kind: 'layerProps'; unit?: 'mm'; layerId: string; before: LayerProps; after: LayerProps }
   | LayerParameterOp
   | LayerLinkOp
   | LayerReplaceOp
@@ -100,12 +106,13 @@ export interface HistoryNode {
   ready?: Promise<void>;
 }
 
-export interface PersistedLayerSnapshot extends Omit<LayerSnapshot, 'canvas'> {
+export interface PersistedLayerSnapshot extends Omit<LayerSnapshot, 'canvas' | 'raster'> {
   content?: Blob;
 }
 
 export interface PageSnapshot {
   spec: PageSpec;
+  layerStacks?: LayerStack[];
   layers: LayerSnapshot[];
   roots: string[];
   activeId: string;
@@ -136,12 +143,13 @@ export interface PersistedLayerReplaceOp extends Omit<LayerReplaceOp, 'before' |
 }
 
 export type PersistedAtomicOp =
+  | LayerStacksOp
   | { kind: 'pageChange'; before: PersistedPageSnapshot; after: PersistedPageSnapshot }
   | { kind: 'raster'; layerId: string; tiles: TilePatch[] }
   | { kind: 'layerAdd'; location: LayerLocation; snapshot: PersistedLayerSnapshot }
   | { kind: 'layerRemove'; location: LayerLocation; snapshots: PersistedLayerSnapshot[] }
   | { kind: 'layerMove'; layerId: string; from: LayerLocation; to: LayerLocation }
-  | { kind: 'layerProps'; layerId: string; before: LayerProps; after: LayerProps }
+  | { kind: 'layerProps'; unit?: 'mm'; layerId: string; before: LayerProps; after: LayerProps }
   | LayerParameterOp
   | LayerLinkOp
   | PersistedLayerReplaceOp
@@ -169,6 +177,7 @@ export interface PersistedHistory {
  * 新しい子ブランチが生えて古いブランチもそのまま残る。
  */
 export class HistoryTree {
+  decorate?: (op:Op)=>Op;
   root: HistoryNode;
   current: HistoryNode;
   private seq = 0;
@@ -186,9 +195,7 @@ export class HistoryTree {
   }
 
   /** IndexedDB に保存できる循環参照なしの形式へ変換する。 */
-  async serialize(
-    canvasToBlob: (canvas: HTMLCanvasElement) => Promise<Blob>,
-  ): Promise<PersistedHistory> {
+  async serialize(): Promise<PersistedHistory> {
     const currentId = this.current.id;
     const sourceNodes: HistoryNode[] = [];
     const visit = (node: HistoryNode) => {
@@ -207,10 +214,10 @@ export class HistoryTree {
     }));
 
     const snapshot = async (value: LayerSnapshot): Promise<PersistedLayerSnapshot> => {
-      const { canvas, ...rest } = value;
+      const { raster, image, ...rest } = value;
       return {
         ...rest,
-        content: value.content ?? (canvas ? await canvasToBlob(canvas) : undefined),
+        content: value.content ?? (image ? await image.encode() : raster ? await new RasterSurface(raster.intrinsicPpi, raster).encode() : undefined),
       };
     };
     const persistAtomic = async (op: AtomicOp): Promise<PersistedAtomicOp> => {
@@ -233,6 +240,7 @@ export class HistoryTree {
           return { ...op, before: { ...op.before }, after: { ...op.after } };
         case 'layerParameter':
           return { ...op };
+        case 'layerStacks':
         case 'layerLink':
           return structuredClone(op);
         case 'layerReplace': {
@@ -374,6 +382,7 @@ export class HistoryTree {
   }
 
   push(op: Op, label: string): HistoryNode {
+    op=this.decorate?.(op)??op;
     const node: HistoryNode = {
       id: this.seq++,
       label,

@@ -1,6 +1,7 @@
+import { recordLocation } from '../layer-types/scopes';
 import { useStore } from '../../state/store';
 import { type Op, type LayerSnapshot } from '../history/historyTree';
-import { savedLayerFrom, scaleStoredLayer, remapRecordIds } from '../layer-types/registry';
+import { savedLayerFrom, remapRecordIds } from '../layer-types/registry';
 import {
   loadClipboard,
   saveClipboard,
@@ -23,19 +24,19 @@ export class ClipboardService {
     ids = ids.filter(id => !!ls.byId(id));
     const chosen = new Set(ids);
     const roots = ids.filter(id => {
-      let parent = ls.byId(id)?.parentId ?? null;
-      while (parent) { if (chosen.has(parent)) return false; parent = ls.byId(parent)?.parentId ?? null; }
+      let parent = ls.scopeOf(id);
+      while (parent) { if (chosen.has(parent)) return false; parent = ls.scopeOf(parent); }
       return true;
     });
     const allIds = new Set(roots.flatMap(id => ls.descendantIds(id)));
     const layers: SavedLayer[] = await Promise.all(
       ls.layers
         .filter(layer => allIds.has(layer.id))
-        .map(layer => savedLayerFrom(layer, { artboard: eng.artboard })),
+        .map(layer => savedLayerFrom(layer, { artboard: eng.artboard, ppi: eng.getPageSpec().ppi })),
     );
     const clipboard: LayerClipboard = {
       version: CLIPBOARD_VERSION,
-      sourcePageId: eng.pages.activePageId,
+      sourceDocument: eng.documentKey,
       sourcePageIndex: Math.max(0, eng.pages.pageOrder.indexOf(eng.pages.activePageId)),
       sourcePpi: eng.getPageSpec().ppi,
       rootIds: roots,
@@ -51,38 +52,42 @@ export class ClipboardService {
     if (eng.isBusy()) return;
     const clipboard = await loadClipboard();
     if (!clipboard?.layers.length) return;
-    const factor = eng.getPageSpec().ppi / clipboard.sourcePpi;
+    const active = ls.byId(ls.activeLayerId);
+    const destinationScope = active?.type === 'canvas' ? active.id : ls.scopeOf(ls.activeLayerId);
+    if (!ls.canAddToScope(destinationScope)) return;
     const ids = new Map<string, string>(clipboard.layers.map(layer => [layer.id, String(crypto.randomUUID())]));
     const snapshots: LayerSnapshot[] = [];
     for (const source of clipboard.layers) {
       const snapshot: LayerSnapshot = structuredClone({ ...source, content: source.content });
       remapRecordIds(snapshot, id => ids.get(id));
       snapshot.common.parameterLink = undefined;
-      await scaleStoredLayer(snapshot, { artboard: eng.artboard, factor });
       snapshots.push(snapshot);
     }
-    const primaryLocation = ls.locationOf(ls.activeLayerId) ?? { parentId: null, index: ls.rootLayerIds.length - 1 };
+    const primaryLocation = active?.type === 'canvas' ? {parentId: active.id, index: active.childIds.length - 1}
+      : ls.locationOf(ls.activeLayerId) ?? { parentId: null, index: ls.rootLayerIds.length - 1 };
     const rootIds = clipboard.rootIds.map(id => ids.get(id)).filter((id): id is string => typeof id === 'string');
     const ops: Extract<Op, { kind: 'batch' }>['ops'] = [];
     const sourceById = new Map(clipboard.layers.map(layer => [layer.id, layer]));
     const sourceIdByNew = new Map([...ids].map(([oldId, newId]) => [newId, oldId]));
     const pending = [...snapshots];
     while (pending.length) {
-      const index = pending.findIndex(snapshot => !snapshot.common.parentId || !!ls.byId(snapshot.common.parentId));
+      const index = pending.findIndex(snapshot => {
+        const parent = recordLocation(clipboard.layers, sourceIdByNew.get(snapshot.id)!).parentId;
+        return !parent || !!ls.byId(ids.get(parent)!);
+      });
       if (index < 0) break;
       const [snapshot] = pending.splice(index, 1);
       const source = sourceById.get(sourceIdByNew.get(snapshot.id)!)!;
       const isRoot = rootIds.includes(snapshot.id);
       const location = isRoot
         ? { parentId: primaryLocation.parentId, index: primaryLocation.index + 1 + rootIds.indexOf(snapshot.id) }
-        : { parentId: snapshot.common.parentId, index: source.common.parentId ? sourceById.get(source.common.parentId)?.common.childIds.indexOf(source.id) ?? 0 : 0 };
-      snapshot.common.parentId = location.parentId;
-      snapshot.common.childIds = [];
+        : {...recordLocation(clipboard.layers, source.id), parentId: ids.get(recordLocation(clipboard.layers, source.id).parentId!) ?? null};
+      if (snapshot.scope) snapshot.scope.children = [];
       const restored = await ls.restoreLayer(snapshot, location);
       if (!restored) continue;
       eng.links.createPasteLink(
         restored.id,
-        { pageId: clipboard.sourcePageId, layerId: source.id },
+        { document: clipboard.sourceDocument, layerId: source.id },
         { name: source.common.name, pageIndex: clipboard.sourcePageIndex },
       );
       // Redo must restore the values and direct source chosen at paste time. Keep the

@@ -1,3 +1,7 @@
+import {prepareDocument, putDocument, readDocument, deleteDocument, resourceBytes, clearResources} from './resourceStorage';
+import { isSavedBin } from './schema';
+import type { DocumentKey } from '../../model/document/types';
+import type { LayerStack } from '../../model/layerStack';
 import { openDB, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import type {
   ToolInstance,
@@ -5,7 +9,6 @@ import type {
 } from '../../model';
 import type { PersistedHistory } from '../history/historyTree';
 import type { LayerRecord } from '../layer-types/definition';
-import { opBytes } from '../history/bytes';
 import type { ViewState } from '../view';
 import { CLIPBOARD_VERSION, DB_VERSION, PROJECT_VERSION } from './version';
 import { migrateClipboard, migrateProjectMeta, migrateSavedPage } from './migrate';
@@ -14,11 +17,25 @@ import type { ShortcutBindings } from '../../shortcuts';
 
 export type SavedLayer = LayerRecord;
 export interface SavedPage {
+  layerStacks?: LayerStack[];
+  selection?: {selectedLayerIds:string[];multiSelectMode:boolean};
   id: string; pageSpec: PageSpec; rootLayerIds: string[]; layers: SavedLayer[];
   activeLayerId: string; history: PersistedHistory; view: ViewState;
   thumbnail?: Blob; thumbnailVersion: number;
 }
+export interface SavedBin {
+  id: string;
+  rootLayerIds: string[];
+  layers: SavedLayer[];
+  activeLayerId: string;
+  history: PersistedHistory;
+  view: ViewState;
+  selection?: SavedPage['selection'];
+  workArea: PageSpec;
+}
 export interface SavedProjectMeta {
+  deletedSources?: {address: import('../../model').LayerAddress; layer: SavedLayer}[];
+  activeBinId?: string | null;
   version: typeof PROJECT_VERSION; pageOrder: string[]; activePageId: string; fonts: ProjectFont[];
 }
 export interface SavedAppSettings {
@@ -30,7 +47,7 @@ export interface SavedAppSettings {
 export interface SavedAppSettingsFile {
   app: 'rin-paint'; kind: 'settings'; version: 1; settings: SavedAppSettings;
 }
-export interface LayerClipboard { version: typeof CLIPBOARD_VERSION; sourcePageId: string; sourcePageIndex: number; sourcePpi: number; rootIds: string[]; layers: SavedLayer[] }
+export interface LayerClipboard { version: typeof CLIPBOARD_VERSION; sourceDocument: DocumentKey; sourcePageIndex: number; sourcePpi: number; rootIds: string[]; layers: SavedLayer[] }
 export interface TimelapseFrame { key?: string; pageId?: string; t: number; blob: Blob }
 export interface SavedReferenceImage {
   blob: Blob; name: string; naturalWidth: number; naturalHeight: number; x: number; y: number;
@@ -48,6 +65,7 @@ export function setPersistencePageId(id: string): void { activePageId = id; refe
 
 function ensureStores(d: IDBPDatabase, tx: IDBPTransaction<unknown, string[], 'versionchange'>): void {
   if (!d.objectStoreNames.contains('kv')) d.createObjectStore('kv');
+  if (!d.objectStoreNames.contains('bins')) d.createObjectStore('bins', {keyPath: 'id'});
   if (!d.objectStoreNames.contains('pages')) d.createObjectStore('pages', { keyPath: 'id' });
   if (!d.objectStoreNames.contains('references')) d.createObjectStore('references');
   const frames = d.objectStoreNames.contains('frames')
@@ -67,27 +85,21 @@ function db(): Promise<IDBPDatabase> {
   return dbPromise;
 }
 
-function pageBytes(page: SavedPage): number {
-  return page.layers.reduce((n, layer) => n + (layer.content?.size ?? 0), 0)
-    + page.history.nodes.reduce((n, node) => n + (node.op ? opBytes(node.op) : 0), 0)
-    + (page.thumbnail?.size ?? 0);
-}
 async function refreshProjectBytes(): Promise<void> {
   const d = await db();
-  const [meta, pages] = await Promise.all([
-    d.get('kv', 'project-meta') as Promise<SavedProjectMeta | undefined>,
-    d.getAll('pages') as Promise<SavedPage[]>,
-  ]);
-  projectBytes = pages.reduce((n, page) => n + pageBytes(page), 0)
-    + (meta?.fonts ?? []).reduce((n, font) => n + font.dataUrl.length, 0);
+  const meta = await readDocument(d,await d.get('kv','project-meta')) as SavedProjectMeta | undefined;
+  projectBytes = await resourceBytes(d) + (meta?.fonts ?? []).reduce((n,font)=>n+font.dataUrl.length,0);
 }
 
 export async function saveProjectMeta(meta: SavedProjectMeta): Promise<void> {
-  await (await db()).put('kv', meta, 'project-meta');
+  const prepared = await prepareDocument({id:'project-meta',...meta});
+  const tx=(await db()).transaction(['kv'],'readwrite');
+  await putDocument(tx,'kv',prepared); await tx.done;
   void refreshProjectBytes();
 }
 export async function loadProjectMeta(): Promise<SavedProjectMeta | undefined> {
-  const value = await (await db()).get('kv', 'project-meta') as unknown;
+  const d=await db();
+  const value = await readDocument(d,await d.get('kv','project-meta'));
   return value === undefined ? undefined : migrateProjectMeta(value);
 }
 export async function saveAppSettings(settings: SavedAppSettings): Promise<void> {
@@ -99,9 +111,10 @@ export async function loadAppSettings(): Promise<SavedAppSettings | undefined> {
   return validateAppSettings(value);
 }
 export async function savePage(page: SavedPage): Promise<void> {
+  const prepared = await prepareDocument(page);
   const d = await db();
-  const tx = d.transaction(['pages', 'thumbnails'], 'readwrite');
-  void tx.objectStore('pages').put(page);
+  const tx = d.transaction(['kv','pages', 'thumbnails'], 'readwrite');
+  await putDocument(tx,'pages',prepared);
   if (page.thumbnail) void tx.objectStore('thumbnails').put(page.thumbnail, page.id);
   await tx.done;
   void refreshProjectBytes();
@@ -109,16 +122,18 @@ export async function savePage(page: SavedPage): Promise<void> {
 
 /** A model snapshot and its history must commit together with its project metadata. */
 export async function saveProjectSnapshot(meta: SavedProjectMeta, page: SavedPage): Promise<void> {
+  const [prepared,preparedMeta] = await Promise.all([prepareDocument(page),prepareDocument({id:'project-meta',...meta})]);
   const d = await db();
   const tx = d.transaction(['kv', 'pages', 'thumbnails'], 'readwrite');
-  void tx.objectStore('kv').put(meta, 'project-meta');
-  void tx.objectStore('pages').put(page);
+  await putDocument(tx,'kv',preparedMeta);
+  await putDocument(tx,'pages',prepared);
   if (page.thumbnail) void tx.objectStore('thumbnails').put(page.thumbnail, page.id);
   await tx.done;
   void refreshProjectBytes();
 }
 export async function loadPage(id: string): Promise<SavedPage | undefined> {
-  const value = await (await db()).get('pages', id) as unknown;
+  const d = await db();
+  const value = await readDocument(d,await d.get('pages',id));
   return value === undefined ? undefined : migrateSavedPage(value);
 }
 export async function loadPageThumbnail(id: string): Promise<Blob | undefined> {
@@ -126,22 +141,28 @@ export async function loadPageThumbnail(id: string): Promise<Blob | undefined> {
 }
 
 /** Replace all project data with the given meta and pages. */
-export async function replaceProject(meta: SavedProjectMeta, pages: SavedPage[]): Promise<void> {
+export async function replaceProject(meta: SavedProjectMeta, pages: SavedPage[], bins: SavedBin[] = []): Promise<void> {
+  const preparedPages = await Promise.all(pages.map(prepareDocument)), preparedBins = await Promise.all(bins.map(prepareDocument));
+  const preparedMeta = await prepareDocument({id:'project-meta',...meta});
   const d = await db();
   referenceGeneration++;
-  const tx = d.transaction(['kv', 'pages', 'references', 'frames', 'clipboard', 'thumbnails'], 'readwrite');
+  const tx = d.transaction(['kv', 'pages', 'bins', 'references', 'frames', 'clipboard', 'thumbnails'], 'readwrite');
   await Promise.all([
     tx.objectStore('pages').clear(),
+    tx.objectStore('bins').clear(),
     tx.objectStore('references').clear(),
     tx.objectStore('frames').clear(),
     tx.objectStore('clipboard').clear(),
     tx.objectStore('thumbnails').clear(),
   ]);
-  void tx.objectStore('kv').put(meta, 'project-meta');
-  for (const page of pages) {
-    void tx.objectStore('pages').put(page);
+  await tx.objectStore('kv').delete('project-meta');
+  await clearResources(tx);
+  await putDocument(tx,'kv',preparedMeta);
+  for (const [index,page] of pages.entries()) {
+    await putDocument(tx,'pages',preparedPages[index]);
     if (page.thumbnail) void tx.objectStore('thumbnails').put(page.thumbnail, page.id);
   }
+  for (const bin of preparedBins) await putDocument(tx,'bins',bin);
   await tx.done;
   activePageId = meta.activePageId;
   frameBytes = 0;
@@ -150,8 +171,8 @@ export async function replaceProject(meta: SavedProjectMeta, pages: SavedPage[])
 
 export async function deletePageData(id: string): Promise<void> {
   const d = await db();
-  const tx = d.transaction(['pages', 'references', 'frames', 'thumbnails'], 'readwrite');
-  void tx.objectStore('pages').delete(id);
+  const tx = d.transaction(['kv','pages', 'references', 'frames', 'thumbnails'], 'readwrite');
+  await deleteDocument(tx,'pages',id);
   void tx.objectStore('references').delete(id);
   void tx.objectStore('thumbnails').delete(id);
   const keys = await tx.objectStore('frames').index('pageId').getAllKeys(id);
@@ -222,4 +243,27 @@ export async function getPersistenceUsage(): Promise<PersistenceUsage> {
   let originUsage = projectBytes + timelapse;
   try { originUsage = (await navigator.storage?.estimate?.())?.usage ?? originUsage; } catch { /* optional */ }
   return { project: projectBytes, timelapse, other: Math.max(0, originUsage - projectBytes - timelapse) };
+}
+
+
+export async function loadBins(): Promise<SavedBin[]> {
+  const d = await db();
+  const items = await Promise.all((await d.getAll('bins')).map(item=>readDocument(d,item)));
+  if (!items.every(isSavedBin)) throw new Error('ビンの保存形式が不正です');
+  return items;
+}
+export async function saveBin(bin: SavedBin, meta?: SavedProjectMeta): Promise<void> {
+  for (const layer of bin.layers) {
+    if (layer.common.parameterLink?.source.document.kind === 'page') throw new Error('ビンからページは参照できません');
+  }
+  const prepared = await prepareDocument(bin), preparedMeta=meta && await prepareDocument({id:'project-meta',...meta});
+  const tx = (await db()).transaction(['bins', 'kv'], 'readwrite');
+  await putDocument(tx,'bins',prepared);
+  if (preparedMeta) await putDocument(tx,'kv',preparedMeta);
+  await tx.done;
+}
+
+export async function deleteBinData(id:string):Promise<void> {
+  const tx=(await db()).transaction(['bins','kv'],'readwrite');
+  await deleteDocument(tx,'bins',id);await tx.done;void refreshProjectBytes();
 }

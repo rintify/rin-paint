@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { selectedLayerRows, type TreeLayerLike } from './layerTree';
 
-const layer = (id: string, parentId: string | null, childIds: string[] = []): TreeLayerLike => ({ id, parentId, childIds, type: childIds.length ? 'canvas' : 'raster' });
+const layer = (id: string, _parentId: string | null, childIds: string[] = []): TreeLayerLike => ({ id, childIds, type: childIds.length ? 'canvas' : 'raster' });
 const layers = [layer('a', null, ['b', 'c']), layer('b', 'a', ['d']), layer('c', 'a', ['e']), layer('d', 'b', ['f']), layer('e', 'c'), layer('f', 'd'), layer('z', null, ['zz']), layer('zz', 'z')];
 describe('selection-driven expansion', () => {
   it('shows roots, the selection path and direct children, not grandchildren or other branches', () => {

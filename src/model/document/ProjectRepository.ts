@@ -1,3 +1,4 @@
+import { reconcileDeletedSources, restoreDeletedSources, type DeletionRecovery } from './DeletionReconciler';
 import { LinkResolver, type EntityReader } from './LinkResolver';
 import { ScopeResolver } from './ScopeResolver';
 import { addressKey, type DocumentKey, type LayerDocument, type LayerEntity, type LayerSourceAddress } from './types';
@@ -10,6 +11,7 @@ export class ProjectRepository implements EntityReader {
   readonly links = new LinkResolver(this);
   readonly scopes = new ScopeResolver(this);
   private revision = 0;
+  private recoveries: DeletionRecovery[] = [];
   private readonly listeners = new Set<(revision: number) => void>();
 
   get(address: LayerSourceAddress): LayerEntity | undefined {
@@ -29,7 +31,11 @@ export class ProjectRepository implements EntityReader {
       if (candidate.documents.has(key)) throw new Error('編集対象の識別子が重複しています');
       candidate.documents.set(key, structuredClone(doc));
     }
+    const candidates = [...candidate.documents.values()];
+    const retained = restoreDeletedSources(candidates, this.recoveries);
+    const recoveries = reconcileDeletedSources(this, candidates);
     candidate.validate();
+    this.recoveries = [...retained, ...recoveries];
     this.documents.clear();
     for (const [key, doc] of candidate.documents) this.documents.set(key, doc);
     this.revision++;
@@ -38,7 +44,6 @@ export class ProjectRepository implements EntityReader {
 
   validate(): void {
     for (const doc of this.documents.values()) {
-      const occurrenceIds = new Set<string>();
       const validateEntity = (entity: LayerEntity, address: LayerSourceAddress): void => {
         const binding = entity.binding;
         if (new Set(binding.linkedFields).size !== binding.linkedFields.length) throw new Error('参照項目が重複しています');
@@ -50,13 +55,17 @@ export class ProjectRepository implements EntityReader {
           if (this.get(source)?.type !== 'canvas') throw new Error('構造の参照元はキャンバスに限定されます');
           this.links.assertLink(address, source);
         }
-        this.scopes.children(address);
-        for (const override of Object.values(entity.structure.overrides)) {
-          if (override.binding.source) this.links.assertLink(address, override.binding.source);
-        }
+        this.scopes.childrenFrom(entity,address.document);
+        for (const override of Object.values(entity.structure.overrides)) validateEntity(override,address);
       };
       const visited = new Set<string>(), path = new Set<string>();
+      const walkInline = (entity: LayerEntity): void => {
+        if (entity.type !== 'canvas') return;
+        walk(entity.structure.local.children);
+        for (const override of Object.values(entity.structure.overrides)) walkInline(override);
+      };
       const walk = (children: LayerDocument['root']['children']): void => {
+        const occurrenceIds = new Set<string>();
         for (const occurrence of children) {
           if (occurrenceIds.has(occurrence.id)) throw new Error('配置の識別子が重複しています');
           occurrenceIds.add(occurrence.id);
@@ -65,7 +74,7 @@ export class ProjectRepository implements EntityReader {
           if (path.has(entity.id)) throw new Error('キャンバスの包含が循環しています');
           if (visited.has(entity.id)) throw new Error('実体の重複配置には参照側実体を作成してください');
           path.add(entity.id); visited.add(entity.id);
-          if (entity.type === 'canvas') walk(entity.structure.local.children);
+          walkInline(entity);
           path.delete(entity.id);
         }
       };

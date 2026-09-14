@@ -1,3 +1,4 @@
+import { scopeOwner } from '../layerTree';
 // @vitest-environment happy-dom
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createCanvas, type Canvas } from '@napi-rs/canvas';
@@ -50,8 +51,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 function raster(id: string, paint: (ctx: CanvasRenderingContext2D) => void) {
-  const layer = createRasterLayer(id, 16, 16, id);
-  paint(layer.runtime.ctx);
+  const layer = createRasterLayer(id, 25.4, id);
+  layer.runtime.surface.paint({x: 0, y: 0, w: 16, h: 16}, paint);
   return layer;
 }
 
@@ -60,9 +61,9 @@ function pickerFor(layers: Layer[], roots?: string[]) {
   const engine = {
     artboard: { w: 16, h: 16 },
     allLayers: () => layers,
-    getActiveLayerId: () => layers.find(layer => layer.parentId === null)?.id ?? '',
+    getActiveLayerId: () => layers.find(layer => scopeOwner(layers, layer.id) === null)?.id ?? '',
     layerById: (id: string) => byId.get(id) ?? null,
-    getRootLayerIds: () => roots ?? layers.filter(layer => layer.parentId === null).map(layer => layer.id),
+    getRootLayerIds: () => roots ?? layers.filter(layer => scopeOwner(layers, layer.id) === null).map(layer => layer.id),
     getPageSpec: () => ({ widthMm: 16, heightMm: 16, ppi: 25.4 }),
     getRenderRevision: () => 0,
     getMaskRevision: () => 0,
@@ -119,9 +120,9 @@ describe('layer picking from visible pixels', () => {
   it('exposes canvas output as one selectable layer and excludes empty shape interiors', () => {
     const parent = createCanvasLayer('parent', 'parent');
     const base = raster('base', ctx => { ctx.fillStyle = '#00f'; ctx.fillRect(0, 0, 16, 16); });
-    base.parentId = parent.id;
+
     const child = raster('child', ctx => { ctx.fillStyle = '#f00'; ctx.fillRect(0, 0, 6, 6); });
-    child.parentId = parent.id;
+
     parent.childIds = [base.id, child.id];
     const frame = createShapeLayer('枠', {
       kind: 'rect', x: 2, y: 2, width: 10, height: 10, color: '#0f0',
@@ -175,7 +176,7 @@ describe('layer picking from visible pixels', () => {
     const text = createTextLayer('文字', {
       content: 'A', x: 0, y: 0, width: null, height: null, direction: 'horizontal',
       horizontalAlign: 'left', verticalAlign: 'top', lineHeight: 1.2,
-      style: { fontId: 'sans-serif', sizePt: 12, color: '#00ff00' }, ranges: [], ruby: [],
+      style: { fontId: 'sans-serif', sizeMm: 12 * 25.4 / 72, color: '#00ff00' }, ranges: [], ruby: [],
     }, 'text');
     const { picker, compositor } = pickerFor([text]);
     vi.spyOn(compositor.textRenderer, 'draw').mockImplementation((ctx) => {

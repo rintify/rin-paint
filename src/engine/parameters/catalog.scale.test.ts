@@ -29,10 +29,10 @@ describe('parameter catalog scale', () => {
     expect(catalogA.byId.get('p9999')?.id).toBe('p9999');
     expect(catalogA.bySemanticId.get('p1234')?.id).toBe('p1234');
     const hosts: ParameterHost[] = [
-      { id: 'a', name: 'A', opacity: 1, blend: 'source-over', visible: true, parentId: null, childIds: [], type: 'raster', state: { values: Array(size).fill(1) } },
-      { id: 'b', name: 'B', opacity: 1, blend: 'source-over', visible: true, parentId: null, childIds: [], type: 'raster', state: { values: Array(size).fill(2) } },
+      { id: 'a', name: 'A', opacity: 1, blend: 'source-over', visible: true,  type: 'raster', state: { values: Array(size).fill(1) } },
+      { id: 'b', name: 'B', opacity: 1, blend: 'source-over', visible: true,  type: 'raster', state: { values: Array(size).fill(2) } },
     ];
-    // Raster catalogs are empty; this asserts the intersection helper stays linear in selection × provided maps.
+    // The intersection helper stays linear in selection × provided maps.
     const maps = hosts.map(() => {
       const map = new Map<string, string>();
       for (const item of catalogA.definitions) map.set(item.semanticId, item.id);
@@ -40,6 +40,6 @@ describe('parameter catalog scale', () => {
     });
     const shared = [...maps[0].keys()].filter(id => maps.every(map => map.has(id)));
     expect(shared).toHaveLength(size);
-    expect(commonParametersOf(hosts, 'multi').map(item => item.id)).toEqual(['visible', 'opacity', 'blend']);
+    expect(commonParametersOf(hosts, 'multi').filter(item => item.scope === 'common').map(item => item.id)).toEqual(['visible', 'opacity', 'blend']);
   });
 });

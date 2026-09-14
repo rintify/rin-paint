@@ -18,7 +18,7 @@ describe('shared text DOM and selection', () => {
   });
   it('uses the same point-to-pixel conversion for mixed styles in vertical writing', () => {
     let text = { ...newText(0, 0, '#123456', 300, 500), content: '文字', direction: 'vertical' as const };
-    text = formatRange(text, 1, 2, { sizePt: 24, fontId: 'serif' }) as typeof text;
+    text = formatRange(text, 1, 2, { sizeMm: 24 * 25.4 / 72, fontId: 'serif' }) as typeof text;
     const root = document.createElement('div');
     populateText(root, text, 300);
     expect(root.style.writingMode).toBe('vertical-rl');

@@ -1,5 +1,6 @@
+import {readLayoutTransform} from '../geometry/layoutTransform';
 import { DEFAULT_OUTLINE, type OutlineParams } from '../../model';
-import { SIZE_MM_MAX, SIZE_MM_MIN, roundMm } from '../units';
+import { SIZE_MM_MAX, SIZE_MM_MIN } from '../units';
 import { createOutlineLayer } from '../layers';
 import { buildCatalog } from '../parameters/catalog';
 import type { LayerDefinition } from './definition';
@@ -13,7 +14,7 @@ function normalize(value: Partial<OutlineParams> | undefined): OutlineParams {
     color: typeof value?.color === 'string' && /^#[0-9a-f]{6}$/i.test(value.color)
       ? value.color : DEFAULT_OUTLINE.color,
     widthMm: Number.isFinite(width)
-      ? roundMm(Math.max(SIZE_MM_MIN, Math.min(SIZE_MM_MAX, width)))
+      ? Math.max(SIZE_MM_MIN, Math.min(SIZE_MM_MAX, width))
       : DEFAULT_OUTLINE.widthMm,
     alphaThreshold: Number.isFinite(threshold)
       ? Math.max(0, Math.min(1, threshold))
@@ -23,14 +24,14 @@ function normalize(value: Partial<OutlineParams> | undefined): OutlineParams {
 }
 
 function cloneState(state: OutlineState): OutlineState {
-  return { outline: { ...state.outline } };
+  return { ...readLayoutTransform(state), outline: { ...state.outline } };
 }
 
 function asOutlineState(value: unknown): OutlineState {
   const outline = value && typeof value === 'object' && 'outline' in value
     ? (value as { outline?: Partial<OutlineParams> }).outline
     : value as Partial<OutlineParams> | undefined;
-  return { outline: normalize(outline) };
+  return { ...readLayoutTransform(value), outline: normalize(outline) };
 }
 
 const SURFACES = ['single', 'multi', 'link'] as const;
@@ -46,8 +47,8 @@ export const outlineLayerType: LayerDefinition<'outline'> = {
   state: {
     initial: () => createOutlineLayer('tmp').state,
     clone: cloneState,
-    normalize: state => ({ outline: normalize(state.outline) }),
-    applyPatch: (state, patch) => ({ outline: normalize({ ...state.outline, ...patch.outline }) }),
+    normalize: state => ({ ...readLayoutTransform(state), outline: normalize(state.outline) }),
+    applyPatch: (state, patch) => ({ ...readLayoutTransform({...state, ...patch}), outline: normalize({ ...state.outline, ...patch.outline }) }),
     scale: state => cloneState(state),
   },
   codec: {
@@ -80,26 +81,26 @@ export const outlineLayerType: LayerDefinition<'outline'> = {
         id: 'outline.color', semanticId: 'appearance.color', groupId: 'appearance', label: '縁の色',
         editor: { kind: 'color', transparent: false }, surfaces: SURFACES,
         read: state => state.outline.color,
-        write: (state, value) => ({ outline: { ...state.outline, color: String(value) } }),
+        write: (state, value) => ({ ...readLayoutTransform(state), outline: { ...state.outline, color: String(value) } }),
       },
       {
         id: 'outline.widthMm', semanticId: 'appearance.widthMm', groupId: 'appearance', label: '太さ',
         editor: { kind: 'slider', min: SIZE_MM_MIN, max: SIZE_MM_MAX, unit: { kind: 'mm' } }, surfaces: SURFACES,
         read: state => state.outline.widthMm,
-        write: (state, value) => ({ outline: { ...state.outline, widthMm: roundMm(Number(value)) } }),
+        write: (state, value) => ({ ...readLayoutTransform(state), outline: { ...state.outline, widthMm: Number(value) } }),
       },
       {
         id: 'outline.alphaThreshold', semanticId: 'outline.alphaThreshold', groupId: 'appearance', label: '透明度閾値',
         editor: { kind: 'slider', min: 0, max: 100, unit: { kind: 'percent' } }, surfaces: SURFACES,
         read: state => Math.round(state.outline.alphaThreshold * 100),
-        write: (state, value) => ({ outline: { ...state.outline, alphaThreshold: Number(value) / 100 } }),
+        write: (state, value) => ({ ...readLayoutTransform(state), outline: { ...state.outline, alphaThreshold: Number(value) / 100 } }),
       },
       {
         id: 'outline.cornerStyle', semanticId: 'appearance.cornerStyle', groupId: 'appearance', label: '縁の角',
         editor: { kind: 'select', options: { kind: 'static', options: [{ value: 'round', label: '丸' }, { value: 'sharp', label: '角' }] } },
         surfaces: SURFACES,
         read: state => state.outline.cornerStyle ?? 'round',
-        write: (state, value) => ({ outline: { ...state.outline, cornerStyle: value === 'sharp' ? 'sharp' : 'round' } }),
+        write: (state, value) => ({ ...readLayoutTransform(state), outline: { ...state.outline, cornerStyle: value === 'sharp' ? 'sharp' : 'round' } }),
       },
     ],
   ),

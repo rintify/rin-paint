@@ -1,3 +1,4 @@
+import {inverse, project} from '../../geometry/homography';
 import type { ShapePaintMode, ShapeParams, ShapePoint, StrokePoint } from '../../../model';
 import type { ShapeBounds } from '../geometry';
 import type {
@@ -21,13 +22,13 @@ export function shapeFields<S extends ShapeParams>(kind: S['kind']) {
       value: number,
       make: (shape: S, value: number) => S,
       min?: number,
-      canvasLength = false,
+      physicalLength = false,
     ): ShapeControlField {
       return {
         label,
         value,
         min,
-        canvasLength: canvasLength || undefined,
+        physicalLength: physicalLength || undefined,
         make: (input, shape) => { const own = narrow(shape); return own ? make(own, input) : shape; },
       };
     },
@@ -37,13 +38,13 @@ export function shapeFields<S extends ShapeParams>(kind: S['kind']) {
       read: (shape: S) => number,
       write: (shape: S, value: number) => S,
       min?: number,
-      canvasLength = false,
+      physicalLength = false,
     ): ShapeParameterField {
       return {
         key,
         label,
         min,
-        canvasLength: canvasLength || undefined,
+        physicalLength: physicalLength || undefined,
         read: shape => { const own = narrow(shape); return own ? read(own) : 0; },
         write: (shape, value) => { const own = narrow(shape); return own ? write(own, value) : shape; },
       };
@@ -64,11 +65,17 @@ export function rotationControlField(angle: number): ShapeControlField {
 export function paintClosed(
   ctx: CanvasRenderingContext2D,
   mode: ShapePaintMode,
-  artboard: ShapeArtboard,
+  _artboard: ShapeArtboard,
   appendPath: () => void,
 ): void {
   ctx.beginPath();
-  if (mode === 'fill-outside') ctx.rect(0, 0, artboard.w, artboard.h);
+  if (mode === 'fill-outside') {
+    const m=ctx.getTransform(),inv=inverse([m.a,m.c,m.e,m.b,m.d,m.f,0,0,1]);
+    if(inv) {
+      const points=[{x:0,y:0},{x:ctx.canvas.width,y:0},{x:ctx.canvas.width,y:ctx.canvas.height},{x:0,y:ctx.canvas.height}].map(point=>project(inv,point)!);
+      points.forEach((point,index)=>index?ctx.lineTo(point.x,point.y):ctx.moveTo(point.x,point.y));ctx.closePath();
+    }
+  }
   appendPath();
   if (mode === 'stroke') ctx.stroke();
   else ctx.fill(mode === 'fill-outside' ? 'evenodd' : 'nonzero');

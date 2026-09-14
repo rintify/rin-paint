@@ -1,3 +1,5 @@
+import { BinDialog } from './BinDialog';
+import { beginLayerPointerDrag, consumeLayerDragClick } from './layerPointerDrag';
 import AddIcon from '@mui/icons-material/Add';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import { SceneQuery, MASK_PROBLEM_LABELS } from '../../engine/core/SceneQuery';
@@ -9,6 +11,7 @@ import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import LinkIcon from '@mui/icons-material/Link';
 import {
   Badge,
+  Breadcrumbs,
   Box,
   Button,
   Dialog,
@@ -48,7 +51,10 @@ const MOTION_MS = 220;
 
 export function HierarchyPanel() {
   const engine = useEngine();
+  const [binOpen, setBinOpen] = useState(false);
+  const activeBinId = useStore(state => state.activeBinId);
   const layers = useStore(s => s.layers);
+  const stacks = useStore(s => s.layerStacks);
   const rootLayerIds = useStore(s => s.rootLayerIds);
   const activeId = useStore(s => s.activeLayerId);
   const selectedIds = useStore(s => s.selectedLayerIds);
@@ -61,6 +67,14 @@ export function HierarchyPanel() {
   const requestedPaletteId = useRef<string | null>(null);
   const byId = useMemo(() => new Map(layers.map(l => [l.id, l])), [layers]);
   const active = byId.get(activeId);
+  const scopePath: LayerMeta[] = [];
+  const visitedScopes = new Set<string>();
+  let scope = active?.parentId ? byId.get(active.parentId) : undefined;
+  while (scope && !visitedScopes.has(scope.id)) {
+    visitedScopes.add(scope.id);
+    scopePath.unshift(scope);
+    scope = scope.parentId ? byId.get(scope.parentId) : undefined;
+  }
   const scene = useMemo(() => new SceneQuery(rootLayerIds, layers), [rootLayerIds, layers]);
   const [palette, setPalette] = useState<{ id: string; open: boolean }>(() => ({
     id: activeId,
@@ -72,7 +86,13 @@ export function HierarchyPanel() {
   const [drop, setDrop] = useState<DropTarget | null>(null);
   const [focusRequest, setFocusRequest] = useState<{ id: string; token: number } | null>(null);
   const frozen = useRef<{ id: string; depth: number }[] | null>(null);
-  const desired = useMemo(
+  const expandedStacks = new Set(stacks.filter(group=>selectedIds.some(id=>{
+    let current=byId.get(id);
+    while(current) {if(group.memberIds.includes(current.id)) return true;current=current.parentId?byId.get(current.parentId):undefined;}
+    return false;
+  })).map(group=>group.id));
+  const stackFor = new Map(stacks.flatMap(group=>group.memberIds.map(id=>[id,group] as const)));
+  const rawDesired = useMemo(
     () => selectedLayerRows(
       rootLayerIds,
       layers,
@@ -80,6 +100,12 @@ export function HierarchyPanel() {
     ),
     [rootLayerIds, layers, activeId, multi, selectedIds, focusRequest],
   );
+  const desired=rawDesired.filter(row=>{const group=stackFor.get(row.id);return !group || expandedStacks.has(group.id) || group.memberIds[0]===row.id;});
+  const hold=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const holdStart=useRef({x:0,y:0});
+  const consumedHold=useRef(false);
+  const cancelHold=()=>{if(hold.current!==null) clearTimeout(hold.current);hold.current=null;};
+  useEffect(()=>cancelHold,[]);
   const [rename, setRename] = useState<{ id: string; value: string } | null>(null);
   const renameSubmit = useRef<(() => boolean) | null>(null);
   const pendingRename = useRef<{ id: string; value: string } | null>(null);
@@ -263,6 +289,8 @@ export function HierarchyPanel() {
 
   return (
     <Box className="section hierarchy-section">
+      {activeBinId && <Button fullWidth onClick={() => void engine.bins.returnToPage().catch(error => appAlert(String(error)))}>ページへ戻る</Button>}
+      <BinDialog open={binOpen} onClose={() => setBinOpen(false)} />
       <Stack direction="row" sx={{ alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
         <Typography variant="caption" color="text.secondary" sx={{ letterSpacing: 1 }}>
           ヒエラルキー
@@ -302,6 +330,9 @@ export function HierarchyPanel() {
             </IconButton>
           </Tooltip>
           <Menu anchorEl={addEffectAnchor} open={!!addEffectAnchor} onClose={() => setAddEffectAnchor(null)}>
+            <MenuItem onClick={() => {setBinOpen(true); setAddEffectAnchor(null);}}>ビンを表示</MenuItem>
+            <MenuItem disabled={!!activeBinId || selectedIds.length<2} onClick={()=>{engine.stacks.create();setAddEffectAnchor(null);}}>スタックにまとめる</MenuItem>
+            {stackFor.has(activeId) && <MenuItem onClick={()=>{engine.stacks.dissolve(stackFor.get(activeId)!.id);setAddEffectAnchor(null);}}>スタックを解除</MenuItem>}
             <MenuItem onClick={() => { engine.addCanvasLayer(); setAddEffectAnchor(null); }}>キャンバスを追加</MenuItem>
             <MenuItem onClick={() => { engine.addTransformLayer(); setAddEffectAnchor(null); }}>トランスフォームを追加</MenuItem>
             <MenuItem onClick={() => { engine.addAdjustLayer(); setAddEffectAnchor(null); }}>色調補正を追加</MenuItem>
@@ -310,8 +341,16 @@ export function HierarchyPanel() {
           </Menu>
         </Stack>
       </Stack>
+      <Breadcrumbs aria-label="編集スコープ" separator="›" sx={{ mb: 1, fontSize: 12 }}>
+        {scopePath.length ? <Button size="small" onClick={() => select(scopePath[0].id)}>ページ</Button>
+          : <Typography variant="caption" aria-current="location">ページ</Typography>}
+        {scopePath.map((canvas, index) => index === scopePath.length - 1
+          ? <Typography key={canvas.id} variant="caption" aria-current="location">{canvas.name}</Typography>
+          : <Button key={canvas.id} size="small" onClick={() => select(scopePath[index + 1].id)}>{canvas.name}</Button>)}
+      </Breadcrumbs>
       <Box
         ref={list}
+        data-hierarchy-drop=""
         className="layer-list layer-flat-list"
         onDragLeave={event => {
           if (!event.currentTarget.contains(event.relatedTarget as Node)) setDrop(null);
@@ -366,12 +405,15 @@ export function HierarchyPanel() {
           {rows.map(row => {
             const meta = byId.get(row.id) ?? metadata.current.get(row.id);
             if (!meta) return null;
+            const group=stackFor.get(meta.id);
+            const collapsed=!!group && !expandedStacks.has(group.id);
             const isPrimary = selectedIds[0] === meta.id;
             const isSelected = selectedIds.includes(meta.id);
             const guide = drop?.anchorId === meta.id ? drop : null;
             return (
               <Box
                 key={meta.id}
+                data-hierarchy-drop={meta.id}
                 ref={(node: HTMLElement | null) => {
                   if (node) elements.current.set(meta.id, node);
                   else elements.current.delete(meta.id);
@@ -387,12 +429,27 @@ export function HierarchyPanel() {
                 style={{
                   top: spacing.top + row.index * ROW_HEIGHT,
                   left: row.depth * 16,
+                  borderLeft: group && !collapsed ? '3px solid var(--mui-palette-primary-main, #4f8cff)'
+                    : active?.parentId && meta.parentId === active.parentId ? '2px solid var(--mui-palette-divider, #9aa4b2)' : undefined,
                   height: ROW_HEIGHT - 4,
                   pointerEvents: row.exiting ? 'none' : undefined,
                   opacity: row.exiting ? 0 : undefined,
                 }}
-                draggable={!row.exiting}
+                draggable={!row.exiting && !collapsed && !binOpen}
+                onPointerDown={event=>{
+                  if (binOpen && !collapsed) beginLayerPointerDrag(engine, event, {kind: 'layer', id: meta.id});
+                  if(!group || collapsed || event.button!==0) return;
+                  cancelHold();consumedHold.current=false;holdStart.current={x:event.clientX,y:event.clientY};
+                  hold.current=setTimeout(()=>{hold.current=null;consumedHold.current=true;engine.stacks.deselect(group.id);},600);
+                }}
+                onPointerMove={event=>{if(Math.hypot(event.clientX-holdStart.current.x,event.clientY-holdStart.current.y)>6) cancelHold();}}
+                onPointerUp={cancelHold}
+                onPointerCancel={cancelHold}
+                onPointerLeave={cancelHold}
                 onClick={event => {
+                  if (consumeLayerDragClick()) return;
+                  if(consumedHold.current) {consumedHold.current=false;return;}
+                  if(collapsed && group) {engine.stacks.select(group.id);return;}
                   if (event.shiftKey) event.preventDefault();
                   select(meta.id, event.shiftKey);
                 }}
@@ -452,6 +509,13 @@ export function HierarchyPanel() {
                   applyDrop();
                 }}
               >
+                {collapsed && group ? <>
+                  <Box sx={{position:'relative',width:48,height:36,flex:'none'}}>
+                    {group.memberIds.slice(0,3).map((id,index)=>{const item=byId.get(id);return item?<Box key={id} sx={{position:'absolute',left:index*5,top:index*3,zIndex:3-index}}><Thumb meta={item}/></Box>:null;})}
+                  </Box>
+                  <Typography variant="body2" noWrap sx={{flex:1}}>{group.memberIds.map(id=>byId.get(id)?.name??'').join('・')}</Typography>
+                  <Button size="small" onClick={event=>{event.stopPropagation();engine.stacks.dissolve(group.id);}}>解除</Button>
+                </> : <>
                 {scene.masks(meta.id,layerMaskIds(meta.state) ?? []).invalid.length > 0 && (
                   <Tooltip title={scene.masks(meta.id,layerMaskIds(meta.state) ?? []).invalid.map(item => `${byId.get(item.sourceId)?.name ?? item.sourceId}: ${MASK_PROBLEM_LABELS[item.problem]}`).join(' / ')}>
                     <WarningAmberIcon color="warning" fontSize="small" aria-label="無効なマスク参照" />
@@ -521,6 +585,7 @@ export function HierarchyPanel() {
                 >
                   <MoreVertIcon sx={{ fontSize: 18 }} />
                 </IconButton>
+                </>}
                 {guide && guide.edge !== 'inside' && (
                   <Box
                     className="layer-insertion-guide"

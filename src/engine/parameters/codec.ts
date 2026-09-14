@@ -1,10 +1,4 @@
-import { mmToPx, pxToMm } from '../units';
-import type { ParameterValue, ParameterValueCodec, ResolvedParameter } from './types';
-
-export const canvasMmCodec: ParameterValueCodec = {
-  toCanonical: (value, ppi) => typeof value === 'number' ? pxToMm(value, ppi) : value,
-  fromCanonical: (value, ppi) => typeof value === 'number' ? mmToPx(value, ppi) : value,
-};
+import type { ParameterValue, ResolvedParameter } from './types';
 
 export function editorUnit(parameter: ResolvedParameter) {
   return parameter.editor.kind === 'slider' || parameter.editor.kind === 'number'
@@ -14,12 +8,12 @@ export function editorUnit(parameter: ResolvedParameter) {
 
 export function toCanonical(parameter: ResolvedParameter, value: ParameterValue, ppi: number): ParameterValue {
   if (parameter.canonical) return parameter.canonical.toCanonical(value, ppi);
-  return editorUnit(parameter)?.kind === 'canvas-mm' ? canvasMmCodec.toCanonical(value, ppi) : value;
+  return value;
 }
 
 export function fromCanonical(parameter: ResolvedParameter, value: ParameterValue, ppi: number): ParameterValue {
   if (parameter.canonical) return parameter.canonical.fromCanonical(value, ppi);
-  return editorUnit(parameter)?.kind === 'canvas-mm' ? canvasMmCodec.fromCanonical(value, ppi) : value;
+  return value;
 }
 
 export function editorAllowsNull(parameter: ResolvedParameter): boolean {

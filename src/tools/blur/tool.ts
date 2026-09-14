@@ -1,3 +1,7 @@
+import { rasterToPage } from '../../engine/core/RasterCoordinates';
+import { readProjectedRaster } from '../../engine/raster/readProjectedRaster';
+import { paintProjectedCanvas } from '../../engine/raster/paintProjectedCanvas';
+import { IDENTITY, inverse, multiply, translation, type Homography } from '../../engine/geometry/homography';
 import type { StrokePoint } from '../../model';
 import { emptyRect, expandRect, rectValid, unionRect, type DirtyRect } from '../../engine/brush';
 import type { RasterLayer } from '../../engine/layers';
@@ -11,6 +15,8 @@ import type { Tool } from '../types';
  */
 export class BlurTool implements Tool {
   private layer: RasterLayer | null = null;
+  private nativeToPage: Homography = IDENTITY;
+  private pageToNative: Homography = IDENTITY;
   private lastX = 0;
   private lastY = 0;
   private radius = 16;
@@ -30,6 +36,9 @@ export class BlurTool implements Tool {
   onDown(p: StrokePoint): void {
     const layer = this.eng.activeRaster();
     if (!layer) return;
+    this.nativeToPage = rasterToPage(this.eng, layer);
+    const inverted = inverse(this.nativeToPage); if (!inverted) return;
+    this.pageToNative = inverted;
     this.layer = layer;
     this.eng.captureBefore(layer);
     const size = this.eng.activeToolSettings()?.sizePx ?? mmToPx(DEFAULT_SIZE_MM, this.eng.getPageSpec().ppi);
@@ -100,7 +109,8 @@ export class BlurTool implements Tool {
 
     this.srcCtx.save();
     this.srcCtx.clearRect(0, 0, s, s);
-    this.srcCtx.drawImage(layer.runtime.canvas, -ox, -oy);
+    const projected = readProjectedRaster(layer.runtime.surface, this.nativeToPage, {x: ox, y: oy, w: s, h: s});
+    this.srcCtx.drawImage(projected, 0, 0); projected.width = projected.height = 0;
     this.srcCtx.restore();
 
     this.blurredCtx.save();
@@ -136,10 +146,12 @@ export class BlurTool implements Tool {
     this.mixCtx.drawImage(this.blurred, 0, 0);
     this.mixCtx.restore();
 
-    layer.runtime.ctx.save();
-    layer.runtime.ctx.clearRect(ox, oy, s, s);
-    layer.runtime.ctx.drawImage(this.mix, ox, oy);
-    layer.runtime.ctx.restore();
+    const matrix = multiply(this.pageToNative, translation(ox, oy));
+    const clear = document.createElement('canvas'); clear.width = clear.height = s;
+    clear.getContext('2d')!.fillRect(0, 0, s, s);
+    paintProjectedCanvas(layer.runtime.surface, clear, matrix, 'destination-out');
+    paintProjectedCanvas(layer.runtime.surface, this.mix, matrix);
+    clear.width = clear.height = 0;
 
     expandRect(this.rect, cx, cy, r + pad);
     return { minX: ox, minY: oy, maxX: ox + s, maxY: oy + s };

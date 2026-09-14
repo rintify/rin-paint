@@ -40,8 +40,7 @@ export interface LayerCodec<K extends LayerType> {
   encode(state: LayerOf<K>['state']): unknown;
   decode(value: unknown): LayerOf<K>['state'] | null;
   encodeContent?(layer: LayerOf<K>): Promise<Blob | undefined>;
-  decodeRuntime?(content: Blob | HTMLCanvasElement | undefined, env: { artboard: ArtboardSize }): Promise<LayerOf<K>['runtime'] | null>;
-  scaleStored?(state: unknown, env: { artboard: ArtboardSize; factor: number }): unknown;
+  decodeRuntime?(content: Blob | undefined, env: { artboard: ArtboardSize; ppi?: number }): Promise<LayerOf<K>['runtime'] | null>;
 }
 
 export interface LayerRenderer<K extends LayerType> {
@@ -120,6 +119,9 @@ export interface LayerDefinition<K extends LayerType> {
 }
 
 export interface LayerRecord {
+  referenceOnly?: true;
+  unit: 'mm';
+  scope?: import('../../model/document/types').Scope;
   id: string;
   type: LayerType;
   common: LayerCommonRecord;
@@ -128,7 +130,8 @@ export interface LayerRecord {
 }
 
 export interface LayerSnapshot extends LayerRecord {
-  canvas?: HTMLCanvasElement;
+  image?: import('../image/ImageAsset').ImageAsset;
+  raster?: import("../raster/SparseRaster").SparseRasterSnapshot;
 }
 
 export interface LayerProps {
@@ -152,8 +155,7 @@ export function commonRecordFrom(layer: Layer): LayerCommonRecord {
     opacity: layer.opacity,
     blend: layer.blend,
     visible: layer.visible,
-    parentId: layer.parentId,
-    childIds: [...layer.childIds],
+    ...(layer.linkRecovery ? {linkRecovery: structuredClone(layer.linkRecovery)} : {}),
     ...(layer.parameterLink ? { parameterLink: structuredClone(layer.parameterLink) } : {}),
   };
 }
@@ -163,7 +165,6 @@ export function applyCommonRecord(layer: Layer, common: LayerCommonRecord): void
   layer.opacity = common.opacity;
   layer.blend = common.blend;
   layer.visible = common.visible;
-  layer.parentId = common.parentId;
-  layer.childIds = [...common.childIds];
+  layer.linkRecovery = common.linkRecovery ? structuredClone(common.linkRecovery) : undefined;
   layer.parameterLink = common.parameterLink ? structuredClone(common.parameterLink) : undefined;
 }

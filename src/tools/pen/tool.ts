@@ -1,5 +1,8 @@
+import { pageToRaster } from '../../engine/core/RasterCoordinates';
+import { IDENTITY, type Homography } from '../../engine/geometry/homography';
+import { stampRasterSegment } from '../../engine/raster/stampRasterSegment';
 import { TRANSPARENT, type StrokePoint } from '../../model';
-import { emptyRect, expandRect, stampSegment, type DirtyRect } from '../../engine/brush';
+import { emptyRect, expandRect, type DirtyRect } from '../../engine/brush';
 import type { RasterLayer } from '../../engine/layers';
 import type { PaintEngine } from '../../engine/PaintEngine';
 import { DEFAULT_SIZE_MM, mmToPx } from '../../engine/units';
@@ -12,6 +15,7 @@ interface RecordedPoint extends StrokePoint {
 
 export class PenTool implements Tool {
   private layer: RasterLayer | null = null;
+  private pageToNative: Homography = IDENTITY;
   private lastX = 0;
   private lastY = 0;
   private lastR = 0;
@@ -61,6 +65,9 @@ export class PenTool implements Tool {
   onDown(p: StrokePoint): void {
     const layer = this.eng.activeRaster();
     if (!layer) return;
+    const mapping = pageToRaster(this.eng, layer);
+    if (!mapping) return;
+    this.pageToNative = mapping;
     this.layer = layer;
     this.eng.captureBefore(layer);
     const settings = this.eng.activeToolSettings();
@@ -73,7 +80,7 @@ export class PenTool implements Tool {
     this.totalDistance = 0;
 
     const r = this.radius(p.pressure, this.taperFactor(0), true);
-    stampSegment(layer.runtime.ctx, p.x, p.y, r, p.x, p.y, r, this.color, this.erase);
+    stampRasterSegment(layer, p.x, p.y, r, p.x, p.y, r, this.color, this.erase, this.pageToNative);
     expandRect(this.rect, p.x, p.y, r + 2);
     this.lastX = p.x;
     this.lastY = p.y;
@@ -88,8 +95,8 @@ export class PenTool implements Tool {
     this.totalDistance += segmentDistance;
     this.points.push({ ...p, distance: this.totalDistance });
     const r = this.radius(p.pressure, this.taperFactor(this.totalDistance), false);
-    stampSegment(
-      this.layer.runtime.ctx,
+    stampRasterSegment(
+      this.layer,
       this.lastX,
       this.lastY,
       this.lastR,
@@ -98,6 +105,7 @@ export class PenTool implements Tool {
       r,
       this.color,
       this.erase,
+      this.pageToNative,
     );
     expandRect(this.rect, this.lastX, this.lastY, this.lastR + 2);
     expandRect(this.rect, p.x, p.y, r + 2);
@@ -145,10 +153,10 @@ export class PenTool implements Tool {
       const taper = this.taperFactor(point.distance, this.totalDistance - point.distance);
       const r = this.radius(point.pressure, taper, i === 0);
       if (prev) {
-        stampSegment(layer.runtime.ctx, prev.x, prev.y, prevR, point.x, point.y, r, this.color, this.erase);
+        stampRasterSegment(layer, prev.x, prev.y, prevR, point.x, point.y, r, this.color, this.erase, this.pageToNative);
         expandRect(this.rect, prev.x, prev.y, prevR + 2);
       } else {
-        stampSegment(layer.runtime.ctx, point.x, point.y, r, point.x, point.y, r, this.color, this.erase);
+        stampRasterSegment(layer, point.x, point.y, r, point.x, point.y, r, this.color, this.erase, this.pageToNative);
       }
       expandRect(this.rect, point.x, point.y, r + 2);
       prev = point;

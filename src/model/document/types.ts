@@ -42,6 +42,8 @@ export interface ResolvedOccurrence {
   id: OccurrenceId;
   entity: LayerEntity;
   origin: LayerSourceAddress;
+  /** Authored local children of an inline override belong to the overriding document. */
+  owner: DocumentKey;
 }
 export function addressKey(address: LayerSourceAddress): string {
   return JSON.stringify([address.document.kind, address.document.id, address.entityId]);

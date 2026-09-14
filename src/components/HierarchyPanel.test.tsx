@@ -58,8 +58,10 @@ const actions = vi.hoisted(() => ({
   }),
 }));
 const mockEngine = vi.hoisted(() => ({
+  getPageSpec: () => useStore.getState().pageSpec,
   artboard: { w: 1600, h: 1200 },
   getLayerCanvas: () => null,
+  layerById: () => null,
   setActiveLayer: actions.setActiveLayer,
   beginMultiSelect: actions.beginMultiSelect,
   exitMultiSelect: actions.exitMultiSelect,
@@ -98,7 +100,7 @@ const base = {
   ...caps,
 };
 const layers: LayerMeta[] = [
-  { ...base, id: 'raster', type: 'raster', canRemove: false, canMergeDown: false, state: {} },
+  { ...base, id: 'raster', type: 'raster', canRemove: false, canMergeDown: false, state: {matrix: [1, 0, 0, 0, 1, 0, 0, 0, 1]} },
   {
     ...base,
     id: 'shape',

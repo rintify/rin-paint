@@ -1,3 +1,6 @@
+import {ImageAsset} from './image/ImageAsset';
+import { normalizeShape } from './shapes';
+import { RasterSurface } from './raster/RasterSurface';
 import {
   cloneImageParams,
   defaultLayerCommon,
@@ -17,7 +20,7 @@ export type LayerOf<K extends LayerType = LayerType> = LayerCommon & {
   type: K;
   state: LayerKindMap[K]['state'];
   runtime: LayerKindMap[K]['runtime'];
-};
+} & (K extends 'canvas' ? {childIds: string[]} : {});
 
 export type RasterLayer = LayerOf<'raster'>;
 export type AdjustLayer = LayerOf<'adjust'>;
@@ -48,9 +51,6 @@ export function makeCanvas(w: number, h: number): HTMLCanvasElement {
   return c;
 }
 
-function canvasRuntime(canvas: HTMLCanvasElement): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } {
-  return { canvas, ctx: canvas.getContext('2d', { willReadFrequently: true })! };
-}
 
 export function createImageLayer(
   name: string,
@@ -64,11 +64,12 @@ export function createImageLayer(
     ...defaultLayerCommon(id, name),
     type: 'image',
     state: {
+      matrix: [...IDENTITY],
       placement: normalizeImageParams(cloneImageParams(image)),
       snapEnabled,
       constrainAspect,
     },
-    runtime: canvasRuntime(canvas),
+    runtime: {asset:new ImageAsset(canvas)},
   };
 }
 
@@ -76,55 +77,13 @@ export function createTextLayer(name: string, text: TextParams, id = newLayerId(
   return {
     ...defaultLayerCommon(id, name),
     type: 'text',
-    state: { text: structuredClone(text), snapEnabled },
+    state: { matrix: [...IDENTITY], text: structuredClone(text), snapEnabled },
     runtime: undefined,
   };
 }
 
-export function createRasterLayer(name: string, w: number, h: number, id = newLayerId(), deferred = false): RasterLayer {
-  const runtime = canvasRuntime(makeCanvas(deferred ? 1 : w, deferred ? 1 : h));
-  if (deferred) Object.assign(runtime, { deferred: true, logicalWidth: w, logicalHeight: h, contentBounds: null });
-  return {
-    ...defaultLayerCommon(id, name),
-    type: 'raster',
-    state: {},
-    runtime,
-  };
-}
-
-export function ensureRasterSurface(layer: RasterLayer): RasterLayer {
-  if (!layer.runtime.deferred) return layer;
-  const canvas = makeCanvas(layer.runtime.logicalWidth ?? layer.runtime.canvas.width, layer.runtime.logicalHeight ?? layer.runtime.canvas.height);
-  layer.runtime = {
-    ...canvasRuntime(canvas),
-    deferred: false,
-    logicalWidth: canvas.width,
-    logicalHeight: canvas.height,
-    contentBounds: layer.runtime.contentBounds ?? null,
-  };
-  return layer;
-}
-
-export function markRasterContent(layer: RasterLayer, rect: { x: number; y: number; w: number; h: number }): void {
-  const limitWidth = layer.runtime.logicalWidth ?? layer.runtime.canvas.width;
-  const limitHeight = layer.runtime.logicalHeight ?? layer.runtime.canvas.height;
-  const x = Math.max(0, Math.floor(rect.x));
-  const y = Math.max(0, Math.floor(rect.y));
-  const clipped = {
-    x,
-    y,
-    w: Math.max(0, Math.min(limitWidth, Math.ceil(rect.x + rect.w)) - x),
-    h: Math.max(0, Math.min(limitHeight, Math.ceil(rect.y + rect.h)) - y),
-  };
-  const before = layer.runtime.contentBounds;
-  if (before === undefined || clipped.w <= 0 || clipped.h <= 0) return;
-  if (!before) layer.runtime.contentBounds = clipped;
-  else {
-    const right = Math.max(before.x + before.w, clipped.x + clipped.w);
-    const bottom = Math.max(before.y + before.h, clipped.y + clipped.h);
-    const x = Math.min(before.x, clipped.x), y = Math.min(before.y, clipped.y);
-    layer.runtime.contentBounds = { x, y, w: right - x, h: bottom - y };
-  }
+export function createRasterLayer(name: string, ppi: number, id = newLayerId()): RasterLayer {
+  return {...defaultLayerCommon(id, name), type: 'raster', state: {matrix: [...IDENTITY]}, runtime: {surface: new RasterSurface(ppi)}};
 }
 
 export function createAdjustLayer(name: string, id = newLayerId()): AdjustLayer {
@@ -140,7 +99,7 @@ export function createOutlineLayer(name: string, id = newLayerId()): OutlineLaye
   return {
     ...defaultLayerCommon(id, name),
     type: 'outline',
-    state: { outline: { ...DEFAULT_OUTLINE } },
+    state: { matrix: [...IDENTITY], outline: { ...DEFAULT_OUTLINE } },
     runtime: undefined,
   };
 }
@@ -155,7 +114,7 @@ export function createClipLayer(name: string, id = newLayerId()): ClipLayer {
 }
 
 export function createCanvasLayer(name: string, id = newLayerId()): CanvasLayer {
-  return { ...defaultLayerCommon(id, name), type: 'canvas', state: { propagateTransforms: true }, runtime: undefined };
+  return { ...defaultLayerCommon(id, name), type: 'canvas', childIds: [], state: { propagateTransforms: true }, runtime: undefined };
 }
 
 export function createTransformLayer(name: string, id = newLayerId()): TransformLayer {
@@ -166,7 +125,7 @@ export function createShapeLayer(name: string, shape: ShapeParams, id = newLayer
   return {
     ...defaultLayerCommon(id, name),
     type: 'shape',
-    state: { shape, snapEnabled },
+    state: { matrix: [...IDENTITY], shape: normalizeShape(shape), snapEnabled },
     runtime: undefined,
   };
 }

@@ -1,8 +1,7 @@
 import { FormControl, MenuItem, Select, Stack, Switch, Typography } from '@mui/material';
 import type { ReactNode } from 'react';
 import { STANDARD_FONTS } from '../../engine/text/render';
-import { clampSizeMm, formatDeg, mmToPx, pxToMm, roundDeg, roundMm } from '../../engine/units';
-import { PageMmField } from '../PageMmField';
+import { formatDeg, roundDeg } from '../../engine/units';
 import { ColorField } from '../ColorField';
 import { NumericField } from '../NumericField';
 import { SliderField } from '../SliderField';
@@ -42,29 +41,9 @@ function switchRenderer({ parameter, value, mixed, labelColor, trailing, onCommi
   );
 }
 
-function sliderRenderer({ parameter, value, labelColor, trailing, onPreview, onCommitRange, ppi }: ControlRendererProps) {
+function sliderRenderer({ parameter, value, labelColor, trailing, onPreview, onCommitRange }: ControlRendererProps) {
   if (parameter.editor.kind !== 'slider') return null;
   const unit = parameter.editor.unit;
-  if (unit?.kind === 'canvas-mm') {
-    const mm = typeof value === 'number' ? pxToMm(value, ppi) : null;
-    return (
-      <SliderField
-        label={parameter.label}
-        value={mm}
-        min={parameter.editor.min}
-        max={parameter.editor.max}
-        unit="mm"
-        scale="mm"
-        color={labelColor}
-        trailing={trailing}
-        onPreview={next => onPreview?.(mmToPx(clampSizeMm(roundMm(next)), ppi))}
-        onCommit={(before, after) => onCommitRange?.(
-          mmToPx(clampSizeMm(roundMm(before ?? after)), ppi),
-          mmToPx(clampSizeMm(roundMm(after)), ppi),
-        )}
-      />
-    );
-  }
   const suffix = unit?.kind === 'percent' ? '%' : unit?.kind === 'mm' ? 'mm' : unit?.kind === 'pt' ? 'pt' : undefined;
   return (
     <SliderField
@@ -90,24 +69,9 @@ function numberRenderer({ parameter, value, mixed, labelColor, trailing, onCommi
     return (
       <LabeledControl label={parameter.label} color={labelColor}>
         <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-          {unit?.kind === 'canvas-mm' ? (
-            <PageMmField
-              size="small"
-              valuePx={typeof value === 'number' ? value : null}
-              minPx={parameter.editor.min}
-              disabled={auto}
-              onCommitPx={onCommit}
-            />
-          ) : (
-            <NumericField
-              size="small"
-              value={typeof value === 'number' ? value : null}
-              min={parameter.editor.min}
-              max={parameter.editor.max}
-              disabled={auto}
-              onCommit={onCommit}
-            />
-          )}
+          <NumericField size="small" value={typeof value === 'number' ? value : null}
+            min={parameter.editor.min} max={parameter.editor.max} disabled={auto}
+            unit={unit?.kind === 'mm' ? 'mm' : unit?.kind === 'pt' ? 'pt' : undefined} onCommit={onCommit} />
           <Typography variant="caption">自動</Typography>
           <Switch
             checked={auto}
@@ -119,20 +83,7 @@ function numberRenderer({ parameter, value, mixed, labelColor, trailing, onCommi
       </LabeledControl>
     );
   }
-  if (unit?.kind === 'canvas-mm') {
-    return (
-      <PageMmField
-        size="small"
-        label={parameter.label}
-        valuePx={typeof value === 'number' ? value : null}
-        minPx={parameter.editor.min}
-        onCommitPx={onCommit}
-        trailing={trailing}
-        labelColor={labelColor}
-      />
-    );
-  }
-  const suffix = unit?.kind === 'degree' ? '度' : unit?.kind === 'pt' ? 'pt' : unit?.kind === 'none' ? unit.suffix : undefined;
+  const suffix = unit?.kind === 'mm' ? 'mm' : unit?.kind === 'degree' ? '度' : unit?.kind === 'pt' ? 'pt' : unit?.kind === 'none' ? unit.suffix : undefined;
   const numeric = typeof value === 'number'
     ? (unit?.kind === 'degree' ? roundDeg(value) : value)
     : null;

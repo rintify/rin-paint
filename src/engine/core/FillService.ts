@@ -1,8 +1,10 @@
+import { pageToRaster } from './RasterCoordinates';
+import { multiply, translation } from '../geometry/homography';
+import { paintProjectedCanvas } from '../raster/paintProjectedCanvas';
 import { useStore } from '../../state/store';
 import { TRANSPARENT, type StrokePoint } from '../../model';
 import { normalizeFillToolSettings } from '../../tools/fill/settings';
 import { analyzeFill, type FillAnalysisResult } from '../fillAlgorithm';
-import { makeCanvas } from '../layers';
 import type { PaintEngine } from '../PaintEngine';
 import { gapCloseMmToPx } from '../units';
 
@@ -50,8 +52,7 @@ export class FillService {
       const reference = this.engine.compositor.compositeSelection(selected);
       const pixels = reference.getContext('2d', { willReadFrequently: true })!
         .getImageData(0, 0, reference.width, reference.height).data;
-      const before = makeCanvas(target.runtime.canvas.width, target.runtime.canvas.height);
-      before.getContext('2d')!.drawImage(target.runtime.canvas, 0, 0);
+      const before = target.runtime.surface.snapshot();
       const result = await this.analyze({
         pixels,
         width: reference.width,
@@ -63,20 +64,28 @@ export class FillService {
       }, token);
       if (!result || token !== this.token || !result.bounds) return;
       const bounds = result.bounds;
-      const image = target.runtime.ctx.getImageData(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+      const mapping = pageToRaster(this.engine, target);
+      if (!mapping) return;
+      const fill = document.createElement('canvas');
+      fill.width = bounds.maxX - bounds.minX; fill.height = bounds.maxY - bounds.minY;
+      const context = fill.getContext('2d')!;
+      const image = context.createImageData(fill.width, fill.height);
       const rgb = color === TRANSPARENT ? null : parseHex(color);
       const span = bounds.maxX - bounds.minX;
       for (let y = bounds.minY; y < bounds.maxY; y++) {
         for (let x = bounds.minX; x < bounds.maxX; x++) {
           if (!result.mask[y * reference.width + x]) continue;
           const offset = ((y - bounds.minY) * span + x - bounds.minX) * 4;
-          if (!rgb) image.data[offset + 3] = 0;
+          if (!rgb) image.data[offset + 3] = 255;
           else {
             image.data[offset] = rgb[0]; image.data[offset + 1] = rgb[1]; image.data[offset + 2] = rgb[2]; image.data[offset + 3] = 255;
           }
         }
       }
-      target.runtime.ctx.putImageData(image, bounds.minX, bounds.minY);
+      context.putImageData(image, 0, 0);
+      paintProjectedCanvas(target.runtime.surface, fill, multiply(mapping, translation(bounds.minX, bounds.minY)),
+        rgb ? 'source-over' : 'destination-out');
+      fill.width = fill.height = 0;
       this.engine.commitRasterBatch([{ layer: target, before, rect: bounds }], '塗りつぶし');
       if (color !== TRANSPARENT) useStore.getState().pushColor(color);
     } finally {

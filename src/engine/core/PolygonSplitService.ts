@@ -21,7 +21,6 @@ import {
   shapePoints,
 } from '../shapes';
 import type { PaintEngine } from '../PaintEngine';
-import { mmToPx } from '../units';
 
 type TargetShape = Extract<ShapeParams, { kind: 'rect' | 'polygon' }>;
 interface SplitResult { id: string; fragments: ShapePoint[][] }
@@ -88,6 +87,9 @@ export class PolygonSplitService {
 
   async split(a: StrokePoint, b: StrokePoint): Promise<void> {
     const eng = this.engine, ls = eng.layerService;
+    const mmPerPixel = 25.4 / eng.getPageSpec().ppi;
+    a = {...a, x: a.x * mmPerPixel, y: a.y * mmPerPixel};
+    b = {...b, x: b.x * mmPerPixel, y: b.y * mmPerPixel};
     if (eng.isBusy()) return;
     const state = useStore.getState();
     const selectedIds = state.multiSelectMode ? state.selectedLayerIds : [ls.activeLayerId];
@@ -95,27 +97,27 @@ export class PolygonSplitService {
     if (!targets.length) return;
     const targetIds = new Set(targets.map(layer => layer.id));
     for (const target of targets) {
-      let parent = target.parentId;
+      let parent = ls.scopeOf(target.id);
       while (parent) {
         if (targetIds.has(parent)) {
           useStore.getState().set({ toolNotice: '親子関係にある図形は同時に分断できません' });
           return;
         }
-        parent = ls.byId(parent)?.parentId ?? null;
+        parent = ls.scopeOf(parent);
       }
     }
     const dx = b.x - a.x, dy = b.y - a.y, length = Math.hypot(dx, dy);
     if (length < .01) return;
     const activeTool = state.tools.find(tool => tool.id === state.activeToolId);
     const widthMm = Math.max(0, normalizePolygonSplitToolSettings(activeTool?.settings).widthMm);
-    const width = mmToPx(widthMm, useStore.getState().pageSpec.ppi);
+    const width = widthMm;
     eng.setBusy(true);
     try {
       const clipping = await import('polygon-clipping');
       const results: SplitResult[] = [];
       for (const layer of targets) {
         const points = shapePoints(layer.state.shape as TargetShape);
-        const fragments = clipPolygonByBand(clipping, points, a, b, width, Math.max(eng.artboard.w, eng.artboard.h));
+        const fragments = clipPolygonByBand(clipping, points, a, b, width, Math.max(eng.getPageSpec().widthMm, eng.getPageSpec().heightMm));
         const originalArea = Math.abs(polygonArea(points));
         const resultArea = fragments.reduce((sum, fragment) => sum + Math.abs(polygonArea(fragment)), 0);
         if (fragments.length === 1 && Math.abs(resultArea - originalArea) < .01) continue;
@@ -131,8 +133,8 @@ export class PolygonSplitService {
   private snapshotEntries(rootIds: string[]): LocatedLayerSnapshot[] {
     const ls = this.engine.layerService;
     return rootIds.flatMap(rootId => ls.descendantIds(rootId).map(id => ({
-      location: ls.locationOf(id) ?? { parentId: ls.byId(id)?.parentId ?? null, index: 0 },
-      snapshot: ls.snapshotLayer(ls.byId(id)!, true, true),
+      location: ls.locationOf(id) ?? { parentId: ls.scopeOf(id), index: 0 },
+      snapshot: ls.snapshotLayer(ls.byId(id)!, true),
     })));
   }
 
@@ -159,22 +161,21 @@ export class PolygonSplitService {
       const snapshot: LayerSnapshot = {
         id: ids.get(original.id)!,
         type,
+        unit: 'mm',
         common: {
           ...structuredClone(original.common),
           name: isRoot ? name : original.common.name,
-          parentId: isRoot
-            ? location.parentId
-            : original.common.parentId
-              ? ids.get(original.common.parentId) ?? original.common.parentId
-              : null,
-          childIds: original.common.childIds.map(id => ids.get(id) ?? id),
         },
+        ...(original.scope ? {scope: {id: ids.get(original.id)!, children: original.scope.children.map(child => ({
+          id: ids.get(child.id) ?? child.id, entityId: ids.get(child.entityId) ?? child.entityId,
+        }))}} : {}),
         state: def.codec.encode(nextState as never),
         content: original.content,
-        canvas: original.canvas,
+        raster: original.raster,
+        image: original.image,
       };
       return {
-        location: isRoot ? location : { parentId: snapshot.common.parentId, index: entry.location.index },
+        location: isRoot ? location : { parentId: entry.location.parentId ? ids.get(entry.location.parentId) ?? entry.location.parentId : null, index: entry.location.index },
         snapshot,
       };
     });
@@ -229,7 +230,7 @@ export class PolygonSplitService {
       }
       producedByOriginal.set(result.id, produced);
       for (const producedId of produced) downstreamLinkOps.push(
-        ...eng.links.propagateFrom({ pageId: eng.pages.activePageId, layerId: producedId }),
+        ...eng.links.propagateFrom({ document: eng.documentKey, layerId: producedId }),
       );
     }
     const selected = beforeSelection.selectedLayerIds.flatMap(id => producedByOriginal.has(id) ? producedByOriginal.get(id)! : ls.byId(id) ? [id] : []);

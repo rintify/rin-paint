@@ -5,7 +5,7 @@ export type { LayerType } from './layerKind';
 export * from './layerKind';
 
 export interface LayerAddress {
-  pageId: string;
+  document: import("./document/types").DocumentKey;
   layerId: string;
 }
 
@@ -13,6 +13,11 @@ export type SemanticParameterValue = number | string | boolean | null;
 
 /** One upstream layer plus the individual semantic parameters still following it. */
 export interface LayerParameterLink {
+  structure?: {inherited: Record<string, string>; suppressed: string[]; placements: {id: string; index: number}[]};
+  linkedContent?: boolean;
+  linkedState?: boolean;
+  linkedName?: boolean;
+  stateOverrides?: Record<string, {value?: unknown; remove?: true}>;
   source: LayerAddress;
   sourceNameHint: string;
   sourcePageIndexHint: number;
@@ -29,6 +34,9 @@ export interface LayerLinkEndpointSummary {
 }
 
 interface LayerMetaFlags {
+  childIds: string[];
+  /** Derived presentation location; never an entity property. */
+  parentId: string | null;
   linkSource?: LayerLinkEndpointSummary;
   directLinkTargets?: LayerLinkEndpointSummary[];
   compatibleLinkParameterIds?: string[];
@@ -58,8 +66,7 @@ export function cloneLayerCommon(layer: LayerCommon): LayerCommon {
     opacity: layer.opacity,
     blend: layer.blend,
     visible: layer.visible,
-    parentId: layer.parentId,
-    childIds: [...layer.childIds],
+    ...(layer.linkRecovery ? {linkRecovery: structuredClone(layer.linkRecovery)} : {}),
     ...(layer.parameterLink ? { parameterLink: structuredClone(layer.parameterLink) } : {}),
   };
 }
@@ -71,8 +78,6 @@ export function defaultLayerCommon(id: string, name: string): LayerCommon {
     opacity: 1,
     blend: 'source-over',
     visible: true,
-    parentId: null,
-    childIds: [],
   };
 }
 

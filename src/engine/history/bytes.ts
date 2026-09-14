@@ -2,11 +2,10 @@ import type { Op, PersistedAtomicOp, PersistedOp, LayerSnapshot } from './histor
 import type { TilePatch } from './tilePatch';
 
 function snapshotBytes(snapshot: LayerSnapshot | { content?: Blob; blob?: Blob }): number {
+  if ('raster' in snapshot && snapshot.raster) return snapshot.raster.tiles.size * 256 * 256 * 4;
   if ('content' in snapshot && snapshot.content) return snapshot.content.size;
   if ('blob' in snapshot && snapshot.blob) return snapshot.blob.size;
-  if ('canvas' in snapshot && snapshot.canvas) {
-    return snapshot.canvas.width * snapshot.canvas.height * 4;
-  }
+  if ('image' in snapshot && snapshot.image) return snapshot.image.retainedBytes;
   return 0;
 }
 

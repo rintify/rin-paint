@@ -1,7 +1,5 @@
 import { useStore } from '../../state/store';
-import { savedLayerFrom } from '../layer-types/registry';
-import { canvasToBlob } from '../layers';
-import { getPersistenceUsage, saveProjectSnapshot, type SavedLayer } from '../persistence/db';
+import { getPersistenceUsage, saveProjectSnapshot, saveBin, type SavedLayer } from '../persistence/db';
 import { PROJECT_VERSION } from '../persistence/version';
 import type { PaintEngine } from '../PaintEngine';
 
@@ -64,19 +62,26 @@ export class AutosaveService {
 
   async saveSnapshot(): Promise<void> {
     const eng = this.engine;
+    const capturedDocument = {...eng.documentKey};
+    await eng.canvases.flush();
+    if (capturedDocument.kind !== eng.documentKey.kind || capturedDocument.id !== eng.documentKey.id) return;
     const ls = eng.layerService;
     const pages = eng.pages;
     const st = useStore.getState();
+    const binId = eng.bins.activeId;
     const pageId = pages.activePageId;
     const pageOrder = [...pages.pageOrder];
     // レイヤー内容は同期でコピーされ、PNG 化だけが非同期に進む。
-    const layerSources = ls.layers.map((l) => savedLayerFrom(l, { artboard: eng.artboard }));
+    const layerSources = ls.layers.map((l) => eng.canvases.saveOccurrence(eng.links.resolveLayer(l)));
     const activeLayerId = ls.activeLayerId;
+    const selection={selectedLayerIds:[...st.selectedLayerIds],multiSelectMode:st.multiSelectMode};
     const view = eng.view.snapshot();
     const pageSpec = { ...eng.getPageSpec() };
     const fonts = structuredClone(st.fonts);
     const rootLayerIds = [...ls.rootLayerIds];
-    const historyPromise = eng.history.serialize(canvasToBlob);
+    const layerStacks = eng.stacks.snapshot();
+    const historyPromise = eng.history.serialize();
+    const deletedSourcesPromise = eng.links.serializeDeletedSources();
     let thumbnailPromise: Promise<Blob | undefined> = Promise.resolve(undefined);
     let thumbnailVersion = pages.thumbnailVersion;
     if (eng.compositor.main) {
@@ -89,20 +94,27 @@ export class AutosaveService {
       thumbnailVersion = ++pages.thumbnailVersion;
     }
     const layers: SavedLayer[] = await Promise.all(layerSources);
-    const [history, thumbnail] = await Promise.all([historyPromise, thumbnailPromise]);
+    const [history, thumbnail, deletedSources] = await Promise.all([historyPromise, thumbnailPromise, deletedSourcesPromise]);
     const page = {
       id: pageId,
       pageSpec,
       rootLayerIds,
+      layerStacks,
       layers,
       activeLayerId,
+      selection,
       history,
       view,
       thumbnailVersion,
       thumbnail,
     };
-    await saveProjectSnapshot({version:PROJECT_VERSION, pageOrder, activePageId:pageId, fonts}, page);
-    eng.links.noteSavedPage(page);
+    const meta = {version: PROJECT_VERSION, pageOrder, activePageId: pageId, activeBinId: binId, fonts, deletedSources};
+    if (binId) {
+      const bin = {id: binId, rootLayerIds, layers, activeLayerId, selection, history, view, workArea: pageSpec};
+      await saveBin(bin, meta); eng.bins.noteSaved(bin);
+    } else {
+      await saveProjectSnapshot(meta, page); eng.links.noteSavedPage(page);
+    }
     this.scheduleStorageRefresh();
   }
 

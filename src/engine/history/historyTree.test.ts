@@ -4,14 +4,13 @@ import { HISTORY_VERSION } from '../persistence/version';
 
 const shapeSnapshot: LayerSnapshot = {
   id: 'shape-1',
+  unit: 'mm',
   type: 'shape',
   common: {
     name: '直線',
     opacity: 1,
     blend: 'source-over',
     visible: true,
-    parentId: 'raster-1',
-    childIds: [],
   },
   state: { shape: { kind: 'line', x1: 1, y1: 2, x2: 30, y2: 40, color: '#123456', strokeWidth: 5 }, snapEnabled: true },
 };
@@ -19,14 +18,14 @@ const shapeSnapshot: LayerSnapshot = {
 describe('shape history persistence', () => {
   it('round-trips tree locations and shape parameters', async () => {
     const history = new HistoryTree();
-    history.push({ kind: 'layerAdd', location: { parentId: 'raster-1', index: 2 }, snapshot: shapeSnapshot }, '図形を追加');
-    const saved = await history.serialize(async () => new Blob());
+    history.push({ kind: 'layerAdd', location: { parentId: 'canvas-1', index: 2 }, snapshot: shapeSnapshot }, '図形を追加');
+    const saved = await history.serialize();
     expect(saved.version).toBe(HISTORY_VERSION);
     const restored = new HistoryTree();
     expect(restored.restore(saved)).toBe(true);
     expect(restored.current.op).toMatchObject({
       kind: 'layerAdd',
-      location: { parentId: 'raster-1', index: 2 },
+      location: { parentId: 'canvas-1', index: 2 },
       snapshot: { state: shapeSnapshot.state },
     });
   });
@@ -39,14 +38,14 @@ describe('shape history persistence', () => {
       kind: 'layerMerge',
       format: 'tiles-v1',
       targetLayerId: 'raster-1',
-      removed: { location: { parentId: 'raster-1', index: 0 }, snapshot: shapeSnapshot },
+      removed: { location: { parentId: 'canvas-1', index: 0 }, snapshot: shapeSnapshot },
       tiles: [{ x: 0, y: 0, w: 32, h: 32, before, after }],
       beforeActiveId: 'shape-1',
       afterActiveId: 'raster-1',
     }, '下のレイヤーと統合');
 
     expect(history.retainedBytes()).toBe(28);
-    const saved = await history.serialize(async () => new Blob());
+    const saved = await history.serialize();
     expect(saved.nodes[1].op).toMatchObject({
       kind: 'layerMerge',
       format: 'tiles-v1',
@@ -92,14 +91,14 @@ describe('shape history persistence', () => {
       { kind: 'layerProps', layerId: 'b', before: { visible: true }, after: { visible: false } },
     ] }, '複数レイヤー設定');
     const restored = new HistoryTree();
-    expect(restored.restore(await history.serialize(async () => new Blob()))).toBe(true);
+    expect(restored.restore(await history.serialize())).toBe(true);
     expect(restored.current.op).toMatchObject({ kind: 'batch', ops: [{ layerId: 'a' }, { layerId: 'b' }] });
   });
 
   it('round-trips cross-page layer link operations', async () => {
     const history = new HistoryTree();
     const link = {
-      source: { pageId: 'source-page', layerId: 'source-layer' },
+      source: { document: {kind: 'page' as const, id: 'source-page'}, layerId: 'source-layer' },
       sourceNameHint: '元',
       sourcePageIndexHint: 0,
       linkedParameterIds: ['layer.opacity'],
@@ -107,12 +106,12 @@ describe('shape history persistence', () => {
     };
     history.push({
       kind: 'layerLink',
-      target: { pageId: 'target-page', layerId: 'target-layer' },
+      target: { document: {kind: 'page' as const, id: 'target-page'}, layerId: 'target-layer' },
       before: null,
       after: link,
     }, 'リンク元を変更');
     const restored = new HistoryTree();
-    expect(restored.restore(await history.serialize(async () => new Blob()))).toBe(true);
+    expect(restored.restore(await history.serialize())).toBe(true);
     expect(restored.current.op).toEqual(expect.objectContaining({ kind: 'layerLink', after: link }));
   });
 });

@@ -11,7 +11,7 @@ const common = {
   parentId: null as string | null,
   childIds: [] as string[],
 };
-const env = { artboard: { w: 100, h: 80 }, withContent: false, keepCanvas: false, onEncoded() {} };
+const env = { artboard: { w: 100, h: 80 }, withContent: false };
 
 describe('shape layer snapEnabled persistence', () => {
   it('defaults new shapes to snapEnabled true', () => {
@@ -35,7 +35,8 @@ describe('shape layer snapEnabled persistence', () => {
 
   it('restores missing snapEnabled as true', async () => {
     const layer = await restoreLayerFrom({
-      id: 'old',
+      id: 'defaults',
+      unit: 'mm',
       type: 'shape',
       common,
       state: { shape: line },

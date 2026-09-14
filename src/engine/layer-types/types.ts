@@ -13,6 +13,7 @@ export interface Point {
 }
 
 export interface LayerContentEnv {
+  ppi?: number;
   artboard: ArtboardSize;
 }
 
@@ -22,17 +23,11 @@ export interface LayerRestoreEnv extends LayerContentEnv {
 
 export interface LayerSnapshotEnv extends LayerContentEnv {
   withContent: boolean;
-  keepCanvas: boolean;
-  onEncoded(): void;
 }
 
 export interface LayerScaleEnv {
   width: number;
   height: number;
-}
-
-export interface LayerStoredScaleEnv extends LayerContentEnv {
-  factor: number;
 }
 
 export interface LayerMeasureEnv {

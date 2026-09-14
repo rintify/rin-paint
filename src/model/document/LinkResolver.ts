@@ -50,6 +50,18 @@ export class LinkResolver {
       throw new Error('ビンからページは参照できません');
     }
     const targetKey = addressKey(target), done = new Set<string>(), visiting = new Set<string>();
+    const visitEntity = (entity: LayerEntity, address: LayerSourceAddress): void => {
+      const follow = (source: LayerSourceAddress) => {
+        if (address.document.kind === 'bin-item' && source.document.kind === 'page') throw new Error('ビンからページは参照できません');
+        visit(source);
+      };
+      if (entity.binding.source) follow(entity.binding.source);
+      if (entity.type === 'canvas') {
+        if (entity.structure.source) follow(entity.structure.source);
+        for (const child of entity.structure.local.children) follow({document:address.document,entityId:child.entityId});
+        for (const override of Object.values(entity.structure.overrides)) visitEntity(override,address);
+      }
+    };
     const visit = (address: LayerSourceAddress): void => {
       const key = addressKey(address);
       if (key === targetKey || visiting.has(key)) throw new Error('循環参照です');
@@ -57,15 +69,7 @@ export class LinkResolver {
       const entity = this.repository.get(address);
       if (!entity) throw new Error('参照先が存在しません');
       visiting.add(key);
-      if (entity.binding.source) visit(entity.binding.source);
-      if (entity.type === 'canvas') {
-        if (entity.structure.source) visit(entity.structure.source);
-        for (const child of entity.structure.local.children) visit({document:address.document, entityId:child.entityId});
-        for (const override of Object.values(entity.structure.overrides)) {
-          if (override.binding.source) visit(override.binding.source);
-          if (override.type === 'canvas' && override.structure.source) visit(override.structure.source);
-        }
-      }
+      visitEntity(entity,address);
       visiting.delete(key); done.add(key);
     };
     visit(source);

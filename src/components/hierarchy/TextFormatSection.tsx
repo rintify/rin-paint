@@ -69,11 +69,11 @@ export function TextFormatSection({ meta }: { meta: LayerMeta }) {
         size="small"
         fullWidth
         label="サイズ"
-        value={style.sizePt}
+        value={style.sizeMm * 72 / 25.4}
         min={1}
         max={512}
         disabled={session.composing}
-        onCommit={n => format({ sizePt: n })}
+        onCommit={n => format({ sizeMm: n * 25.4 / 72 })}
         unit="pt"
       />
       <ColorField

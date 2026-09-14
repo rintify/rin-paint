@@ -1,3 +1,6 @@
+import { ScopeTransforms } from './ScopeTransforms';
+import { inverse, project, multiply, scaling, transformBounds } from '../geometry/homography';
+import { drawProjectedProcedure } from '../geometry/drawProjectedProcedure';
 import { useStore } from '../../state/store';
 import type { ShapeParams, ShapePoint, StrokePoint } from '../../model';
 import {
@@ -85,10 +88,27 @@ export class ShapeEditController {
 
   constructor(private engine: PaintEngine) {}
 
+  private uiScale(): number { return this.engine.uiScale() * 25.4 / this.engine.getPageSpec().ppi; }
+  private transforms(): ScopeTransforms {
+    return new ScopeTransforms(this.engine.getRootLayerIds(), this.engine.allLayers(), this.engine.getPageSpec().ppi);
+  }
+  private modelPoint(point: StrokePoint): StrokePoint | null {
+    const inv = inverse(this.transforms().geometryToPage(this.engine.getActiveLayerId()));
+    const local = inv && project(inv, point); if (!local) return null;
+    const factor = 25.4 / this.engine.getPageSpec().ppi;
+    return {...point, x: local.x * factor, y: local.y * factor};
+  }
+  private invalidate(id: string, rect: DirtyRect): void {
+    const matrix = multiply(this.transforms().geometryToPage(id), scaling(this.engine.getPageSpec().ppi / 25.4));
+    const area = transformBounds(matrix, {x: rect.minX, y: rect.minY, w: rect.maxX - rect.minX, h: rect.maxY - rect.minY});
+    if (area) this.engine.invalidateLayer(id, {minX: area.x, minY: area.y, maxX: area.x + area.w, maxY: area.y + area.h});
+    else this.engine.requestRender();
+  }
+
   hasEdit(): boolean { return !!this.shapeEdit; }
 
   snapGuides(): { x: number | null; y: number | null } {
-    return { x: this.shapeEdit?.xGuide ?? null, y: this.shapeEdit?.yGuide ?? null };
+    return {x: this.shapeEdit?.xGuide ?? null, y: this.shapeEdit?.yGuide ?? null};
   }
 
   refreshVertexState(): void {
@@ -132,23 +152,25 @@ export class ShapeEditController {
 
   /** 外接矩形の上に浮かぶ回転ハンドルの位置。種類によらず共通 */
   private rotateHandle(shape: ShapeParams): { x: number; y: number } {
-    return { x: shapeCenter(shape).x, y: shapeBounds(shape).y - ROTATE_HANDLE_GAP * this.engine.uiScale() };
+    return { x: shapeCenter(shape).x, y: shapeBounds(shape).y - ROTATE_HANDLE_GAP * this.uiScale() };
   }
 
   private collectMoveSnapLines(editingId: string): SnapLines {
-    const others = this.engine.layerService.layers.flatMap(layer => {
-      if (layer.parentId !== this.engine.layerService.byId(editingId)?.parentId || layer.id === editingId || !layer.visible) return [];
-      if (layer.type === 'shape') return [shapeBounds(layer.state.shape)];
-      if (layer.type === 'image') return [shapeBounds(imageFrameShape(layer.state.placement))];
-      return [];
-    });
-    return collectSnapLines(this.engine.artboard, others, this.engine.layerService.byId(editingId)?.parentId === null);
+    return collectSnapLines(this.engine.artboard, this.engine.visibleObjectBounds(editingId), this.engine.layerService.scopeOf(editingId) === null);
+  }
+
+  private geometryMmToPage(id: string) {
+    return multiply(this.transforms().geometryToPage(id), scaling(this.engine.getPageSpec().ppi / 25.4));
   }
 
   private collectVertexSnapPoints(editingId: string, selectedIndex: number): ShapePoint[] {
     return this.engine.layerService.layers.flatMap(layer => {
-      if (layer.parentId !== this.engine.layerService.byId(editingId)?.parentId || layer.type !== 'shape' || !layer.visible || layer.state.shape.kind !== 'polygon') return [];
-      return shapePoints(layer.state.shape).filter((_, index) => layer.id !== editingId || index !== selectedIndex);
+      if (this.engine.layerService.scopeOf(layer.id) !== this.engine.layerService.scopeOf(editingId) || layer.type !== 'shape' || !layer.visible || layer.state.shape.kind !== 'polygon') return [];
+      const matrix = this.geometryMmToPage(layer.id);
+      return shapePoints(layer.state.shape).flatMap((point, index) => {
+        if (layer.id === editingId && index === selectedIndex) return [];
+        const displayed = project(matrix, point); return displayed ? [displayed] : [];
+      });
     });
   }
 
@@ -167,11 +189,13 @@ export class ShapeEditController {
   }
 
   beginShapeEdit(point: StrokePoint, _event?: PointerEvent): boolean {
+    const localPoint = this.modelPoint(point); if (!localPoint) return false;
+    point = localPoint;
     const layer = this.editableById(this.engine.layerService.activeLayerId);
     if (!layer) { this.selectedHandle = null; this.syncVertexState(); return false; }
     const shape = frameShapeOf(layer);
     const edit = shapeKindHandler(shape).edit;
-    const radius = HANDLE_RADIUS * this.engine.uiScale();
+    const radius = HANDLE_RADIUS * this.uiScale();
     const near = (x: number, y: number) => Math.hypot(point.x - x, point.y - y) <= radius;
 
     const rotate = this.rotateHandle(shape);
@@ -224,7 +248,7 @@ export class ShapeEditController {
     };
     this.syncVertexState();
     if (hit?.shape) {
-      this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(before), editableDirty(layer)));
+      this.invalidate(layer.id, unionRect(shapeDirty(before), editableDirty(layer)));
       this.engine.requestOverlayRender();
       this.engine.syncStore();
     }
@@ -232,6 +256,8 @@ export class ShapeEditController {
   }
 
   updateShapeEdit(point: StrokePoint, event?: PointerEvent): boolean {
+    const localPoint = this.modelPoint(point); if (!localPoint) return false;
+    point = localPoint;
     const edit = this.shapeEdit;
     if (!edit) return false;
     const layer = this.editableById(edit.layerId);
@@ -251,16 +277,16 @@ export class ShapeEditController {
       if (!layer.state.snapEnabled) {
         next = translateShape(edit.before, dx, dy);
       } else {
-        const snapped = snapTranslation(
-          shapeBounds(edit.before),
-          dx,
-          dy,
-          edit.snapLines ?? collectSnapLines(this.engine.artboard, []),
-          SNAP_SCREEN_PX * this.engine.uiScale(),
-        );
-        next = translateShape(edit.before, snapped.dx, snapped.dy);
-        edit.xGuide = snapped.xGuide;
-        edit.yGuide = snapped.yGuide;
+        const matrix = this.geometryMmToPage(layer.id), inv = inverse(matrix);
+        const moved = translateShape(edit.before, dx, dy);
+        const bounds = transformBounds(matrix, shapeBounds(moved));
+        const center = shapeCenter(moved), anchor = project(matrix, center);
+        const snapped = bounds && snapTranslation(bounds, 0, 0,
+          edit.snapLines ?? this.collectMoveSnapLines(layer.id), SNAP_SCREEN_PX * this.engine.uiScale());
+        const corrected = snapped && anchor && inv && project(inv, {x: anchor.x + snapped.dx, y: anchor.y + snapped.dy});
+        next = corrected ? translateShape(moved, corrected.x - center.x, corrected.y - center.y) : moved;
+        edit.xGuide = snapped?.xGuide ?? null;
+        edit.yGuide = snapped?.yGuide ?? null;
       }
     } else if (edit.mode === 'rotate') {
       const center = shapeCenter(edit.before);
@@ -280,22 +306,21 @@ export class ShapeEditController {
         target = { ...point, x: constrained.x, y: constrained.y };
       }
       if (edit.mode === 'vertex' && layer.state.snapEnabled && edit.vertexSnapPoints) {
-        const snapped = snapPointToPoints(target, edit.vertexSnapPoints, SNAP_SCREEN_PX * this.engine.uiScale());
-        target = { ...target, x: snapped.point.x, y: snapped.point.y };
-        edit.snappedPoint = snapped.snappedTo;
-        if (snapped.snappedTo) {
-          edit.xGuide = snapped.snappedTo.x;
-          edit.yGuide = snapped.snappedTo.y;
-        }
-        if (snapped.snappedTo && edit.vertexWorld) {
-          const same = (a: ShapePoint, b: ShapePoint) => Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6;
-          edit.mergeVertexOnFinish = same(snapped.snappedTo, edit.vertexWorld.prev) || same(snapped.snappedTo, edit.vertexWorld.next);
-        }
-        if (!snapped.snappedTo && edit.vertexSnapLines) {
-          const lineSnapped = snapPointToLines(target, edit.vertexSnapLines, SNAP_SCREEN_PX * this.engine.uiScale());
-          target = { ...target, x: lineSnapped.point.x, y: lineSnapped.point.y };
-          edit.xGuide = lineSnapped.xGuide;
-          edit.yGuide = lineSnapped.yGuide;
+        const matrix = this.geometryMmToPage(layer.id), inv = inverse(matrix);
+        const displayed = project(matrix, target);
+        if (displayed && inv) {
+          const snapped = snapPointToPoints(displayed, edit.vertexSnapPoints, SNAP_SCREEN_PX * this.engine.uiScale());
+          const lines = !snapped.snappedTo && edit.vertexSnapLines
+            ? snapPointToLines(displayed, edit.vertexSnapLines, SNAP_SCREEN_PX * this.engine.uiScale()) : null;
+          const local = project(inv, lines?.point ?? snapped.point);
+          if (local) target = {...target, ...local};
+          edit.snappedPoint = snapped.snappedTo && local;
+          edit.xGuide = snapped.snappedTo?.x ?? lines?.xGuide ?? null;
+          edit.yGuide = snapped.snappedTo?.y ?? lines?.yGuide ?? null;
+          if (snapped.snappedTo && local && edit.vertexWorld) {
+            const same = (a: ShapePoint, b: ShapePoint) => Math.abs(a.x-b.x) < 1e-6 && Math.abs(a.y-b.y) < 1e-6;
+            edit.mergeVertexOnFinish = same(local, edit.vertexWorld.prev) || same(local, edit.vertexWorld.next);
+          }
         }
       }
       const result = shapeKindHandler(edit.before).edit.dragHandle({
@@ -341,9 +366,9 @@ export class ShapeEditController {
     const previous = editableDirty(layer);
     writeFrameShape(layer, next);
     this.syncVertexState();
-    this.engine.invalidateLayer(layer.id, unionRect(previous, editableDirty(layer)));
+    this.invalidate(layer.id, unionRect(previous, editableDirty(layer)));
     this.engine.requestOverlayRender();
-    this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id }, true);
+    this.engine.links.propagateFrom({ document: this.engine.documentKey, layerId: layer.id }, true);
     this.engine.syncStore();
     return true;
   }
@@ -356,7 +381,7 @@ export class ShapeEditController {
     if (layer && edit.invalid && !edit.mergeVertexOnFinish) {
       writeFrameShape(layer, cloneShape(edit.lastValid ?? edit.before));
       this.engine.notify(shapeKindHandler(frameShapeOf(layer)).edit.invalidMessage ?? '直前の有効な状態へ戻しました');
-      this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(edit.before), editableDirty(layer)));
+      this.invalidate(layer.id, unionRect(shapeDirty(edit.before), editableDirty(layer)));
       this.engine.requestOverlayRender();
       this.engine.syncStore();
     }
@@ -365,14 +390,14 @@ export class ShapeEditController {
       if (merged?.shape) {
         layer.state.shape = merged.shape;
         this.selectedHandle = null;
-        this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(edit.before), shapeDirty(layer.state.shape)));
+        this.invalidate(layer.id, unionRect(shapeDirty(edit.before), shapeDirty(layer.state.shape)));
         this.engine.requestOverlayRender();
         this.engine.syncStore();
       } else if (layer.state.shape.points.length <= 3) {
         const rejected = cloneShape(layer.state.shape);
         layer.state.shape = cloneShape(edit.before);
         this.engine.notify('多角形は3頂点未満にできないため、頂点を統合できません');
-        this.engine.invalidateLayer(layer.id, unionRect(shapeDirty(rejected), shapeDirty(layer.state.shape)));
+        this.invalidate(layer.id, unionRect(shapeDirty(rejected), shapeDirty(layer.state.shape)));
         this.engine.requestOverlayRender();
         this.engine.syncStore();
       }
@@ -386,7 +411,7 @@ export class ShapeEditController {
       };
       const linkOp = this.engine.layerService.linkOpForUserChange(layer, propsOp.before, propsOp.after);
       this.engine.history.push(linkOp ? { kind: 'batch', ops: [propsOp, linkOp] } : propsOp, edit.vertexIndex !== undefined ? (layer.type === 'shape' && layer.state.shape.kind === 'bubble-tail' ? 'しっぽを編集' : '多角形の頂点を編集') : layer.type === 'image' ? '画像を編集' : '図形を編集');
-      this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });
+      this.engine.links.propagateFrom({ document: this.engine.documentKey, layerId: layer.id });
       this.engine.committed(false);
     } else {
       this.engine.requestOverlayRender();
@@ -409,7 +434,7 @@ export class ShapeEditController {
     const propsOp = { kind: 'layerProps' as const, layerId: layer.id, before: { state: { shape: before } }, after: { state: { shape: cloneShape(layer.state.shape) } } };
     const linkOp = this.engine.layerService.linkOpForUserChange(layer, propsOp.before, propsOp.after);
     this.engine.history.push(linkOp ? { kind: 'batch', ops: [propsOp, linkOp] } : propsOp, '多角形の頂点を削除');
-    this.engine.links.propagateFrom({ pageId: this.engine.pages.activePageId, layerId: layer.id });
+    this.engine.links.propagateFrom({ document: this.engine.documentKey, layerId: layer.id });
     this.engine.committed();
   }
 
@@ -421,44 +446,40 @@ export class ShapeEditController {
     if (layer) writeFrameShape(layer, edit.before);
     this.shapeEdit = null;
     this.syncVertexState();
-    if (layer && previous) this.engine.invalidateLayer(layer.id, unionRect(previous, editableDirty(layer)));
+    if (layer && previous) this.invalidate(layer.id, unionRect(previous, editableDirty(layer)));
     this.engine.requestOverlayRender();
     this.engine.syncStore();
   }
 
   drawActiveShapeHandles(ctx: CanvasRenderingContext2D): void {
+    const layer = this.editableById(this.engine.getActiveLayerId());
+    if (!layer) {this.drawLocalHandles(ctx); return;}
+    const guides = this.snapGuides(), scale = this.engine.uiScale();
+    ctx.save(); ctx.strokeStyle = '#4f8cff'; ctx.lineWidth = scale; ctx.setLineDash([6*scale, 4*scale]);
+    if (guides.x !== null) {ctx.beginPath(); ctx.moveTo(guides.x, 0); ctx.lineTo(guides.x, this.engine.artboard.h); ctx.stroke();}
+    if (guides.y !== null) {ctx.beginPath(); ctx.moveTo(0, guides.y); ctx.lineTo(this.engine.artboard.w, guides.y); ctx.stroke();}
+    ctx.restore();
+    const bounds = shapeBounds(frameShapeOf(layer)), px = this.engine.getPageSpec().ppi / 25.4;
+    const padding = 60 * this.uiScale();
+    drawProjectedProcedure(ctx, {x: (bounds.x-padding)*px, y: (bounds.y-padding)*px,
+      w: (bounds.w+padding*2)*px, h: (bounds.h+padding*2)*px}, this.transforms().geometryToPage(layer.id), source => this.drawLocalHandles(source));
+  }
+
+  private drawLocalHandles(ctx: CanvasRenderingContext2D): void {
     const layer = this.editableById(this.engine.layerService.activeLayerId);
     if (!layer) { if (this.selectedHandle) { this.selectedHandle = null; this.syncVertexState(); } return; }
     if (this.selectedHandle && this.selectedHandle.layerId !== layer.id) {
       this.selectedHandle = null;
       this.syncVertexState();
     }
-    const shape = frameShapeOf(layer), bounds = shapeBounds(shape), scale = this.engine.uiScale(), center = shapeCenter(shape);
+    const shape = frameShapeOf(layer), bounds = shapeBounds(shape), scale = this.uiScale(), center = shapeCenter(shape);
     const invalid = !!this.shapeEdit?.invalid;
     const points = shapePoints(shape);
     const insertions = shapeKindHandler(shape).edit.insertionPoints(shape);
     const rotateHandle = this.rotateHandle(shape);
     ctx.save();
-    const xGuide = this.shapeEdit?.xGuide;
-    const yGuide = this.shapeEdit?.yGuide;
-    if (xGuide !== null && xGuide !== undefined || yGuide !== null && yGuide !== undefined) {
-      ctx.strokeStyle = '#4f8cff';
-      ctx.lineWidth = scale;
-      ctx.setLineDash([6 * scale, 4 * scale]);
-      if (xGuide !== null && xGuide !== undefined) {
-        ctx.beginPath();
-        ctx.moveTo(xGuide, 0);
-        ctx.lineTo(xGuide, this.engine.artboard.h);
-        ctx.stroke();
-      }
-      if (yGuide !== null && yGuide !== undefined) {
-        ctx.beginPath();
-        ctx.moveTo(0, yGuide);
-        ctx.lineTo(this.engine.artboard.w, yGuide);
-        ctx.stroke();
-      }
-      ctx.setLineDash([]);
-    }
+    const pixelsPerMm = this.engine.getPageSpec().ppi / 25.4;
+    ctx.scale(pixelsPerMm, pixelsPerMm);
     const snappedPoint = this.shapeEdit?.snappedPoint;
     if (snappedPoint) {
       ctx.strokeStyle = '#4f8cff';
