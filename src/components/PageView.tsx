@@ -6,6 +6,7 @@ import { canTransformObjectType } from '../engine/layer-types/registry';
 import { useStore } from '../state/store';
 import { appAlert } from './AppDialogs';
 import { TextEditor } from './TextEditor';
+import { importFileKind } from './FileActions';
 
 function ViewChip() {
   const engine = useEngine();
@@ -115,7 +116,9 @@ export function PageView() {
       onDrop={(event) => {
         event.preventDefault();
         setDropActive(false);
-        const file = [...event.dataTransfer.files].find(item => !item.type || item.type.startsWith('image/'));
+        const files = [...event.dataTransfer.files];
+        if (files.some(file => importFileKind(file) !== null)) return;
+        const file = files.find(item => !item.type || item.type.startsWith('image/'));
         void (async () => {
           if (!file || !await engine.placeDroppedImage(file, event.clientX, event.clientY)) {
             await appAlert('画像ファイルをドロップしてください');
