@@ -159,6 +159,7 @@ export interface PaintState {
   setPenColor: (c: string) => void;
   /** アクティブツールの settings を部分更新 (descriptor.normalize でクランプ) */
   updateActiveToolSettings: (patch: Record<string, unknown>) => void;
+  setActiveToolAutoDeactivateAfterUse: (enabled: boolean) => void;
   activateTool: (id: string) => void;
   deactivateTool: () => void;
   addTool: (kind: ToolKind) => void;
@@ -267,6 +268,16 @@ export const useStore = create<PaintState>((set) => ({
       const next = descriptor.settings.normalize({ ...current, ...patch });
       return {
         tools: s.tools.map((t) => (t.id === s.activeToolId ? { ...t, settings: next } : t)),
+      };
+    }),
+
+  setActiveToolAutoDeactivateAfterUse: (enabled) =>
+    set((s) => {
+      if (!s.activeToolId) return s;
+      return {
+        tools: s.tools.map((t) =>
+          t.id === s.activeToolId ? { ...t, autoDeactivateAfterUse: enabled } : t,
+        ),
       };
     }),
 

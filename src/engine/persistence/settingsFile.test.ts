@@ -32,6 +32,23 @@ describe('app settings file', () => {
     expect(validateAppSettings(settings()).tools.map(tool => tool.kind)).toEqual(['lasso', 'blur']);
   });
 
+  it('ignores a legacy app-wide auto-deselect flag', () => {
+    const value = { ...settings(), autoDeselectPaletteTools: false };
+    expect(validateAppSettings(value)).toEqual(settings());
+  });
+
+  it('accepts a per-tool auto-deselect flag', () => {
+    const value = settings();
+    value.tools.push({
+      id: 'cursor', kind: 'cursor', name: 'カーソル', sizeMm: 1, color: '#112233',
+      autoDeactivateAfterUse: false,
+    });
+    value.toolLayout = [...value.toolLayout, { type: 'tool', toolId: 'cursor' }];
+    expect(validateAppSettings(value).tools.at(-1)).toMatchObject({
+      kind: 'cursor', autoDeactivateAfterUse: false,
+    });
+  });
+
   it('accepts a cursor tool instance without extra settings', () => {
     const value = settings();
     value.tools.push({ id: 'cursor', kind: 'cursor', name: 'カーソル', sizeMm: 1, color: '#112233' });

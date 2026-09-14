@@ -9,6 +9,7 @@ export const moveTool: ToolDescriptor = {
   icon: <OpenWithIcon sx={{ fontSize: 20 }} />,
   category: 'root',
   capabilities: { color: false, size: false, multiSelect: true },
+  compatibleLayerTypes: ['raster', 'shape', 'text', 'image'],
   summary: () => '移動・変形',
   create: (engine) => new MoveTool(engine),
 };

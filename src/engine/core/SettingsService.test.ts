@@ -33,6 +33,7 @@ describe('SettingsService', () => {
       recorderPublic: () => ({ setEnabled }),
       layerService: { finishFloating },
       activeTool: () => ({ cancel }),
+      syncActiveToolToLayer() {},
       requestRender: vi.fn(),
       syncStore: vi.fn(),
     } as unknown as PaintEngine;
@@ -66,6 +67,7 @@ describe('SettingsService', () => {
       recorderPublic: () => ({ setEnabled() {} }),
       layerService: { finishFloating: vi.fn() },
       activeTool: () => ({ cancel: vi.fn() }),
+      syncActiveToolToLayer() {},
       requestRender: vi.fn(),
       syncStore: vi.fn(),
     } as unknown as PaintEngine;

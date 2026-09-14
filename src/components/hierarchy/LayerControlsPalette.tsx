@@ -130,10 +130,8 @@ function LayerControls({
       {selected.some((layer) => engine.hasOutsideContent?.(layer.id)) && (
         <Typography variant="caption">用紙外に内容あり</Typography>
       )}
-      {meta.type === 'transform' ? (
+      {meta.type === 'transform' && (
         <Typography variant="body2">キャンバスの青い枠をドラッグして変形できます。自由変形では四隅と辺を直接動かせます。移動はmm、回転・せん断は度、拡縮は倍率で指定できます。</Typography>
-      ) : (
-        <Button onClick={() => engine.centerSelectedContent()}>内容を用紙中央へ移動</Button>
       )}
       <ParameterPanel layers={selected} />
       {!multi && meta.type === 'transform' && (

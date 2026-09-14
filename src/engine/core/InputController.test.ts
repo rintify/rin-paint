@@ -16,26 +16,10 @@ function pointerEvent(type: string, init: PointerEventInit): PointerEvent {
 }
 
 describe('direct shape editing gate', () => {
-  it('skips handle and move editing when the active tool forbids it', () => {
+  it('forwards handle editing to the engine', () => {
     const beginShapeEdit = vi.fn(() => true);
     const input = new InputController({
       beginShapeEdit,
-      activeTool: () => ({ allowsDirectShapeEdit: false }),
-    } as unknown as PaintEngine);
-    expect(
-      input['beginEditableShape'](
-        { x: 4, y: 4, pressure: 1 },
-        {} as PointerEvent,
-      ),
-    ).toBe(false);
-    expect(beginShapeEdit).not.toHaveBeenCalled();
-  });
-
-  it('starts handle and move editing for tools that leave the capability on', () => {
-    const beginShapeEdit = vi.fn(() => true);
-    const input = new InputController({
-      beginShapeEdit,
-      activeTool: () => ({}),
     } as unknown as PaintEngine);
     expect(
       input['beginEditableShape'](
@@ -60,7 +44,6 @@ describe('Command+click layer pick', () => {
         onDown,
         onMove() {},
         onUp() {},
-        allowsDirectShapeEdit: true,
         startsImmediately: true,
       }),
       cursor: { onDown: cursorDown, onMove() {}, onUp() {}, cancel() {} },
@@ -189,7 +172,7 @@ describe('frame-bounded transform input', () => {
   });
 });
 
-it('starts transform manipulation on pointer down even with an immediate drawing or cursor tool selected', () => {
+it('starts transform manipulation on pointer down only when layer gizmos are enabled', () => {
   const beginShapeEdit = vi.fn(() => true),
     onDown = vi.fn();
   const engine = {
@@ -197,9 +180,9 @@ it('starts transform manipulation on pointer down even with an immediate drawing
     finishTextEditing() {},
     view: { clientToArt: (x: number, y: number) => ({ x, y }) },
     transformEdit: { activeLayer: () => ({ type: 'transform' }) },
+    layerGizmosEnabled: () => false,
     activeTool: () => ({
       startsImmediately: true,
-      allowsDirectShapeEdit: false,
       onDown,
     }),
     beginShapeEdit,
@@ -211,9 +194,8 @@ it('starts transform manipulation on pointer down even with an immediate drawing
   input.attachListeners(area);
   try {
     area.dispatchEvent(pointerEvent('pointerdown', {}));
-    expect(beginShapeEdit).toHaveBeenCalledOnce();
-    expect(onDown).not.toHaveBeenCalled();
-    expect(input.pendingPress).toBeNull();
+    expect(beginShapeEdit).not.toHaveBeenCalled();
+    expect(onDown).toHaveBeenCalledOnce();
   } finally {
     input.detachListeners();
   }

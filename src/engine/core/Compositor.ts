@@ -90,6 +90,8 @@ export class Compositor {
   overlayCtx: CanvasRenderingContext2D | null = null;
   private overlaySurface: HTMLCanvasElement | null = null;
   private overlayArea: HTMLElement | null = null;
+  private paper: HTMLCanvasElement | null = null;
+  private paperCtx: CanvasRenderingContext2D | null = null;
 
   fillReference = makeCanvas(1600, 1200);
   fillReferenceCtx = this.fillReference.getContext('2d', {
@@ -409,7 +411,7 @@ export class Compositor {
   }
 
   compositeCanvas(): HTMLCanvasElement | null {
-    return this.main;
+    return this.artboardOutput()?.canvas ?? this.main;
   }
 
   renderLayerHitMask(layerId: string, region?: RenderRect): CanvasLease {
@@ -511,11 +513,14 @@ export class Compositor {
     this.overlaySurface = null;
     this.overlayArea = null;
     this.overlayCtx = null;
+    this.paper = null;
+    this.paperCtx = null;
   }
 
   private loop = (): void => {
     this.raf = 0;
     if (this.dirty) this.composite();
+    else if (this.overlayDirty) this.presentDisplay();
     if (
       this.overlayDirty ||
       this.engine.overlayAnimated?.() ||
@@ -532,20 +537,20 @@ export class Compositor {
   };
 
   composite(): void {
-    const ctx = this.mainCtx;
-    const surface = this.main;
-    if (!ctx || !surface) return;
+    const output = this.artboardOutput();
+    if (!output) return;
     this.frameStats.cpuReadbackPixels = 0;
     this.frameStats.canvasBorrows = 0;
     this.frameStats.transformSamplePixels = 0;
     this.syncWorkCanvases();
     this.refreshTransformPreview();
     if (this.fullDirty || !this.damageByLayer.size)
-      this.compositeFull(ctx, true);
-    else this.compositePartial(ctx, this.damageByLayer);
+      this.compositeFull(output.ctx, true);
+    else this.compositePartial(output.ctx, this.damageByLayer);
     this.dirty = false;
     this.fullDirty = false;
     this.damageByLayer.clear();
+    this.presentDisplay();
   }
 
   compositeSelection(ids: Set<string>): HTMLCanvasElement {
@@ -934,6 +939,100 @@ export class Compositor {
     }
   }
 
+  private usesViewportDisplay(): boolean {
+    return !!this.overlayArea && !!this.engine.view;
+  }
+
+  private artboardOutput(): {
+    canvas: HTMLCanvasElement;
+    ctx: CanvasRenderingContext2D;
+  } | null {
+    if (!this.main || !this.mainCtx) return null;
+    if (!this.usesViewportDisplay())
+      return { canvas: this.main, ctx: this.mainCtx };
+    const { w, h } = this.engine.artboard;
+    if (!this.paper || this.paper.width !== w || this.paper.height !== h) {
+      this.paper = this.paper ?? makeCanvas(w, h);
+      this.paper.width = w;
+      this.paper.height = h;
+      this.paperCtx = this.paper.getContext('2d')!;
+    }
+    return { canvas: this.paper, ctx: this.paperCtx! };
+  }
+
+  private nativeDisplayLayers(): boolean {
+    return !this.engine
+      .allLayers()
+      .some((layer) => layer.visible && layerHandler(layer).renderer.effect);
+  }
+
+  private prepareViewportSurface(
+    surface: HTMLCanvasElement,
+    currentCtx: CanvasRenderingContext2D | null,
+  ): CanvasRenderingContext2D {
+    const area = this.overlayArea!;
+    const dpr = Math.max(1, globalThis.devicePixelRatio || 1);
+    const cssWidth = Math.max(1, area.clientWidth);
+    const cssHeight = Math.max(1, area.clientHeight);
+    const pixelWidth = Math.max(1, Math.round(cssWidth * dpr));
+    const pixelHeight = Math.max(1, Math.round(cssHeight * dpr));
+    if (surface.width !== pixelWidth || surface.height !== pixelHeight) {
+      surface.width = pixelWidth;
+      surface.height = pixelHeight;
+      return surface.getContext('2d')!;
+    }
+    return currentCtx ?? surface.getContext('2d')!;
+  }
+
+  private applyViewTransform(ctx: CanvasRenderingContext2D): void {
+    const eng = this.engine;
+    const area = this.overlayArea!;
+    const dpr = Math.max(1, globalThis.devicePixelRatio || 1);
+    const cssWidth = Math.max(1, area.clientWidth);
+    const cssHeight = Math.max(1, area.clientHeight);
+    const displayScale = eng.view.displayScale();
+    const cos = Math.cos(eng.view.rot);
+    const sin = Math.sin(eng.view.rot);
+    const a = cos * displayScale * dpr;
+    const b = sin * displayScale * dpr;
+    const c = -sin * displayScale * dpr;
+    const d = cos * displayScale * dpr;
+    const centerX = (cssWidth / 2 + eng.view.x) * dpr;
+    const centerY = (cssHeight / 2 + eng.view.y) * dpr;
+    ctx.setTransform(
+      a,
+      b,
+      c,
+      d,
+      centerX - (a * eng.artboard.w) / 2 - (c * eng.artboard.h) / 2,
+      centerY - (b * eng.artboard.w) / 2 - (d * eng.artboard.h) / 2,
+    );
+  }
+
+  private presentDisplay(): void {
+    if (!this.usesViewportDisplay() || !this.main) return;
+    this.mainCtx = this.prepareViewportSurface(this.main, this.mainCtx);
+    const ctx = this.mainCtx;
+    const { w, h } = this.engine.artboard;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.main.width, this.main.height);
+    this.applyViewTransform(ctx);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, w, h);
+    ctx.clip();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    if (this.nativeDisplayLayers()) {
+      this.regions.renderNativeInWorld(ctx);
+    } else {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(this.artCache, 0, 0);
+    }
+    ctx.restore();
+  }
+
   private present(
     ctx: CanvasRenderingContext2D,
     art: HTMLCanvasElement,
@@ -979,40 +1078,13 @@ export class Compositor {
       eng.drawLoupeIfAny(ctx);
       return;
     }
-    const dpr = Math.max(1, globalThis.devicePixelRatio || 1);
-    const cssWidth = Math.max(1, area?.clientWidth ?? eng.artboard.w);
-    const cssHeight = Math.max(1, area?.clientHeight ?? eng.artboard.h);
-    const pixelWidth = Math.max(1, Math.round(cssWidth * dpr));
-    const pixelHeight = Math.max(1, Math.round(cssHeight * dpr));
-    if (surface.width !== pixelWidth || surface.height !== pixelHeight) {
-      surface.width = pixelWidth;
-      surface.height = pixelHeight;
-      this.overlayCtx = surface.getContext('2d')!;
-    }
-    const ctx = this.overlayCtx!;
+    this.overlayCtx = this.prepareViewportSurface(surface, this.overlayCtx);
+    const ctx = this.overlayCtx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, pixelWidth, pixelHeight);
-
-    const displayScale = eng.view.displayScale();
-    const cos = Math.cos(eng.view.rot);
-    const sin = Math.sin(eng.view.rot);
-    const a = cos * displayScale * dpr;
-    const b = sin * displayScale * dpr;
-    const c = -sin * displayScale * dpr;
-    const d = cos * displayScale * dpr;
-    const centerX = (cssWidth / 2 + eng.view.x) * dpr;
-    const centerY = (cssHeight / 2 + eng.view.y) * dpr;
-    ctx.setTransform(
-      a,
-      b,
-      c,
-      d,
-      centerX - (a * eng.artboard.w) / 2 - (c * eng.artboard.h) / 2,
-      centerY - (b * eng.artboard.w) / 2 - (d * eng.artboard.h) / 2,
-    );
+    ctx.clearRect(0, 0, surface.width, surface.height);
+    this.applyViewTransform(ctx);
     ctx.save();
     ctx.beginPath();
-
     this.paintToolOverlays(eng, ctx);
     eng.drawActiveShapeHandles(ctx);
     eng.drawLoupeIfAny(ctx);

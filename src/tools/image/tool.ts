@@ -1,4 +1,5 @@
 import type { StrokePoint } from '../../model';
+import { drawShapeGizmo } from '../../engine/shapes';
 import type { PaintEngine } from '../../engine/PaintEngine';
 import { canvasFromImageFile } from '../../engine/image/load';
 import { pickFile } from '../../components/hooks/pickFile';
@@ -44,6 +45,17 @@ export class ImageTool implements Tool {
     ctx.lineWidth = this.eng.uiScale();
     ctx.strokeRect(start.x, start.y, width, height);
     ctx.restore();
+    drawShapeGizmo(ctx, {
+      kind: 'rect',
+      x: start.x,
+      y: start.y,
+      width,
+      height,
+      color: '#000000',
+      strokeWidth: 0,
+      paintMode: 'stroke',
+      rotation: 0,
+    }, { scale: this.eng.uiScale() });
   }
 
   private boxPx(): { width: number; height: number } {
@@ -60,5 +72,6 @@ export class ImageTool implements Tool {
     }
     const { width, height } = this.boxPx();
     this.eng.addImageLayer(canvas, point.x, point.y, width, height);
+    this.eng.notifyPaletteToolUsed();
   }
 }

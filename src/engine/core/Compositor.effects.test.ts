@@ -936,6 +936,44 @@ describe('effect scopes', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('presents native shape layers on the viewport canvas through the view transform', () => {
+    vi.stubGlobal('devicePixelRatio', 2);
+    try {
+      const shape = createShapeLayer('line', {
+        kind: 'line', x1: 0, y1: 8, x2: 16, y2: 8, color: '#000000', strokeWidth: 4,
+      });
+      const engine = {
+        artboard: { w: 16, h: 16 },
+        view: { x: 0, y: 0, rot: 0, displayScale: () => 2 },
+        allLayers: () => [shape],
+        layerById: (id: string) => id === shape.id ? shape : null,
+        getRootLayerIds: () => [shape.id],
+        getPageSpec: () => ({ widthMm: 16, heightMm: 16, ppi: 25.4 }),
+        getRenderRevision: () => 0,
+        getMaskRevision: () => 0,
+        activeTool: () => ({}),
+        drawActiveShapeHandles() {},
+        drawLoupeIfAny() {},
+        bumpLayer() {},
+        syncStore() {},
+      } as unknown as PaintEngine;
+      const compositor = new Compositor(engine);
+      const main = document.createElement('canvas');
+      const overlay = document.createElement('canvas');
+      const area = document.createElement('div');
+      Object.defineProperties(area, {
+        clientWidth: { configurable: true, value: 100 },
+        clientHeight: { configurable: true, value: 80 },
+      });
+      compositor.attachCanvases(main, overlay, area);
+      compositor.composite();
+      expect([main.width, main.height]).toEqual([200, 160]);
+      expect(compositor.compositeCanvas()?.width).toBe(16);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('off-paper effect evaluation', () => {

@@ -14,7 +14,6 @@ interface SelectionGlow {
 }
 
 export class CursorTool implements Tool {
-  readonly allowsDirectShapeEdit = false;
   private glow: SelectionGlow | null = null;
 
   constructor(private engine: PaintEngine) {}
@@ -27,7 +26,9 @@ export class CursorTool implements Tool {
   }
 
   onMove(_point: StrokePoint, _event: PointerEvent): void {}
-  onUp(_point: StrokePoint, _event: PointerEvent): void {}
+  onUp(_point: StrokePoint, _event: PointerEvent): void {
+    if (this.glow) this.engine.notifyPaletteToolUsed();
+  }
 
   cancel(): void {
     this.clearGlow();

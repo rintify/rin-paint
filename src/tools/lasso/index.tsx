@@ -9,6 +9,7 @@ export const lassoTool: ToolDescriptor = {
   icon: <GestureIcon sx={{ fontSize: 20 }} />,
   category: 'root',
   capabilities: { color: false, size: false, multiSelect: true },
+  compatibleLayerTypes: ['raster', 'shape', 'text', 'image'],
   summary: () => '選択・変形',
   create: (engine) => new LassoTool(engine),
 };

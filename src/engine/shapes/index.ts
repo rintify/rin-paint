@@ -27,6 +27,8 @@ export {
 } from './geometry';
 export type { ShapeBounds } from './geometry';
 export { shapeKindHandler } from './kinds/registry';
+export { drawShapeGizmo, shapeRotateHandle, ROTATE_HANDLE_GAP } from './gizmo';
+export type { ShapeGizmoStyle } from './gizmo';
 export type {
   ShapeControlField,
   ShapeDrag,

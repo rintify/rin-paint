@@ -1,4 +1,5 @@
 import type { StrokePoint } from '../../model';
+import { drawShapeGizmo } from '../../engine/shapes';
 import { newText } from '../../engine/text/model';
 import type { PaintEngine } from '../../engine/PaintEngine';
 import type { Tool } from '../types';
@@ -30,6 +31,7 @@ export class TextTool implements Tool {
     const hit = this.eng.textAt(p.x, p.y);
     if (hit && Math.hypot(p.x - start.x, p.y - start.y) < HIT_THRESHOLD * scale) {
       this.eng.editTextLayer(hit);
+      this.eng.notifyPaletteToolUsed();
       return;
     }
     const framed =
@@ -46,6 +48,7 @@ export class TextTool implements Tool {
         normalizeTextToolSettings(settings?.settings),
       ),
     );
+    this.eng.notifyPaletteToolUsed();
   }
 
   cancel(): void {
@@ -54,10 +57,20 @@ export class TextTool implements Tool {
 
   drawOverlay(ctx: CanvasRenderingContext2D): void {
     if (!this.start || !this.current) return;
+    const x = Math.min(this.start.x, this.current.x);
+    const y = Math.min(this.start.y, this.current.y);
+    const width = Math.abs(this.current.x - this.start.x);
+    const height = Math.abs(this.current.y - this.start.y);
     ctx.save();
     ctx.strokeStyle = '#80bfff';
     ctx.lineWidth = this.eng.uiScale();
     ctx.strokeRect(this.start.x, this.start.y, this.current.x - this.start.x, this.current.y - this.start.y);
     ctx.restore();
+    if (width > 1 && height > 1) {
+      drawShapeGizmo(ctx, {
+        kind: 'rect', x, y, width, height,
+        color: '#000000', strokeWidth: 0, paintMode: 'stroke', rotation: 0,
+      }, { scale: this.eng.uiScale() });
+    }
   }
 }

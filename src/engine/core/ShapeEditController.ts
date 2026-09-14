@@ -2,11 +2,13 @@ import { useStore } from '../../state/store';
 import type { ShapeParams, ShapePoint, StrokePoint } from '../../model';
 import {
   cloneShape,
+  drawShapeGizmo,
   rotateShape,
   shapeBounds,
   shapeCenter,
   shapeKindHandler,
   shapePoints,
+  shapeRotateHandle,
   shapeRotation,
   shapeVisualPadding,
   translateShape,
@@ -59,8 +61,6 @@ interface ShapeEdit {
   mergeVertexOnFinish?: boolean;
 }
 
-/** 回転ハンドルは外接矩形の上辺からこれだけ離す (画面 px) */
-const ROTATE_HANDLE_GAP = 28;
 const HANDLE_RADIUS = 11;
 const SNAP_SCREEN_PX = 8;
 
@@ -159,10 +159,7 @@ export class ShapeEditController {
 
   /** 外接矩形の上に浮かぶ回転ハンドルの位置。種類によらず共通 */
   private rotateHandle(shape: ShapeParams): { x: number; y: number } {
-    return {
-      x: shapeCenter(shape).x,
-      y: shapeBounds(shape).y - ROTATE_HANDLE_GAP * this.engine.uiScale(),
-    };
+    return shapeRotateHandle(shape, this.engine.uiScale());
   }
 
   private collectMoveSnapLines(editingId: string): SnapLines {
@@ -622,7 +619,10 @@ export class ShapeEditController {
     this.engine.syncStore();
   }
 
-  drawActiveShapeHandles(ctx: CanvasRenderingContext2D): void {
+  drawActiveShapeHandles(
+    ctx: CanvasRenderingContext2D,
+    handles = true,
+  ): void {
     const layer = this.editableById(this.engine.layerService.activeLayerId);
     if (!layer) {
       if (this.selectedHandle) {
@@ -635,17 +635,12 @@ export class ShapeEditController {
       this.selectedHandle = null;
       this.syncVertexState();
     }
-    const shape = frameShapeOf(layer),
-      bounds = shapeBounds(shape),
-      scale = this.engine.uiScale(),
-      center = shapeCenter(shape);
-    const invalid = !!this.shapeEdit?.invalid;
-    const points = shapePoints(shape);
-    const insertions = shapeKindHandler(shape).edit.insertionPoints(shape);
-    const rotateHandle = this.rotateHandle(shape);
+    const shape = frameShapeOf(layer);
+    const scale = this.engine.uiScale();
+    const invalid = handles && !!this.shapeEdit?.invalid;
     ctx.save();
-    const xGuide = this.shapeEdit?.xGuide;
-    const yGuide = this.shapeEdit?.yGuide;
+    const xGuide = handles ? this.shapeEdit?.xGuide : null;
+    const yGuide = handles ? this.shapeEdit?.yGuide : null;
     if (
       (xGuide !== null && xGuide !== undefined) ||
       (yGuide !== null && yGuide !== undefined)
@@ -667,7 +662,7 @@ export class ShapeEditController {
       }
       ctx.setLineDash([]);
     }
-    const snappedPoint = this.shapeEdit?.snappedPoint;
+    const snappedPoint = handles ? this.shapeEdit?.snappedPoint : null;
     if (snappedPoint) {
       ctx.strokeStyle = '#4f8cff';
       ctx.fillStyle = '#4f8cff33';
@@ -677,78 +672,16 @@ export class ShapeEditController {
       ctx.fill();
       ctx.stroke();
     }
-    ctx.strokeStyle = invalid ? '#e53935' : '#4f8cff';
-    ctx.fillStyle = '#fff';
-    ctx.lineWidth = 1.5 * scale;
-    if (shape.kind === 'bubble-tail') {
-      ctx.setLineDash([4 * scale, 3 * scale]);
-      ctx.beginPath();
-      ctx.moveTo(shape.start.x, shape.start.y);
-      ctx.lineTo(shape.control.x, shape.control.y);
-      ctx.lineTo(shape.tip.x, shape.tip.y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-    if (invalid) {
-      ctx.beginPath();
-      ctx.moveTo(points[0].x, points[0].y);
-      for (let index = 1; index < points.length; index++)
-        ctx.lineTo(points[index].x, points[index].y);
-      ctx.closePath();
-      ctx.stroke();
-    }
-    ctx.setLineDash([4 * scale, 3 * scale]);
-    ctx.strokeRect(bounds.x, bounds.y, bounds.w, bounds.h);
-    ctx.setLineDash([]);
-    for (let index = 0; index < points.length; index++) {
-      const point = points[index];
-      ctx.fillStyle =
-        this.selectedHandle?.layerId === layer.id &&
-        this.selectedHandle.index === index
-          ? '#4f8cff'
-          : '#fff';
-      ctx.beginPath();
-      ctx.rect(point.x - 4 * scale, point.y - 4 * scale, 8 * scale, 8 * scale);
-      ctx.fill();
-      ctx.stroke();
-      const insertion = insertions[index];
-      if (!insertion) continue;
-      const { x, y } = insertion;
-      ctx.fillStyle = '#fff';
-      ctx.beginPath();
-      ctx.arc(x, y, 4 * scale, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(x - 2 * scale, y);
-      ctx.lineTo(x + 2 * scale, y);
-      ctx.moveTo(x, y - 2 * scale);
-      ctx.lineTo(x, y + 2 * scale);
-      ctx.stroke();
-    }
-    ctx.beginPath();
-    ctx.moveTo(center.x, bounds.y);
-    ctx.lineTo(rotateHandle.x, rotateHandle.y);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(rotateHandle.x, rotateHandle.y, 5 * scale, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    const arm = 8 * scale;
-    const drawCenter = () => {
-      ctx.beginPath();
-      ctx.moveTo(center.x - arm, center.y);
-      ctx.lineTo(center.x + arm, center.y);
-      ctx.moveTo(center.x, center.y - arm);
-      ctx.lineTo(center.x, center.y + arm);
-      ctx.stroke();
-    };
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 3 * scale;
-    drawCenter();
-    ctx.strokeStyle = invalid ? '#e53935' : '#4f8cff';
-    ctx.lineWidth = 1.5 * scale;
-    drawCenter();
+    drawShapeGizmo(ctx, shape, {
+      scale,
+      invalid,
+      handles,
+      insertions: handles,
+      selectedIndex:
+        handles && this.selectedHandle?.layerId === layer.id
+          ? this.selectedHandle.index
+          : undefined,
+    });
     ctx.restore();
   }
 }

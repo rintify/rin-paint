@@ -10,6 +10,7 @@ describe('ShapeTool overlay invalidation', () => {
       activeToolSettings: () => ({ color: '#000', sizePx: 2, settings: {} }),
       getPageSpec: () => ({ ppi: 96 }),
       artboard: { w: 100, h: 100 },
+      uiScale: () => 1,
     } as unknown as PaintEngine;
     const tool = new ShapeTool(engine, 'rect');
     const point = (x: number, y: number) => ({ x, y, pressure: 1 });
@@ -32,6 +33,7 @@ describe('ShapeTool overlay invalidation', () => {
       }),
       getPageSpec: () => ({ ppi: 25.4 }),
       artboard: { w: 100, h: 100 },
+      uiScale: () => 1,
     } as unknown as PaintEngine;
     const tool = new ShapeTool(engine, 'rect');
     const point = (x: number, y: number) => ({ x, y, pressure: 1 });

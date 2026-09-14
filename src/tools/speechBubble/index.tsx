@@ -21,6 +21,7 @@ export const speechBubbleTool: ToolDescriptor<SpeechBubbleToolSettings> = {
     normalize: normalizeSpeechBubbleToolSettings,
     Panel: SpeechBubbleSettingsPanel,
   },
+  autoDeactivateAfterUse: true,
   create: engine => new SpeechBubbleTool(engine),
 };
 

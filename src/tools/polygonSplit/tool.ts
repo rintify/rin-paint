@@ -5,7 +5,6 @@ import type { Tool } from '../types';
 import { normalizePolygonSplitToolSettings } from './settings';
 
 export class PolygonSplitTool implements Tool {
-  readonly allowsDirectShapeEdit = false;
   private start: StrokePoint | null = null;
   private current: StrokePoint | null = null;
 
@@ -29,6 +28,7 @@ export class PolygonSplitTool implements Tool {
     this.current = null;
     if (start && Math.hypot(point.x - start.x, point.y - start.y) > 0.01) {
       void this.eng.polygonSplit.split(start, point);
+      this.eng.notifyPaletteToolUsed();
     }
     this.eng.requestOverlayRender();
   }

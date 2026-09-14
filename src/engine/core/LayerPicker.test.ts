@@ -300,7 +300,6 @@ describe('cursor tool selection', () => {
       artboard: { w: 16, h: 16 },
     } as unknown as PaintEngine;
     const tool = new CursorTool(engine);
-    expect(tool.allowsDirectShapeEdit).toBe(false);
     tool.onDown({ x: 3, y: 3, pressure: 1 }, {} as PointerEvent);
     tool.onDown({ x: 3, y: 3, pressure: 1 }, {} as PointerEvent);
     expect(setActiveLayer).toHaveBeenCalledTimes(2);

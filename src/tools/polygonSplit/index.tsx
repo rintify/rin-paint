@@ -18,10 +18,12 @@ export const polygonSplitTool: ToolDescriptor<PolygonSplitToolSettings> = {
   icon: <CallSplitIcon sx={{ fontSize: 20, transform: 'rotate(90deg)' }} />,
   category: 'root',
   capabilities: { color: false, size: false, multiSelect: true },
+  compatibleLayerTypes: ['shape'],
   settings: {
     default: () => ({ ...DEFAULT_POLYGON_SPLIT_TOOL_SETTINGS }),
     normalize: normalizePolygonSplitToolSettings,
     Panel: PolygonSplitSettingsPanel,
   },
+  autoDeactivateAfterUse: true,
   create: (engine) => new PolygonSplitTool(engine),
 };

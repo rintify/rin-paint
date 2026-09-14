@@ -34,6 +34,8 @@ beforeEach(() => {
     shapeHandleIsVertex: true,
     shapeHandleEdgeConstrained: false,
     pageW: 160, pageH: 120,
+    activeToolId: null,
+    tool: null,
   });
   container = document.body.appendChild(document.createElement('div'));
   root = createRoot(container);

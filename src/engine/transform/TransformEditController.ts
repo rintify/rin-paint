@@ -251,7 +251,7 @@ export class TransformEditController {
         '自由変形をリセット',
       );
   }
-  draw(ctx: CanvasRenderingContext2D): void {
+  draw(ctx: CanvasRenderingContext2D, handles = true): void {
     const frame = this.frame();
     if (!frame) return;
     const points = frame.target,
@@ -262,10 +262,15 @@ export class TransformEditController {
     ctx.strokeStyle = '#2563eb';
     ctx.fillStyle = '#ffffff';
     ctx.lineWidth = 1.5 * scale;
+    if (!handles) ctx.setLineDash([4 * scale, 3 * scale]);
     ctx.beginPath();
     points.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
     ctx.closePath();
     ctx.stroke();
+    if (!handles) {
+      ctx.restore();
+      return;
+    }
     ctx.beginPath();
     ctx.moveTo(top.x, top.y);
     ctx.lineTo(rotate.x, rotate.y);

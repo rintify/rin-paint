@@ -27,5 +27,6 @@ export const textTool: ToolDescriptor<TextToolSettings> = {
     const settings = normalizeTextToolSettings(tool.settings);
     return `${settings.sizePt}pt・${settings.direction === 'vertical' ? '縦書き' : '横書き'}`;
   },
+  autoDeactivateAfterUse: true,
   create: (engine) => new TextTool(engine),
 };

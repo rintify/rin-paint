@@ -53,6 +53,7 @@ export function PageView() {
   const shapeHandleCanDelete = useStore((s) => s.shapeHandleCanDelete);
   const shapeHandleIsVertex = useStore((s) => s.shapeHandleIsVertex);
   const shapeHandleEdgeConstrained = useStore((s) => s.shapeHandleEdgeConstrained);
+  const toolSelected = useStore((s) => !!s.tool);
   const fillProgress = useStore((s) => s.fillProgress);
   const toolNotice = useStore((s) => s.toolNotice);
 
@@ -122,9 +123,9 @@ export function PageView() {
         ref={wrapRef}
         style={{ width: size.w, height: size.h }}
       >
-        <canvas ref={mainRef} width={pageW} height={pageH} />
         <TextEditor fitScale={size.w / pageW} />
       </Box>
+      <canvas ref={mainRef} className="canvas-main" aria-hidden="true" />
       <canvas ref={overlayRef} className="canvas-overlay" aria-hidden="true" />
       {selectionActive && (
         <Paper
@@ -173,7 +174,7 @@ export function PageView() {
           <Button onClick={() => engine.cancelSessions()}>キャンセル</Button>
         </Paper>
       )}
-      {!polygonDraftActive && shapeHandleSelected && (
+      {!polygonDraftActive && !toolSelected && shapeHandleSelected && (
         <Paper elevation={6} data-canvas-ui sx={{ position: 'absolute', bottom: 22, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 1, p: 1, zIndex: 6 }}>
           <Button
             aria-pressed={shapeHandleEdgeConstrained}

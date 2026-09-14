@@ -18,6 +18,7 @@ export const fillTool: ToolDescriptor<FillToolSettings> = {
   icon: <FormatColorFillIcon sx={{ fontSize: 20 }} />,
   category: 'root',
   capabilities: { color: true, size: false, multiSelect: true },
+  compatibleLayerTypes: ['raster'],
   settings: {
     default: () => ({ ...DEFAULT_FILL_TOOL_SETTINGS }),
     normalize: normalizeFillToolSettings,

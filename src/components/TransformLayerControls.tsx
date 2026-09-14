@@ -30,7 +30,8 @@ export function TransformLayerControls() {
     s.layers.find((layer) => layer.id === s.activeLayerId),
   );
   const multi = useStore((s) => s.multiSelectMode);
-  if (selected?.type !== 'transform' || multi) return null;
+  const toolSelected = useStore((s) => !!s.tool);
+  if (selected?.type !== 'transform' || multi || toolSelected) return null;
   return (
     <Paper
       data-canvas-ui

@@ -367,12 +367,13 @@ export class ProjectService {
 
   async exportPNG(): Promise<void> {
     const eng = this.engine;
-    if (!eng.compositor.main) return;
+    const canvas = eng.compositeCanvas();
+    if (!eng.compositor.main || !canvas) return;
     eng.finishTextEditing();
     await eng.readyToRender();
     downloadBlob(
       await pngWithPpi(
-        await canvasToBlob(eng.compositor.main),
+        await canvasToBlob(eng.compositeCanvas()!),
         this.pageSpec.ppi,
       ),
       'rin-paint.png',

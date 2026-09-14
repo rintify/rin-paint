@@ -21,6 +21,7 @@ export const panelFrameTool: ToolDescriptor<PanelFrameToolSettings> = {
     normalize: normalizePanelFrameToolSettings,
     Panel: PanelFrameSettingsPanel,
   },
+  autoDeactivateAfterUse: true,
   create: engine => new PanelFrameTool(engine),
 };
 

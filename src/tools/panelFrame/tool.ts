@@ -1,5 +1,5 @@
 import type { StrokePoint } from '../../model';
-import { drawShape, polygonFromWorldPoints } from '../../engine/shapes';
+import { drawShape, polygonFromWorldPoints, drawShapeGizmo } from '../../engine/shapes';
 import { constrainAxisAlignedAspect } from '../../engine/shapes/snap';
 import type { PaintEngine } from '../../engine/PaintEngine';
 import type { Tool } from '../types';
@@ -7,7 +7,6 @@ import { normalizePanelFrameToolSettings } from './settings';
 
 export class PanelFrameTool implements Tool {
   readonly startsImmediately = true;
-  readonly allowsDirectShapeEdit = false;
   private start: StrokePoint | null = null;
   private current: StrokePoint | null = null;
   private event: PointerEvent | undefined;
@@ -62,6 +61,7 @@ export class PanelFrameTool implements Tool {
       outlineColor: settings.outlineColor,
       outlineWidthMm: active?.sizeMm ?? 1,
     });
+    this.engine.notifyPaletteToolUsed();
   }
 
   cancel(): void {
@@ -74,6 +74,8 @@ export class PanelFrameTool implements Tool {
   drawOverlay(context: CanvasRenderingContext2D): void {
     if (!this.current) return;
     const shape = this.shape(this.current, this.event);
-    if (shape) drawShape(context, shape, false, this.engine.artboard);
+    if (!shape) return;
+    drawShape(context, shape, false, this.engine.artboard);
+    drawShapeGizmo(context, shape, { scale: this.engine.uiScale() });
   }
 }

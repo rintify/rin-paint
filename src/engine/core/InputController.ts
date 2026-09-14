@@ -98,10 +98,7 @@ export class InputController {
   }
 
   private beginEditableShape(point: StrokePoint, event: PointerEvent): boolean {
-    return (
-      this.engine.activeTool().allowsDirectShapeEdit !== false &&
-      this.engine.beginShapeEdit(point, event)
-    );
+    return this.engine.beginShapeEdit(point, event);
   }
 
   attachListeners(area: HTMLElement): void {
@@ -189,7 +186,7 @@ export class InputController {
       e.preventDefault();
       return;
     }
-    if (eng.transformEdit?.activeLayer()) {
+    if (eng.layerGizmosEnabled?.() && eng.transformEdit?.activeLayer()) {
       if (!eng.beginShapeEdit(p, e)) {
         this.activePointer = null;
         this.area?.releasePointerCapture(e.pointerId);
@@ -575,7 +572,7 @@ export class InputController {
     ctx.imageSmoothingEnabled = false;
     const srcR = R / zoom;
     ctx.drawImage(
-      eng.compositor.main!,
+      eng.compositeCanvas()!,
       lp.x - srcR,
       lp.y - srcR,
       srcR * 2,

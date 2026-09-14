@@ -19,6 +19,8 @@ it('shows transform controls with no source selection or content prerequisite', 
   useStore.setState({
     multiSelectMode: false,
     activeLayerId: 'transform',
+    activeToolId: null,
+    tool: null,
     layers: [
       {
         ...defaultLayerCommon('transform', '変形'),

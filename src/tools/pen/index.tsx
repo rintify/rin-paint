@@ -14,6 +14,7 @@ export const penTool: ToolDescriptor<PenDetailSettings> = {
   icon: <EditOutlinedIcon sx={{ fontSize: 20 }} />,
   category: 'root',
   capabilities: { color: true, size: true, multiSelect: false },
+  compatibleLayerTypes: ['raster'],
   sizeLabel: 'ペンの太さ',
   settings: {
     default: () => ({ ...DEFAULT_PEN_DETAIL_SETTINGS }),

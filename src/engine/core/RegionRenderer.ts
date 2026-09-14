@@ -139,6 +139,41 @@ export class RegionRenderer {
       target.restore();
     }
   }
+
+  /**
+   * Draw visible layers in the current world transform.
+   * Used so strokes rasterize at display resolution instead of being upscaled.
+   */
+  renderNativeInWorld(target: CanvasRenderingContext2D): void {
+    const eng = this.host.engine;
+    const env = this.host.drawEnv(
+      true,
+      eng.artboard.w,
+      eng.artboard.h,
+      0,
+      0,
+    );
+    const editingTextId = eng.getTextEditingId?.() ?? null;
+    const visit = (ids: string[]) => {
+      for (const id of ids) {
+        const layer = eng.layerById(id);
+        if (!layer) continue;
+        if (
+          layer.visible &&
+          !(layer.type === 'text' && layer.id === editingTextId)
+        ) {
+          target.save();
+          try {
+            layerHandler(layer).renderer.draw(target, layer, env);
+          } finally {
+            target.restore();
+          }
+        }
+        visit(layer.childIds);
+      }
+    };
+    visit(eng.getRootLayerIds());
+  }
   render(
     region: RenderRect,
     included: Set<string> | null,

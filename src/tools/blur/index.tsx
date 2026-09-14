@@ -10,6 +10,7 @@ export const blurTool: ToolDescriptor = {
   icon: <BlurOnIcon sx={{ fontSize: 20 }} />,
   category: 'root',
   capabilities: { color: false, size: true, multiSelect: false },
+  compatibleLayerTypes: ['raster'],
   sizeLabel: 'ぼかしの太さ',
   summary: (tool) => `${tool.sizeMm.toFixed(2)}mm`,
   Panel: BlurSettingsPanel,

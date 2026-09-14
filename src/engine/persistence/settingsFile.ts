@@ -99,6 +99,9 @@ export function validateAppSettings(value: unknown): SavedAppSettings {
     || typeof raw.timelapseEnabled !== 'boolean') {
     throw new Error('設定値の形式が不正です');
   }
+  if (raw.autoDeselectPaletteTools !== undefined && typeof raw.autoDeselectPaletteTools !== 'boolean') {
+    throw new Error('設定値の形式が不正です');
+  }
   const normalized: SavedAppSettings = {
     tools: normalizedTools,
     toolLayout,
@@ -112,10 +115,11 @@ export function validateAppSettings(value: unknown): SavedAppSettings {
   };
   const assigned = Object.values(normalized.shortcuts).filter(Boolean);
   if (new Set(assigned).size !== assigned.length) throw new Error('ショートカットの割り当てが重複しています');
-  if (raw.shortcuts === undefined) {
-    const { shortcuts: _shortcuts, ...legacyShape } = normalized;
-    if (!sameValue(legacyShape, raw)) throw new Error('設定ファイルに未対応の項目があります');
-  } else if (!sameValue(normalized, raw)) throw new Error('設定ファイルに未対応の項目があります');
+  const comparable = { ...normalized } as Record<string, unknown>;
+  if (raw.shortcuts === undefined) delete comparable.shortcuts;
+  const rawComparable = { ...raw };
+  delete rawComparable.autoDeselectPaletteTools;
+  if (!sameValue(comparable, rawComparable)) throw new Error('設定ファイルに未対応の項目があります');
   return normalized;
 }
 
@@ -125,7 +129,17 @@ export function parseAppSettingsFile(value: unknown): SavedAppSettings {
     throw new Error('rin-paint の設定ファイルではありません');
   }
   const settings = validateAppSettings(file.settings);
-  if (!sameValue(makeAppSettingsFile(settings), file)) throw new Error('設定ファイルに未対応の項目があります');
+  const expected = makeAppSettingsFile(settings);
+  const rawSettings = record(file.settings);
+  if (!rawSettings) throw new Error('設定ファイルの形式が不正です');
+  const expectedSettings = { ...expected.settings } as Record<string, unknown>;
+  if (rawSettings.shortcuts === undefined) delete expectedSettings.shortcuts;
+  const fileSettings = { ...rawSettings };
+  delete fileSettings.autoDeselectPaletteTools;
+  if (!sameValue(
+    { app: expected.app, kind: expected.kind, version: expected.version, settings: expectedSettings },
+    { app: file.app, kind: file.kind, version: file.version, settings: fileSettings },
+  )) throw new Error('設定ファイルに未対応の項目があります');
   return settings;
 }
 

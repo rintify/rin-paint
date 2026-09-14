@@ -9,12 +9,23 @@ import {
   Typography,
 } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
-import { getToolDescriptor } from '../../tools/registry';
+import { getToolDescriptor, toolSupportsLayerType } from '../../tools/registry';
 import { useStore } from '../../state/store';
 import type { ToolInstance } from '../../types';
 import { useEngine } from '../EngineContext';
 import { useOutsideClick } from '../hooks/useOutsideClick';
 import { ManageToolsDialog } from './ManageToolsDialog';
+import type { LayerType } from '../../model';
+
+function toolUnavailable(
+  kind: string,
+  multi: boolean,
+  layerType: LayerType | undefined,
+): boolean {
+  const descriptor = getToolDescriptor(kind);
+  if (multi && !descriptor?.capabilities.multiSelect) return true;
+  return !toolSupportsLayerType(kind, layerType);
+}
 
 export function ToolPicker() {
   const engine = useEngine();
@@ -23,6 +34,7 @@ export function ToolPicker() {
   const stacks = useStore(state => state.toolStacks);
   const activeId = useStore(state => state.activeToolId);
   const multi = useStore(state => state.multiSelectMode);
+  const activeLayerType = useStore(state => state.layers.find(layer => layer.id === state.activeLayerId)?.type);
   const [manageOpen, setManageOpen] = useState(false);
   const [stackOpen, setStackOpen] = useState<{
     id: string;
@@ -115,12 +127,13 @@ export function ToolPicker() {
           if (!tool) return null;
           const active = activeId === tool.id;
           const descriptor = getToolDescriptor(tool.kind);
+          const unavailable = toolUnavailable(tool.kind, multi, activeLayerType);
           return (
             <Button
               key={tool.id}
-              disabled={multi && !descriptor?.capabilities.multiSelect}
+              disabled={unavailable}
               onClick={() => engine.selectToolInstance(tool.id)}
-              title={tool.name}
+              title={unavailable && !toolSupportsLayerType(tool.kind, activeLayerType) ? `${tool.name}（このレイヤーでは使えません）` : tool.name}
               variant={active ? 'contained' : 'outlined'}
               color={active ? 'primary' : 'inherit'}
               className="tool-rail-button"
@@ -161,13 +174,15 @@ export function ToolPicker() {
               if (!tool) return null;
               const active = activeId === id;
               const descriptor = getToolDescriptor(tool.kind);
+              const unavailable = toolUnavailable(tool.kind, multi, activeLayerType);
               return (
                 <Button
                   key={id}
-                  disabled={multi && !descriptor?.capabilities.multiSelect}
+                  disabled={unavailable}
                   variant={active ? 'contained' : 'outlined'}
                   color={active ? 'primary' : 'inherit'}
                   className="tool-rail-button tool-stack-popover-tool"
+                  title={unavailable && !toolSupportsLayerType(tool.kind, activeLayerType) ? `${tool.name}（このレイヤーでは使えません）` : tool.name}
                   onClick={() => {
                     engine.selectToolInstance(id);
                     setStackOpen(null);

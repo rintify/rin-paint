@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from 'react';
-import type { StrokePoint } from '../model';
+import type { LayerType, StrokePoint } from '../model';
 import type { PaintEngine } from '../engine/PaintEngine';
 import type { ToolInstance } from '../model/tool';
 
@@ -15,8 +15,6 @@ export interface Tool {
   readonly latestMoveOnly?: boolean;
   /** 長押し判定を待たず、pointerdown から操作を始めるツール。 */
   readonly startsImmediately?: boolean;
-  /** 選択中の図形・画像をキャンバス上で直接移動・変形していいか。未指定は許可。 */
-  readonly allowsDirectShapeEdit?: boolean;
   onDown(p: StrokePoint, e: PointerEvent): void;
   onMove(p: StrokePoint, e: PointerEvent): void;
   onUp(p: StrokePoint, e: PointerEvent): void;
@@ -62,6 +60,10 @@ export interface ToolDescriptor<S = unknown> {
   colorLabel?: string;
   allowTransparentColor?: boolean;
   summary?(tool: ToolInstance): string;
+  /** パレットから使ったワンショットツールを、操作後に自動で解除する */
+  autoDeactivateAfterUse?: boolean;
+  /** 指定時、主選択レイヤーがその種類のときだけ使える */
+  compatibleLayerTypes?: readonly LayerType[];
   create(engine: PaintEngine): Tool;
 }
 

@@ -1,5 +1,6 @@
 import { Box } from '@mui/material';
 import { getToolDescriptor } from '../tools/registry';
+import { AutoDeactivateSwitch } from '../tools/AutoDeactivateSwitch';
 import { useStore } from '../state/store';
 import { ColorControls } from './ColorControls';
 
@@ -11,6 +12,7 @@ export function ToolSettingsHost() {
   return (
     <Box className="tool-settings-host">
       {Panel ? <Panel /> : null}
+      {descriptor?.autoDeactivateAfterUse ? <AutoDeactivateSwitch /> : null}
       {descriptor?.capabilities.color ? <ColorControls label={descriptor.colorLabel} allowTransparent={descriptor.allowTransparentColor !== false} /> : null}
     </Box>
   );

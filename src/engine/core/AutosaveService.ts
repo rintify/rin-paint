@@ -114,19 +114,22 @@ export class AutosaveService {
     let thumbnail: Blob | undefined;
     if (eng.compositor.main) {
       eng.ensureComposited();
-      const thumb = document.createElement('canvas');
-      thumb.width = 240;
-      thumb.height = Math.max(
-        1,
-        Math.round((240 * eng.artboard.h) / eng.artboard.w),
-      );
-      thumb
-        .getContext('2d')!
-        .drawImage(eng.compositor.main, 0, 0, thumb.width, thumb.height);
-      thumbnail = await new Promise((resolve) =>
-        thumb.toBlob((blob) => resolve(blob ?? undefined), 'image/webp', 0.72),
-      );
-      pages.thumbnailVersion++;
+      const src = eng.compositeCanvas();
+      if (src) {
+        const thumb = document.createElement('canvas');
+        thumb.width = 240;
+        thumb.height = Math.max(
+          1,
+          Math.round((240 * eng.artboard.h) / eng.artboard.w),
+        );
+        thumb
+          .getContext('2d')!
+          .drawImage(src, 0, 0, thumb.width, thumb.height);
+        thumbnail = await new Promise((resolve) =>
+          thumb.toBlob((blob) => resolve(blob ?? undefined), 'image/webp', 0.72),
+        );
+        pages.thumbnailVersion++;
+      }
     }
     const page = {
       id: pageId,

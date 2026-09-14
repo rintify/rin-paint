@@ -1,5 +1,5 @@
 import { TRANSPARENT, type StrokePoint } from '../../model';
-import { drawShape, shapeFromDrag, type DragShapeKind } from '../../engine/shapes';
+import { drawShape, shapeFromDrag, type DragShapeKind, drawShapeGizmo } from '../../engine/shapes';
 import { constrainAxisAlignedAspect } from '../../engine/shapes/snap';
 import type { PaintEngine } from '../../engine/PaintEngine';
 import { DEFAULT_SIZE_MM, mmToPx } from '../../engine/units';
@@ -75,5 +75,6 @@ export class ShapeTool implements Tool {
     } else {
       drawShape(ctx, shape, false, this.eng.artboard);
     }
+    drawShapeGizmo(ctx, shape, { scale: this.eng.uiScale() });
   }
 }

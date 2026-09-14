@@ -1,4 +1,5 @@
 import type { PaintEngine } from '../engine/PaintEngine';
+import type { LayerType } from '../model';
 import type { ToolInstance } from '../model/tool';
 import { clampSizeMm, roundMm } from '../engine/units';
 import { blurTool } from './blur';
@@ -51,6 +52,17 @@ export function isToolKind(k: string): k is ToolKind {
   return k in TOOL_REGISTRY;
 }
 
+/** 未指定なら全レイヤー。レイヤー種類がまだ無いときは落とさない。 */
+export function toolSupportsLayerType(
+  kind: string,
+  layerType: LayerType | undefined,
+): boolean {
+  const allowed = getToolDescriptor(kind)?.compatibleLayerTypes;
+  if (!allowed?.length) return true;
+  if (!layerType) return true;
+  return allowed.includes(layerType);
+}
+
 function legacySettings(kind: ToolKind, raw: Record<string, unknown>): unknown {
   if (raw.settings !== undefined) return raw.settings;
   switch (kind) {
@@ -92,6 +104,9 @@ export function normalizeToolInstance(raw: unknown): ToolInstance | null {
     sizeMm: roundMm(clampSizeMm(o.sizeMm)),
     color: o.color,
   };
+  if (typeof o.autoDeactivateAfterUse === 'boolean') {
+    base.autoDeactivateAfterUse = o.autoDeactivateAfterUse;
+  }
 
   if (descriptor.settings) {
     return {

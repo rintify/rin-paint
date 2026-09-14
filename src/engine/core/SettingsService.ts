@@ -71,6 +71,7 @@ export class SettingsService {
       shortcuts: { ...settings.shortcuts },
     });
     this.engine.recorderPublic().setEnabled(settings.timelapseEnabled);
+    this.engine.syncActiveToolToLayer();
   }
 
   scheduleSave(): void {

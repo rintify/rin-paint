@@ -27,5 +27,6 @@ export const imageTool: ToolDescriptor<ImageToolSettings> = {
     const settings = normalizeImageToolSettings(tool.settings);
     return `${settings.widthMm} × ${settings.heightMm} mm`;
   },
+  autoDeactivateAfterUse: true,
   create: (engine) => new ImageTool(engine),
 };

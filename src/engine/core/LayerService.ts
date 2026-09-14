@@ -268,9 +268,7 @@ export class LayerService {
   }
 
   canRemoveLayer(id: string): boolean {
-    if (!this.byId(id)) return false;
-    const removed = new Set(this.descendantIds(id));
-    return this.layers.some((l) => l.type === 'raster' && !removed.has(l.id));
+    return !!this.byId(id);
   }
 
   canMergeLayerDown(id = this.activeLayerId): boolean {
@@ -838,13 +836,10 @@ export class LayerService {
     this.finishFloating();
     const location = this.locationOf(id);
     if (!location) return;
+    const removed = this.byId(id);
+    const targetActive = removed ? structuralLowerId(removed, this.rootLayerIds, this.layers) : null;
     const ids = this.descendantIds(id);
     const removeIds = new Set(ids);
-    const rasterCount = this.layers.filter((l) => l.type === 'raster').length;
-    const removedRasterCount = this.layers.filter(
-      (l) => removeIds.has(l.id) && l.type === 'raster',
-    ).length;
-    if (rasterCount - removedRasterCount < 1) return;
     const snapshots = ids.map((layerId) =>
       this.snapshotLayer(this.byId(layerId)!, true),
     );
@@ -858,11 +853,12 @@ export class LayerService {
     const removeOp = { kind: 'layerRemove' as const, location, snapshots };
     this.engine.history.push(
       maskOps.length
-        ? { kind: 'batch', ops: [removeOp, ...maskOps] }
-        : removeOp,
+      ? { kind: 'batch', ops: [removeOp, ...maskOps] }
+      : removeOp,
       'レイヤー削除',
     );
-    this.fixActive();
+    this.activeLayerId = targetActive && this.byId(targetActive) ? targetActive : '';
+    if (!this.byId(this.activeLayerId)) this.fixActive();
     this.engine.committed();
   }
 

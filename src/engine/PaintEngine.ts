@@ -15,7 +15,9 @@ import {
 } from '../model';
 import {
   createTool,
+  getToolDescriptor,
   isToolKind,
+  toolSupportsLayerType,
   normalizeEyedropperToolSettings,
   resolveCursorToolSettings,
   type EyedropperSource,
@@ -107,6 +109,7 @@ export class PaintEngine {
   private initPromise: Promise<void> | null = null;
   private lastViewState: ViewState = this.view.snapshot();
   private toolBeforeEyedropperId: string | null = null;
+  private toolActivationOrigin: 'palette' | 'shortcut' | null = null;
 
   private readonly nullTool: Tool = {
     onDown: () => undefined,
@@ -151,7 +154,30 @@ export class PaintEngine {
 
   notifyLayerSelectionChange(): void {
     this.transformEdit.cancel();
+    this.syncActiveToolToLayer();
     this.activeTool().onLayerSelectionChange?.();
+  }
+
+  /** 頂点・回転などの操作ハンドル。ツール未選択のときだけ。点線の位置表示は常時。 */
+  layerGizmosEnabled(): boolean {
+    return !useStore.getState().tool;
+  }
+
+  /** 主選択レイヤーに非対応ならツール選択を外す。 */
+  syncActiveToolToLayer(): void {
+    const st = useStore.getState();
+    if (!st.tool) return;
+    const type = this.layerById(this.getActiveLayerId())?.type;
+    if (toolSupportsLayerType(st.tool, type)) return;
+    this.clearActiveToolSelection();
+    this.requestRender();
+  }
+
+  private clearActiveToolSelection(): void {
+    this.layerService.finishFloating();
+    this.activeTool().cancel?.();
+    useStore.getState().deactivateTool();
+    this.toolActivationOrigin = null;
   }
 
   /** @internal */ activeSession(): ToolSession | null {
@@ -434,6 +460,7 @@ export class PaintEngine {
       state.tools.some((tool) => tool.id === this.toolBeforeEyedropperId)
     ) {
       state.activateTool(this.toolBeforeEyedropperId);
+      this.syncActiveToolToLayer();
     }
     const next = useStore.getState();
     next.setPenColor(color);
@@ -508,6 +535,24 @@ export class PaintEngine {
     if (st.timelapseEnabled === enabled) return;
     st.set({ timelapseEnabled: enabled });
     this.recorder.setEnabled(enabled);
+  }
+  setActiveToolAutoDeactivateAfterUse(enabled: boolean): void {
+    useStore.getState().setActiveToolAutoDeactivateAfterUse(enabled);
+  }
+
+  /** Palette-activated one-shot tools can drop selection after a completed use. */
+  notifyPaletteToolUsed(): void {
+    if (this.toolActivationOrigin !== 'palette') return;
+    const st = useStore.getState();
+    const kind = st.tool;
+    if (!kind || !getToolDescriptor(kind)?.autoDeactivateAfterUse) return;
+    const inst = st.activeToolId
+      ? st.tools.find((tool) => tool.id === st.activeToolId)
+      : undefined;
+    if (inst?.autoDeactivateAfterUse === false) return;
+    this.clearActiveToolSelection();
+    this.requestRender();
+    this.syncStore();
   }
 
   getLayerCanvas(id: string): HTMLCanvasElement | null {
@@ -718,6 +763,7 @@ export class PaintEngine {
   }
 
   beginShapeEdit(point: StrokePoint, event?: PointerEvent): boolean {
+    if (!this.layerGizmosEnabled()) return false;
     return this.transformEdit.activeLayer()
       ? this.transformEdit.begin(point)
       : this.shapeEdit.beginShapeEdit(point, event);
@@ -737,8 +783,9 @@ export class PaintEngine {
     this.shapeEdit.cancelShapeEdit();
   }
   drawActiveShapeHandles(ctx: CanvasRenderingContext2D): void {
-    this.shapeEdit.drawActiveShapeHandles(ctx);
-    this.transformEdit.draw(ctx);
+    const handles = this.layerGizmosEnabled();
+    this.shapeEdit.drawActiveShapeHandles(ctx, handles);
+    this.transformEdit.draw(ctx, handles);
   }
   setShapeHandleEdgeConstrained(value: boolean): void {
     this.shapeEdit.setShapeHandleEdgeConstrained(value);
@@ -812,7 +859,7 @@ export class PaintEngine {
     useStore.getState().set({ bubbleDraftActive: active });
   }
 
-  selectToolInstance(id: string): void {
+  selectToolInstance(id: string, origin: 'palette' | 'shortcut' = 'palette'): void {
     if (this.busy && useStore.getState().fillProgress !== null)
       this.fill.cancel();
     if (this.busy) return;
@@ -824,16 +871,18 @@ export class PaintEngine {
     }
     st.set({ shortcutTarget: { type: 'tool', id } });
     if (id === st.activeToolId) {
-      this.layerService.finishFloating();
-      this.activeTool().cancel?.();
-      st.deactivateTool();
+      this.clearActiveToolSelection();
       this.requestRender();
       return;
     }
+    const layerType = this.layerById(this.getActiveLayerId())?.type;
+    if (!toolSupportsLayerType(inst.kind, layerType)) return;
+    this.cancelShapeEdit();
     if (inst.kind !== st.tool) {
       this.layerService.finishFloating();
       this.activeTool().cancel?.();
     }
+    this.toolActivationOrigin = origin;
     st.activateTool(id);
     this.activeTool().onActivate?.();
     this.requestRender();
@@ -845,12 +894,15 @@ export class PaintEngine {
       this.fill.cancel();
     if (this.busy) return;
     const st = useStore.getState();
+    this.cancelShapeEdit();
     if (kind !== st.tool) {
       this.layerService.finishFloating();
       this.activeTool().cancel?.();
     }
     st.addTool(kind);
-    this.activeTool().onActivate?.();
+    this.toolActivationOrigin = 'palette';
+    this.syncActiveToolToLayer();
+    if (useStore.getState().tool === kind) this.activeTool().onActivate?.();
     this.requestRender();
     this.syncStore();
   }
@@ -859,8 +911,7 @@ export class PaintEngine {
     if (this.busy) return;
     const st = useStore.getState();
     if (id === st.activeToolId) {
-      this.layerService.finishFloating();
-      this.activeTool().cancel?.();
+      this.clearActiveToolSelection();
     }
     st.removeTool(id);
     this.requestRender();
@@ -1131,6 +1182,7 @@ export class PaintEngine {
       freeTransform:
         this.activeFloat()?.phase === 'float' && !!this.activeFloat()?.free,
     });
+    this.syncActiveToolToLayer();
   }
 
   scheduleSave(): void {

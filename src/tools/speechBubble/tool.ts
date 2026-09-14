@@ -1,5 +1,5 @@
 import type { BubbleTailShapeParams, ShapeParams, StrokePoint } from '../../model';
-import { drawShape, shapeFromDrag } from '../../engine/shapes';
+import { drawShape, shapeFromDrag, drawShapeGizmo } from '../../engine/shapes';
 import { constrainAxisAlignedAspect } from '../../engine/shapes/snap';
 import type { PaintEngine } from '../../engine/PaintEngine';
 import { mmToPx } from '../../engine/units';
@@ -41,7 +41,6 @@ function textFrame(body: Body, padding: number) {
 }
 
 export class SpeechBubbleTool implements Tool {
-  readonly allowsDirectShapeEdit = false;
   private start: StrokePoint | null = null;
   private current: StrokePoint | null = null;
   private body: Body | null = null;
@@ -122,6 +121,7 @@ export class SpeechBubbleTool implements Tool {
       fontSizePt: settings.fontSizePt,
       textFrame: textFrame(body, mmToPx(settings.textPaddingMm, this.engine.getPageSpec().ppi)),
     });
+    this.engine.notifyPaletteToolUsed();
   }
 
   onDown(point: StrokePoint, event: PointerEvent): void {
@@ -181,6 +181,8 @@ export class SpeechBubbleTool implements Tool {
     if (tail) drawShape(context, tail, false, this.engine.artboard);
     const width = mmToPx(this.engine.activeToolSettings()?.sizeMm ?? 1, this.engine.getPageSpec().ppi);
     drawShape(context, { ...body, color: settings.outlineColor, paintMode: 'stroke', strokeWidth: width * 2 }, false, this.engine.artboard);
+    drawShapeGizmo(context, body, { scale: this.engine.uiScale() });
+    if (tail) drawShapeGizmo(context, tail, { scale: this.engine.uiScale() });
     context.restore();
   }
 }
