@@ -7,6 +7,7 @@ import type { Tool, ToolSession } from '../types';
 import { FloatSelection } from '../transform/floatSelection';
 
 export class MoveTool implements Tool {
+  readonly latestMoveOnly = true;
   readonly floatSelection: FloatSelection;
   private refreshing = false;
 
@@ -17,7 +18,7 @@ export class MoveTool implements Tool {
   readonly session: ToolSession = {
     active: () => this.floatSelection.phase === 'float',
     commit: () => this.floatSelection.commit(),
-    cancel: () => this.cancelAndRefresh(),
+    cancel: () => this.floatSelection.cancelSelection(),
   };
 
   overlayAnimated(): boolean {
@@ -70,7 +71,7 @@ export class MoveTool implements Tool {
   }
 
   cancelSelection(): void {
-    this.cancelAndRefresh();
+    this.floatSelection.cancelSelection();
   }
 
   drawAboveLayer(ctx: CanvasRenderingContext2D, layerId: string): void {
@@ -79,11 +80,6 @@ export class MoveTool implements Tool {
 
   drawOverlay(ctx: CanvasRenderingContext2D): void {
     this.floatSelection.drawOverlay(ctx);
-  }
-
-  private cancelAndRefresh(): void {
-    this.floatSelection.cancelSelection();
-    if (useStore.getState().tool === 'move') this.beginFromSelection();
   }
 
   private refresh(): void {

@@ -1,3 +1,4 @@
+import { StoreProjectionCache, reuseArray } from './core/StoreProjectionCache';
 import type { RasterChangeSet } from './raster/RasterSurface';
 import { useStore } from '../state/store';
 import { Artboard } from './artboard';
@@ -100,6 +101,7 @@ export class PaintEngine {
   private readonly toolCache = new Map<ToolKind, Tool>();
 
   private busy = false;
+  private storeProjection = new StoreProjectionCache();
   readonly view = new ViewController(this.artboard);
   private initPromise: Promise<void> | null = null;
   private lastViewState: ViewState = this.view.snapshot();
@@ -156,10 +158,12 @@ export class PaintEngine {
   hasOpenSession(): boolean {
     return (
       this.historyService.hasRasterEdits() ||
+      this.shapeEdit.hasEdit() ||
       (this.activeSession()?.active() ?? false)
     );
   }
   cancelSessions(): void {
+    if (this.shapeEdit.hasEdit()) this.shapeEdit.cancelShapeEdit();
     this.activeSession()?.cancel();
     if (this.historyService.hasRasterEdits()) this.activeTool().cancel?.();
   }
@@ -326,7 +330,6 @@ export class PaintEngine {
     this.initPromise ??= (async () => {
       await this.settings.init();
       await this.project.doInit();
-      await this.links.refreshCatalog();
       this.links.reconcileAll();
     })();
     return this.initPromise;
@@ -640,8 +643,8 @@ export class PaintEngine {
   async mergeLayerDown(id = this.layerService.activeLayerId): Promise<void> {
     return this.layerService.mergeLayerDown(id);
   }
-  transferShapeLayer(): void {
-    this.layerService.transferShapeLayer();
+  async transferShapeLayer(): Promise<void> {
+    await this.layerService.transferShapeLayerAsync();
   }
   convertRectToPolygon(id?: string): void {
     this.layerService.convertRectToPolygon(id);
@@ -982,8 +985,10 @@ export class PaintEngine {
     return this.project.newProject();
   }
 
-  commitFloatSelection(): void {
-    this.activeSession()?.commit();
+  async commitFloatSelection(): Promise<void> {
+    const float = this.activeFloat();
+    if (float) await float.commitAsync();
+    else this.activeSession()?.commit();
     this.syncStore();
   }
   duplicateFloatSelection(): void {
@@ -1027,29 +1032,46 @@ export class PaintEngine {
 
   syncStore(): void {
     const ls = this.layerService;
+    this.storeProjection.begin(ls.layers, ls.rootLayerIds);
+    const infos = this.links.infosFor(ls.layers.map((l) => l.id));
+    const counts = this.storeProjection.historyCounts(this.history);
     const metas: LayerMeta[] = ls.layers.map((l) => {
-      const linkInfo = this.links.infoFor(l.id);
-      return {
-        state: layerHandler(l).state.clone(l.state as never),
-        id: l.id,
-        type: l.type,
-        name: l.name,
-        opacity: l.opacity,
-        blend: l.blend,
-        visible: l.visible,
-        parentId: l.parentId,
-        childIds: [...l.childIds],
-        ...(l.parameterLink
-          ? { parameterLink: structuredClone(l.parameterLink) }
-          : { parameterLink: undefined }),
-        linkSource: linkInfo.source,
-        directLinkTargets: linkInfo.targets,
-        compatibleLinkParameterIds: linkInfo.compatibleIds,
-        version: ls.versions.get(l.id) ?? 0,
-        canMergeDown: ls.canMergeLayerDown(l.id),
-        canRemove: ls.canRemoveLayer(l.id),
-        canTransferShape: ls.canTransferShape(l.id),
-      } as LayerMeta;
+      const linkInfo = infos.get(l.id)!;
+      const key = JSON.stringify([
+        ls.versions.get(l.id) ?? 0,
+        l.name,
+        l.opacity,
+        l.blend,
+        l.visible,
+        l.parameterLink,
+        linkInfo,
+      ]);
+      return this.storeProjection.layer(
+        l,
+        key,
+        () =>
+          ({
+            state: layerHandler(l).state.clone(l.state as never),
+            id: l.id,
+            type: l.type,
+            name: l.name,
+            opacity: l.opacity,
+            blend: l.blend,
+            visible: l.visible,
+            parentId: l.parentId,
+            childIds: [...l.childIds],
+            ...(l.parameterLink
+              ? { parameterLink: structuredClone(l.parameterLink) }
+              : { parameterLink: undefined }),
+            linkSource: linkInfo.source,
+            directLinkTargets: linkInfo.targets,
+            compatibleLinkParameterIds: linkInfo.compatibleIds,
+            version: ls.versions.get(l.id) ?? 0,
+            canMergeDown: ls.canMergeLayerDown(l.id),
+            canRemove: ls.canRemoveLayer(l.id),
+            canTransferShape: ls.canTransferShape(l.id),
+          }) as LayerMeta,
+      );
     });
     const state = useStore.getState();
     let selectedLayerIds = state.multiSelectMode
@@ -1066,10 +1088,10 @@ export class PaintEngine {
       selectedLayerIds = [ls.activeLayerId].filter(Boolean);
     }
     useStore.getState().set({
-      layers: metas,
-      rootLayerIds: ls.layerRootIds(),
+      layers: reuseArray(state.layers, metas),
+      rootLayerIds: reuseArray(state.rootLayerIds, ls.layerRootIds()),
       activeLayerId: ls.activeLayerId,
-      selectedLayerIds,
+      selectedLayerIds: reuseArray(state.selectedLayerIds, selectedLayerIds),
       multiSelectMode,
       pages: this.pages.pageOrder.map((id) => ({
         id,
@@ -1086,8 +1108,8 @@ export class PaintEngine {
         index: i,
         label: c.label,
       })),
-      historyCount: this.history.nodeCount(),
-      historyPrunableCount: this.history.prunableCount(10),
+      historyCount: counts.count,
+      historyPrunableCount: counts.prunable,
       selectionActive: this.activeFloat()?.phase === 'float',
       freeTransform:
         this.activeFloat()?.phase === 'float' && !!this.activeFloat()?.free,

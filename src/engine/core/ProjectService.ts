@@ -1,3 +1,4 @@
+import { cloneRuntimeLayers, runtimeCheckpoint } from './RuntimeCheckpoint';
 import { useStore } from '../../state/store';
 import {
   DEFAULT_PAGE,
@@ -19,10 +20,9 @@ import {
   hasClipboard,
   collectUnusedRasterAssets,
   loadPage,
+  loadRasterAssets,
   loadProjectMeta,
   replaceProject,
-  savePage,
-  saveProjectMeta,
   setPersistencePageId,
   type SavedPage,
   type SavedProjectMeta,
@@ -53,6 +53,7 @@ export class ProjectService {
     const pixels = pagePixels(this.pageSpec);
     eng.artboard.resize(pixels.width, pixels.height);
     eng.compositor.syncWorkCanvases();
+    await loadRasterAssets(page);
     for (const sl of page.layers) {
       const layer = await restoreLayerFrom(sl, { artboard: eng.artboard });
       if (layer) ls.layers.push(layer);
@@ -82,7 +83,9 @@ export class ProjectService {
       const meta = await loadProjectMeta();
       persistedDataFound = !!meta;
       if (meta?.version === PROJECT_VERSION && meta.pageOrder.length) {
-        const restoredPages = await Promise.all(meta.pageOrder.map(loadPage));
+        const restoredPages = await Promise.all(
+          meta.pageOrder.map((id) => loadPage(id, false)),
+        );
         if (restoredPages.some((page) => !page))
           throw new Error('一部のページを読み込めませんでした');
         const page = restoredPages.find(
@@ -101,10 +104,7 @@ export class ProjectService {
             fonts: meta.fonts,
           });
           await this.restoreSavedPage(page);
-          await Promise.all([
-            saveProjectMeta(meta),
-            ...(restoredPages as SavedPage[]).map((saved) => savePage(saved)),
-          ]);
+          eng.links.replaceCatalog(restoredPages as SavedPage[]);
           useStore.getState().set({
             pageW: eng.artboard.w,
             pageH: eng.artboard.h,
@@ -147,9 +147,24 @@ export class ProjectService {
         toolNotice:
           '保存データを復元できなかったため、自動保存を停止しました。新規作成または読込を選んでください。',
       });
-    } else {
+    } else if (!persistedDataFound) {
       eng.scheduleSave();
     }
+  }
+
+  restoreRuntimePageSpec(spec: PageSpec): void {
+    const changed = JSON.stringify(spec) !== JSON.stringify(this.pageSpec);
+    this.pageSpec = { ...spec };
+    if (changed) {
+      const size = pagePixels(spec);
+      this.engine.artboard.resize(size.width, size.height);
+      this.engine.compositor.syncWorkCanvases();
+    }
+    useStore.getState().set({
+      pageW: this.engine.artboard.w,
+      pageH: this.engine.artboard.h,
+      pageSpec: { ...spec },
+    });
   }
 
   pageSnapshot(): PageSnapshot {
@@ -166,67 +181,74 @@ export class ProjectService {
   async restorePageSnapshot(snapshot: PageSnapshot): Promise<void> {
     const eng = this.engine;
     const ls = eng.layerService;
-    this.pageSpec = { ...snapshot.spec };
-    const pixels = pagePixels(snapshot.spec);
-    eng.artboard.resize(pixels.width, pixels.height);
-    ls.layers = [];
-    for (const layer of snapshot.layers) await ls.restoreLayer(layer);
+    const layers = [];
+    for (const record of snapshot.layers) {
+      const layer = await restoreLayerFrom(record, { artboard: eng.artboard });
+      if (!layer) throw new Error('履歴のレイヤーを復元できません');
+      layers.push(layer);
+    }
+    if (!validateLayerTree(snapshot.roots, layers))
+      throw new Error('履歴のレイヤー構造が不正です');
+    ls.layers = layers;
     ls.rootLayerIds = [...snapshot.roots];
     ls.activeLayerId = snapshot.activeId;
-    eng.compositor.syncWorkCanvases();
+    this.restoreRuntimePageSpec(snapshot.spec);
+    ls.clearVersions();
     eng.compositor.textRenderer.clear();
     eng.compositor.syncTextRenders();
-    useStore.getState().set({
-      pageW: eng.artboard.w,
-      pageH: eng.artboard.h,
-      pageSpec: { ...this.pageSpec },
-    });
   }
 
   async resizePage(spec: PageSpec): Promise<void> {
+    spec = { ...spec };
     const eng = this.engine;
     const ls = eng.layerService;
     if (eng.isBusy()) throw new Error('処理の完了後にサイズを変更してください');
     const error = validatePageSpec(spec);
     if (error) throw new Error(error);
     if (JSON.stringify(spec) === JSON.stringify(this.pageSpec)) return;
-    ls.finishFloating();
+    eng.finishTextEditing();
+    await eng.commitFloatSelection();
+    if (eng.isBusy()) throw new Error('処理の完了後にサイズを変更してください');
     eng.cancelSessions();
+    const rollback = runtimeCheckpoint(eng);
     eng.setBusy(true);
-    const before = this.pageSnapshot();
     try {
+      const before = this.pageSnapshot();
       const { width, height } = pagePixels(spec);
       const factor = spec.ppi / this.pageSpec.ppi;
-      for (const layer of ls.layers) {
-        await scaleLayerAsync(layer, factor, { width, height });
-        ls.bumpLayer(layer.id);
+      // Stage resolution changes without replacing any live layer until all resampling succeeds.
+      if (factor !== 1) {
+        const layers = cloneRuntimeLayers(ls.layers);
+        for (const layer of layers)
+          await scaleLayerAsync(layer, factor, { width, height });
+        ls.layers = layers;
       }
-      this.pageSpec = { ...spec };
-      eng.artboard.resize(width, height);
-      eng.compositor.syncWorkCanvases();
-      const after = this.pageSnapshot();
+      this.restoreRuntimePageSpec(spec);
+      ls.clearVersions();
+      eng.compositor.textRenderer.clear();
+      eng.compositor.syncTextRenders();
+      const after =
+        factor === 1 ? { ...before, spec: { ...spec } } : this.pageSnapshot();
       const node = eng.history.push(
         { kind: 'pageChange', before, after },
         'ページサイズ・解像度',
       );
       node.ready = Promise.all(
-        [...before.layers, ...after.layers].map(async (snapshot) => {
-          if (snapshot.canvas) {
-            try {
-              snapshot.content = await canvasToBlob(snapshot.canvas);
-              snapshot.canvas = undefined;
-            } catch {
-              /* Keep the original canvas so undo remains lossless; persistence can retry. */
+        [...new Set([...before.layers, ...after.layers])].map(
+          async (snapshot) => {
+            if (snapshot.canvas) {
+              try {
+                snapshot.content = await canvasToBlob(snapshot.canvas);
+                snapshot.canvas = undefined;
+              } catch {
+                /* Retain pixels for lossless undo and a later save retry. */
+              }
             }
-          }
-        }),
+          },
+        ),
       ).then(() => undefined);
-      useStore
-        .getState()
-        .set({ pageW: width, pageH: height, pageSpec: { ...spec } });
-      eng.compositor.textRenderer.clear();
     } catch (error) {
-      await this.restorePageSnapshot(before);
+      rollback();
       throw error;
     } finally {
       eng.setBusy(false);
@@ -366,9 +388,9 @@ export class ProjectService {
     await eng.flushSavePublic();
     const meta = await loadProjectMeta();
     if (!meta) throw new Error('プロジェクトを保存できませんでした');
-    const pages = (await Promise.all(meta.pageOrder.map(loadPage))).filter(
-      (page): page is SavedPage => !!page,
-    );
+    const pages = (
+      await Promise.all(meta.pageOrder.map((id) => loadPage(id)))
+    ).filter((page): page is SavedPage => !!page);
     if (pages.length !== meta.pageOrder.length)
       throw new Error('一部のページを読み込めませんでした');
     downloadBlob(
@@ -415,9 +437,10 @@ export class ProjectService {
     if (eng.isBusy()) throw new Error('busy');
     ls.finishFloating();
     eng.cancelSessions();
-    const before = this.pageSnapshot();
     const previousFonts = useStore.getState().fonts;
     const previousHistory = eng.history;
+    const rollbackRuntime = runtimeCheckpoint(eng);
+    const rollbackCatalog = eng.links.catalogCheckpoint();
     const previousPageOrder = [...pages.pageOrder],
       previousPageId = pages.activePageId;
     eng.setBusy(true);
@@ -465,11 +488,9 @@ export class ProjectService {
       }
       if (!validateLayerTree(proj.rootLayerIds, layers))
         throw new Error('invalid layer tree');
-      await replaceProject(meta, archive.pages);
       pages.pageOrder = [...meta.pageOrder];
       pages.activePageId = meta.activePageId;
       setPersistencePageId(pages.activePageId);
-      await eng.links.refreshCatalog();
       ls.layers = layers;
       ls.rootLayerIds = [...proj.rootLayerIds];
       ls.activeLayerId = proj.activeLayerId ?? '';
@@ -490,21 +511,25 @@ export class ProjectService {
         })),
       });
       ls.fixActive();
+      eng.links.replaceCatalog(archive.pages);
       eng.links.reconcileAll();
       eng.compositor.syncTextRenders();
+      await replaceProject(meta, archive.pages);
     } catch (error) {
       pages.pageOrder = previousPageOrder;
       pages.activePageId = previousPageId;
       setPersistencePageId(previousPageId);
-      await loadFonts(previousFonts);
+      rollbackRuntime();
+      rollbackCatalog();
       useStore.getState().set({ fonts: previousFonts });
-      await this.restorePageSnapshot(before);
+      await loadFonts(previousFonts).catch(() => undefined);
       eng.history = previousHistory;
       eng.syncStore();
       throw error;
     } finally {
       eng.setBusy(false);
     }
+
     eng.requestRender();
     eng.syncStore();
     eng.scheduleSave();

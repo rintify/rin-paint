@@ -6,12 +6,14 @@ import type { LayerMeta } from '../../model';
 export function Thumb({ meta }: { meta: LayerMeta }) {
   const engine = useEngine();
   const ref = useRef<HTMLCanvasElement>(null);
+  const imageSource =
+    meta.type === 'image' ? engine.getLayerCanvas(meta.id) : null;
   useEffect(() => {
     const c = ref.current!;
     const ctx = c.getContext('2d')!;
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, c.width, c.height);
-    const src = engine.getLayerCanvas(meta.id);
+    const src = imageSource ?? engine.getLayerCanvas(meta.id);
     if (meta.type === 'raster') {
       const layer = engine.layerById(meta.id);
       if (layer?.type === 'raster') {
@@ -35,7 +37,7 @@ export function Thumb({ meta }: { meta: LayerMeta }) {
   }, [
     engine,
     meta.id,
-    meta.version,
+    meta.type === 'image' ? imageSource : meta.version,
     meta.type === 'shape' ? meta.state.shape : null,
   ]);
   return <canvas ref={ref} width={40} height={30} className="thumb" />;

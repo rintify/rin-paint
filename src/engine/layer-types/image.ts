@@ -12,6 +12,20 @@ import { shapeBounds } from '../shapes';
 import { buildCatalog } from '../parameters/catalog';
 import type { LayerDefinition } from './definition';
 
+// Image runtimes are immutable originals. Placement edits only change layer state.
+const encodedImages = new WeakMap<HTMLCanvasElement, Promise<Blob>>();
+function encodedImage(canvas: HTMLCanvasElement): Promise<Blob> {
+  let pending = encodedImages.get(canvas);
+  if (!pending) {
+    pending = canvasToBlob(canvas).catch((error) => {
+      encodedImages.delete(canvas);
+      throw error;
+    });
+    encodedImages.set(canvas, pending);
+  }
+  return pending;
+}
+
 function cloneState(state: ImageState): ImageState {
   return {
     placement: cloneImageParams(state.placement),
@@ -53,6 +67,7 @@ async function canvasFromSource(
   const copy = makeCanvas(bitmap.width, bitmap.height);
   copy.getContext('2d')!.drawImage(bitmap, 0, 0);
   bitmap.close();
+  if (source instanceof Blob) encodedImages.set(copy, Promise.resolve(source));
   return copy;
 }
 
@@ -104,7 +119,7 @@ export const imageLayerType: LayerDefinition<'image'> = {
   codec: {
     encode: cloneState,
     decode: asImageState,
-    encodeContent: (layer) => canvasToBlob(layer.runtime.canvas),
+    encodeContent: (layer) => encodedImage(layer.runtime.canvas),
     async decodeRuntime(content) {
       const canvas = await canvasFromSource(
         content instanceof Blob || (content && 'getContext' in content)

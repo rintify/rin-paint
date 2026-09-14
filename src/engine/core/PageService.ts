@@ -82,7 +82,7 @@ export class PageService {
     eng.setBusy(true);
     useStore.getState().set({ pageBusy: true });
     try {
-      const page = await loadPage(id);
+      const page = await loadPage(id, false);
       if (!page) throw new Error('ページを読み込めませんでした');
       this.activePageId = id;
       setPersistencePageId(id);

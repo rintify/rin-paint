@@ -1053,6 +1053,77 @@ describe('shape snap, constraints, and persistence', () => {
     ).layerService.shapeById(id)?.state.snapEnabled;
   }
 
+  it.each(['shape', 'image'] as const)(
+    'moves an unsnapped %s without rebuilding the catalog or hierarchy on every preview',
+    async (type) => {
+      await engine.newProject();
+      engine.cancelSessions();
+      useStore.getState().deactivateTool();
+      if (type === 'shape')
+        engine.addShapeLayer({
+          kind: 'rect',
+          x: 40,
+          y: 40,
+          width: 200,
+          height: 200,
+          color: '#000',
+          strokeWidth: 2,
+          paintMode: 'fill-inside',
+        });
+      else {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 32;
+        canvas.getContext('2d')!.fillRect(0, 0, 32, 32);
+        engine.addImageLayer(canvas, 40, 40, 200, 200);
+      }
+      const id = useStore.getState().activeLayerId;
+      engine.commitLayerProps(
+        id,
+        { state: { snapEnabled: true } },
+        { state: { snapEnabled: false } },
+        'スナップOFF',
+      );
+      const previousMetas = useStore.getState().layers;
+      const catalog = vi.spyOn(
+        engine.links as unknown as { collectRecords(): unknown[] },
+        'collectRecords',
+      );
+      const snap = vi.spyOn(
+        engine.shapeEdit as unknown as {
+          collectMoveSnapLines(id: string): unknown;
+        },
+        'collectMoveSnapLines',
+      );
+      const node = internalHistory().current;
+      try {
+        expect(engine.beginShapeEdit(pt(140, 140))).toBe(true);
+        for (let i = 1; i <= 100; i++) engine.updateShapeEdit(pt(140 + i, 140));
+        expect(snap).not.toHaveBeenCalled();
+        expect(catalog).not.toHaveBeenCalled();
+        expect(useStore.getState().layers).toBe(previousMetas);
+        expect(internalHistory().current).toBe(node);
+        engine.finishShapeEdit(pt(240, 140));
+        expect(useStore.getState().layers).not.toBe(previousMetas);
+        const readX = () => {
+          const layer = engine.layerById(id)!;
+          return layer.type === 'image'
+            ? layer.state.placement.x
+            : engine.getShape(id)!.kind === 'rect'
+              ? (engine.getShape(id) as { x: number }).x
+              : NaN;
+        };
+        expect(readX()).toBe(140);
+        await engine.undo();
+        expect(readX()).toBe(40);
+        await engine.redo();
+        expect(readX()).toBe(140);
+      } finally {
+        catalog.mockRestore();
+        snap.mockRestore();
+      }
+    },
+  );
+
   it('creates shapes with snap on and keeps the setting through undo, save, and copy', async () => {
     await engine.newProject();
     engine.addShapeLayer({
@@ -1533,6 +1604,104 @@ describe('selection and layer transform', () => {
     else engine.addToolInstance(kind);
   }
 
+  it('switches shape and photo selection without changing history or rebuilding unrelated UI records', async () => {
+    await engine.newProject();
+    engine.cancelSessions();
+    useStore.getState().deactivateTool();
+    const ids: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      engine.addShapeLayer({
+        kind: 'rect',
+        x: i * 40,
+        y: 20,
+        width: 30,
+        height: 40,
+        color: '#ff0000',
+        strokeWidth: 1,
+        paintMode: 'fill-inside',
+      });
+      ids.push(useStore.getState().activeLayerId);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 32;
+    canvas.getContext('2d')!.fillRect(0, 0, 32, 32);
+    engine.addImageLayer(canvas, 0, 100, 400, 400);
+    const photo = useStore.getState().activeLayerId;
+    activateKind('move');
+    const metas = useStore.getState().layers,
+      node = internalHistory().current;
+    const index = vi.spyOn(
+      engine.links as unknown as { rebuildIndex(): void },
+      'rebuildIndex',
+    );
+    const render = vi.spyOn(engine.compositor, 'requestRender');
+    try {
+      engine.setActiveLayer(ids[0]);
+      engine.setActiveLayer(photo);
+      engine.setActiveLayer(ids[1]);
+      expect(internalHistory().current).toBe(node);
+      expect(
+        useStore.getState().layers.every((meta, i) => meta === metas[i]),
+      ).toBe(true);
+      expect(index.mock.calls.length).toBeLessThanOrEqual(3);
+      expect(render).not.toHaveBeenCalled();
+    } finally {
+      index.mockRestore();
+      render.mockRestore();
+    }
+    engine.cancelSessions();
+    useStore.getState().deactivateTool();
+    const before = useStore.getState().layers;
+    const shape = engine.getShape(ids[0])!;
+    engine.updateShapeParams(
+      ids[0],
+      shape,
+      { ...shape, color: '#00ff00' },
+      true,
+    );
+    expect(useStore.getState().layers.find((l) => l.id === ids[0])).not.toBe(
+      before.find((l) => l.id === ids[0]),
+    );
+    expect(useStore.getState().layers.find((l) => l.id === ids[1])).toBe(
+      before.find((l) => l.id === ids[1]),
+    );
+  });
+
+  it('encodes an immutable photo only once across placement changes and retries failed encodes', async () => {
+    const { createImageLayer } = await import('./layers');
+    const { imageLayerType } = await import('./layer-types/image');
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 32;
+    canvas.getContext('2d')!.fillRect(0, 0, 32, 32);
+    const layer = createImageLayer('photo', canvas, {
+      x: 0,
+      y: 0,
+      width: 32,
+      height: 32,
+      rotation: 0,
+    });
+    const toBlob = canvas.toBlob.bind(canvas);
+    Object.defineProperty(canvas, 'toBlob', {
+      configurable: true,
+      writable: true,
+      value: toBlob,
+    });
+    const failure = vi
+      .spyOn(canvas, 'toBlob')
+      .mockImplementationOnce((cb) => cb(null));
+    await expect(imageLayerType.codec.encodeContent!(layer)).rejects.toThrow();
+    failure.mockRestore();
+    const encode = vi.spyOn(canvas, 'toBlob');
+    try {
+      const first = await imageLayerType.codec.encodeContent!(layer);
+      layer.state.placement.x = 100;
+      expect(await imageLayerType.codec.encodeContent!(layer)).toBe(first);
+      expect(encode).toHaveBeenCalledTimes(1);
+    } finally {
+      encode.mockRestore();
+    }
+  });
+
   it('still floats a lassoed raster and commits the moved pixels', async () => {
     await engine.newProject();
     const rasterId = useStore.getState().activeLayerId;
@@ -1551,10 +1720,50 @@ describe('selection and layer transform', () => {
     lasso.onDown(pt(20, 20));
     lasso.onMove(pt(40, 20));
     lasso.onUp();
-    engine.commitFloatSelection();
+    await engine.commitFloatSelection();
     await awaitHistoryReady();
     expect(pixel(rasterId, 15, 15)[3]).toBe(0);
     expect(pixel(rasterId, 35, 15)[0]).toBeGreaterThan(200);
+  });
+
+  it('resizes with the move tool active without cutting pixels out of page history', async () => {
+    await engine.newProject();
+    engine.cancelSessions();
+    useStore.getState().deactivateTool();
+    const layer = engine.activeRaster()!,
+      id = layer.id;
+    paintRaster(layer, (ctx) => ctx.fillRect(-8, 10, 32, 24), {
+      x: -8,
+      y: 10,
+      w: 32,
+      h: 24,
+    });
+    const initial = { ...engine.getPageSpec() };
+    activateKind('move');
+    expect(engine.hasOpenSession()).toBe(true);
+    const smaller = {
+      widthMm: (64 * 25.4) / initial.ppi,
+      heightMm: (64 * 25.4) / initial.ppi,
+      ppi: initial.ppi,
+    };
+    await engine.resizePage(smaller);
+    expect(engine.hasOpenSession()).toBe(false);
+    expect(pixel(id, -4, 12)[3]).toBe(255);
+    const resized = internalHistory().current;
+    await engine.undo();
+    expect(engine.getPageSpec()).toEqual(initial);
+    expect(internalHistory().current).toBe(resized.parent);
+    expect(pixel(id, -4, 12)[3]).toBe(255);
+    await engine.redo();
+    expect(engine.getPageSpec()).toEqual(smaller);
+    expect(pixel(id, -4, 12)[3]).toBe(255);
+    await engine.flushSavePublic();
+    const { page } = await loadActivePersisted();
+    await engine.restoreSavedPagePublic(page!);
+    await engine.undo();
+    expect(engine.getPageSpec()).toEqual(initial);
+    expect(pixel(id, -4, 12)[3]).toBe(255);
+    useStore.getState().deactivateTool();
   });
 
   it('floats selected raster and shape layers when the move tool is activated', async () => {
@@ -1582,7 +1791,7 @@ describe('selection and layer transform', () => {
     move.onDown(pt(25, 25));
     move.onMove(pt(45, 25));
     move.onUp();
-    engine.commitFloatSelection();
+    await engine.commitFloatSelection();
     await awaitHistoryReady();
     expect(pixel(rasterId, 15, 15)[3]).toBe(0);
     expect(pixel(rasterId, 35, 15)[0]).toBeGreaterThan(200);
@@ -1660,7 +1869,7 @@ describe('outside raster lifecycle', () => {
       strokeWidth: 0,
       paintMode: 'fill-inside',
     });
-    engine.transferShapeLayer();
+    await engine.transferShapeLayer();
     expect(pixel(id, -10, -10)).toEqual([255, 0, 0, 255]);
     const image = document.createElement('canvas');
     image.width = image.height = 10;
@@ -1669,10 +1878,146 @@ describe('outside raster lifecycle', () => {
     ctx.fillRect(0, 0, 10, 10);
     engine.setActiveLayer(id);
     engine.addImageLayer(image, -100, -100, 10, 10);
-    engine.transferShapeLayer();
+    await engine.transferShapeLayer();
     const layer = engine.layerById(id) as RasterLayer;
     expect(layer.runtime.surface.getContentBounds()!.x).toBeLessThan(-50);
     await engine.undo();
     expect(pixel(id, -10, -10)).toEqual([255, 0, 0, 255]);
+  });
+});
+
+describe('transaction failure recovery', () => {
+  it('keeps every layer, page size and history position when resolution resampling fails', async () => {
+    await engine.newProject();
+    engine.cancelSessions();
+    useStore.getState().deactivateTool();
+    const a = engine.activeRaster()!;
+    paintRaster(a, (ctx) => ctx.fillRect(-5, -5, 10, 10), {
+      x: -5,
+      y: -5,
+      w: 10,
+      h: 10,
+    });
+    engine.addRasterLayer();
+    const b = engine.activeRaster()!;
+    paintRaster(b, (ctx) => ctx.fillRect(260, 260, 10, 10), {
+      x: 260,
+      y: 260,
+      w: 10,
+      h: 10,
+    });
+    const spec = { ...engine.getPageSpec() },
+      before = [a.runtime.surface.snapshot(), b.runtime.surface.snapshot()],
+      node = internalHistory().current;
+    const { RasterResampler } = await import('./raster/RasterResampler');
+    const original = RasterResampler.scaleAsync.bind(RasterResampler);
+    let calls = 0;
+    const spy = vi
+      .spyOn(RasterResampler, 'scaleAsync')
+      .mockImplementation(async (surface, factor) => {
+        if (++calls === 2) throw new Error('allocation failure');
+        return original(surface, factor);
+      });
+    try {
+      await expect(
+        engine.resizePage({ ...spec, ppi: spec.ppi * 2 }),
+      ).rejects.toThrow('allocation failure');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(engine.getPageSpec()).toEqual(spec);
+    expect(internalHistory().current).toBe(node);
+    expect(engine.isBusy()).toBe(false);
+    expect(
+      (engine.layerById(a.id) as RasterLayer).runtime.surface.snapshot(),
+    ).toEqual(before[0]);
+    expect(
+      (engine.layerById(b.id) as RasterLayer).runtime.surface.snapshot(),
+    ).toEqual(before[1]);
+  });
+
+  it('rolls back pixels and the history cursor if a later operation in a batch fails', async () => {
+    await engine.newProject();
+    engine.cancelSessions();
+    useStore.getState().deactivateTool();
+    const { RasterEditSession } = await import('./raster/RasterSurface');
+    const layer = engine.layerById(
+      useStore.getState().activeLayerId,
+    ) as RasterLayer;
+    const edit = new RasterEditSession(layer.runtime.surface);
+    edit.mutateRegion({ x: -20, y: 0, w: 1, h: 1 }, (ctx) => {
+      ctx.fillStyle = '#ff0000';
+      ctx.fillRect(-20, 0, 1, 1);
+    });
+    const changes = edit.commit();
+    engine.history.push(
+      {
+        kind: 'batch',
+        ops: [
+          {
+            kind: 'layerProps',
+            layerId: layer.id,
+            before: { opacity: 1 },
+            after: { opacity: 0.5 },
+          },
+          { kind: 'raster', layerId: layer.id, tiles: changes.tiles },
+        ],
+      },
+      'failure test',
+    );
+    const cursor = engine.history.current;
+    const apply = engine.historyService.applyOp.bind(engine.historyService);
+    const spy = vi
+      .spyOn(engine.historyService, 'applyOp')
+      .mockImplementation(async (op, dir) => {
+        if (op.kind === 'layerProps') throw new Error('injected');
+        return apply(op, dir);
+      });
+    try {
+      await expect(engine.undo()).rejects.toThrow('injected');
+    } finally {
+      spy.mockRestore();
+    }
+    expect(engine.history.current).toBe(cursor);
+    expect(pixel(layer.id, -20, 0)).toEqual([255, 0, 0, 255]);
+    expect(engine.isBusy()).toBe(false);
+  });
+  it('keeps persisted and active projects when import preparation fails', async () => {
+    await engine.newProject();
+    engine.cancelSessions();
+    useStore.getState().deactivateTool();
+    const id = useStore.getState().activeLayerId;
+    paintRaster(
+      engine.layerById(id) as RasterLayer,
+      (ctx) => ctx.fillRect(-1, -1, 1, 1),
+      { x: -1, y: -1, w: 1, h: 1 },
+    );
+    engine.scheduleSave();
+    await engine.flushSave();
+    const { meta, page } = await loadActivePersisted();
+    const { packProjectFile } = await import('./persistence/projectFile');
+    const { PROJECT_VERSION } = await import('./persistence/version');
+    const file = await packProjectFile({
+      app: 'rin-paint',
+      version: PROJECT_VERSION,
+      meta: meta!,
+      pages: [page!],
+    });
+    const spy = vi
+      .spyOn(engine.links, 'reconcileAll')
+      .mockImplementationOnce(() => {
+        throw new Error('injected import failure');
+      });
+    try {
+      await expect(engine.importProject(file as File)).rejects.toThrow(
+        'injected import failure',
+      );
+    } finally {
+      spy.mockRestore();
+    }
+    expect(useStore.getState().activeLayerId).toBe(id);
+    expect(pixel(id, -1, -1)[3]).toBe(255);
+    expect(await loadProjectMeta()).toEqual(meta);
+    expect((await loadActivePersisted()).page?.layers).toEqual(page?.layers);
   });
 });

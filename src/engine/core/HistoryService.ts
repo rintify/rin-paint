@@ -1,4 +1,4 @@
-import { collectAssetIds, decodeAsset } from '../raster/RasterAssetRepository';
+import { runtimeCheckpoint } from './RuntimeCheckpoint';
 import { collectUnusedRasterAssets } from '../persistence/db';
 import {
   RasterEditSession,
@@ -55,18 +55,21 @@ export class HistoryService {
       eng.scheduleSave();
       return;
     }
+    const rollback = runtimeCheckpoint(eng);
     const previous = this.history.current;
+    const previousChild = previous.lastChild;
     const node = this.history.undo();
     if (!node) return;
     eng.setBusy(true);
     try {
       if (node.op) {
         await node.ready;
-        for (const id of collectAssetIds(node.op)) await decodeAsset(id);
         await this.applyOp(node.op, 'undo');
       }
     } catch (error) {
       this.history.current = previous;
+      previous.lastChild = previousChild;
+      rollback();
       throw error;
     } finally {
       eng.setBusy(false);
@@ -82,18 +85,21 @@ export class HistoryService {
       eng.cancelSessions();
       eng.scheduleSave();
     }
+    const rollback = runtimeCheckpoint(eng);
     const previous = this.history.current;
+    const previousChild = previous.lastChild;
     const node = this.history.redo(childIndex);
     if (!node) return;
     eng.setBusy(true);
     try {
       if (node.op) {
         await node.ready;
-        for (const id of collectAssetIds(node.op)) await decodeAsset(id);
         await this.applyOp(node.op, 'redo');
       }
     } catch (error) {
       this.history.current = previous;
+      previous.lastChild = previousChild;
+      rollback();
       throw error;
     } finally {
       eng.setBusy(false);
@@ -121,9 +127,11 @@ export class HistoryService {
     }
     switch (op.kind) {
       case 'pageChange': {
-        await eng.restorePageSnapshotPublic(
-          dir === 'undo' ? op.before : op.after,
-        );
+        const snapshot = dir === 'undo' ? op.before : op.after;
+        if (op.before.spec.ppi === op.after.spec.ppi) {
+          eng.project.restoreRuntimePageSpec(snapshot.spec);
+          eng.layerService.clearVersions();
+        } else await eng.restorePageSnapshotPublic(snapshot);
         break;
       }
       case 'raster': {

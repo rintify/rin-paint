@@ -42,6 +42,55 @@ function mixRevision(current: number, token: string | number): number {
 
 export class RegionRenderer {
   constructor(private host: RegionHost) {}
+
+  private drawLayer(
+    target: CanvasRenderingContext2D,
+    layer: Layer,
+    env: LayerDrawEnv,
+    originX: number,
+    originY: number,
+  ): void {
+    target.save();
+    try {
+      target.setTransform(1, 0, 0, 1, -originX, -originY);
+      layerHandler(layer).renderer.draw(target, layer, env);
+    } finally {
+      target.restore();
+    }
+  }
+
+  /** Native composition writes directly to the persistent paper cache. No scratch copy. */
+  renderNativeInto(target: CanvasRenderingContext2D, region: RenderRect): void {
+    const eng = this.host.engine;
+    const env = this.host.drawEnv(true, region.w, region.h, region.x, region.y);
+    const editingTextId = eng.getTextEditingId?.() ?? null;
+    const visit = (ids: string[]) => {
+      for (const id of ids) {
+        const layer = eng.layerById(id);
+        if (!layer) continue;
+        if (
+          layer.visible &&
+          !(layer.type === 'text' && layer.id === editingTextId)
+        )
+          this.drawLayer(target, layer, env, 0, 0);
+        visit(layer.childIds);
+      }
+    };
+    target.save();
+    try {
+      target.setTransform(1, 0, 0, 1, 0, 0);
+      target.globalAlpha = 1;
+      target.globalCompositeOperation = 'source-over';
+      target.filter = 'none';
+      target.beginPath();
+      target.rect(region.x, region.y, region.w, region.h);
+      target.clip();
+      target.clearRect(region.x, region.y, region.w, region.h);
+      visit(eng.getRootLayerIds());
+    } finally {
+      target.restore();
+    }
+  }
   render(
     region: RenderRect,
     included: Set<string> | null,
@@ -114,10 +163,7 @@ export class RegionRenderer {
       activeRegion: RenderRect,
       activeEnv: LayerDrawEnv,
     ) => {
-      target.save();
-      target.setTransform(1, 0, 0, 1, -activeRegion.x, -activeRegion.y);
-      layerHandler(layer).renderer.draw(target, layer, activeEnv);
-      target.restore();
+      this.drawLayer(target, layer, activeEnv, activeRegion.x, activeRegion.y);
     };
     const retainHitCoverage = (targetCanvas: HTMLCanvasElement) => {
       if (!hit?.contribution || hit.target !== targetCanvas) return;

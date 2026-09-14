@@ -11,6 +11,8 @@ export interface ToolSession {
 }
 
 export interface Tool {
+  /** Transform previews only need the latest pointer position per display frame. */
+  readonly latestMoveOnly?: boolean;
   /** 長押し判定を待たず、pointerdown から操作を始めるツール。 */
   readonly startsImmediately?: boolean;
   /** 選択中の図形・画像をキャンバス上で直接移動・変形していいか。未指定は許可。 */

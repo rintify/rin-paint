@@ -55,6 +55,37 @@ export class InputController {
   private panShortcutCode: string | null = null;
   private layerPickPointer: number | null = null;
 
+  private moveFrame = 0;
+  private pendingMove: {
+    event: PointerEvent;
+    apply: (event: PointerEvent) => void;
+  } | null = null;
+
+  private queueMove(
+    event: PointerEvent,
+    apply: (event: PointerEvent) => void,
+  ): void {
+    this.pendingMove = { event, apply };
+    if (!this.moveFrame)
+      this.moveFrame = requestAnimationFrame(() => {
+        this.moveFrame = 0;
+        const pending = this.pendingMove;
+        if (pending) this.guardPointer(() => this.flushMove())(pending.event);
+      });
+  }
+
+  private flushMove(): void {
+    const pending = this.pendingMove;
+    this.clearMove();
+    pending?.apply(pending.event);
+  }
+
+  private clearMove(): void {
+    if (this.moveFrame) cancelAnimationFrame(this.moveFrame);
+    this.moveFrame = 0;
+    this.pendingMove = null;
+  }
+
   constructor(private engine: PaintEngine) {}
 
   private isLayerPickClick(e: PointerEvent): boolean {
@@ -85,6 +116,7 @@ export class InputController {
   }
 
   detachListeners(): void {
+    this.clearMove();
     const a = this.area;
     if (a) {
       a.removeEventListener('pointerdown', this.onPointerDown);
@@ -194,10 +226,13 @@ export class InputController {
   };
 
   private beginGesture(e: PointerEvent): void {
+    this.clearMove();
     const eng = this.engine;
     if (this.activePointer !== null && this.touchPts.has(this.activePointer)) {
       if (this.pendingPress?.pointerId === this.activePointer) {
         this.clearPendingPress();
+      } else if (eng.hasShapeEdit()) {
+        eng.cancelShapeEdit();
       } else {
         eng.activeTool().cancel?.();
       }
@@ -298,12 +333,22 @@ export class InputController {
         eng.activeTool().onDown(pending.start, e);
     }
     if (eng.hasShapeEdit()) {
-      eng.updateShapeEdit(this.toPoint(e), e);
+      this.queueMove(e, (event) => {
+        if (this.activePointer === event.pointerId && eng.hasShapeEdit())
+          eng.updateShapeEdit(this.toPoint(event), event);
+      });
+      return;
+    }
+    const tool = eng.activeTool();
+    if (tool.latestMoveOnly) {
+      this.queueMove(e, (event) => {
+        if (this.activePointer === event.pointerId && eng.activeTool() === tool)
+          tool.onMove(this.toPoint(event), event);
+      });
       return;
     }
     const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
     const events = coalesced.length > 0 ? coalesced : [e];
-    const tool = eng.activeTool();
     for (const ev of events) tool.onMove(this.toPoint(ev), ev);
   };
 
@@ -330,6 +375,7 @@ export class InputController {
       return;
     }
     if (this.activePointer !== e.pointerId) return;
+    this.flushMove();
     this.activePointer = null;
     if (this.layerPickPointer === e.pointerId) {
       this.layerPickPointer = null;
@@ -357,6 +403,7 @@ export class InputController {
   };
 
   private onPointerCancel = (e: PointerEvent): void => {
+    if (this.activePointer === e.pointerId) this.clearMove();
     const eng = this.engine;
     this.touchPts.delete(e.pointerId);
     if (this.panDrag && this.panDrag.id === e.pointerId) {
@@ -567,6 +614,8 @@ export class InputController {
       try {
         handler(event);
       } catch (error) {
+        this.clearMove();
+        if (this.engine.hasShapeEdit()) this.engine.cancelShapeEdit();
         this.activePointer = null;
         this.clearPendingPress();
         this.engine.activeTool().cancel?.();

@@ -53,6 +53,8 @@ export function alphaBounds(canvas: HTMLCanvasElement): PixelRect | null {
     }
   return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
 }
+const knownBounds = new WeakMap<RasterAsset, PixelRect | null>();
+
 export class RasterSurface {
   private tiles = new Map<TileKey, ReadonlyRasterTile>();
   get tileCount(): number {
@@ -151,7 +153,6 @@ export class RasterSurface {
     const seen = new Set<TileKey>();
     if (content.kind !== 'raster-tiles' || content.tileSize !== TILE_SIZE)
       throw new Error('ラスター形式が不正です');
-    let restored = 0;
     for (const item of content.tiles) {
       if (
         !Number.isInteger(item.tx) ||
@@ -161,13 +162,23 @@ export class RasterSurface {
         throw new Error('タイル座標が不正です');
       validateRect(tileRect(item.tx, item.ty));
       seen.add(tileKey(item.tx, item.ty));
-      const asset = await decodeAsset(item.assetId);
-      const bounds = alphaBounds(asset.canvas!);
-      if (bounds) {
-        asset.bounds = bounds;
-        surface.set(item.tx, item.ty, asset);
-      }
-      if (++restored % 4 === 0) await yieldRaster();
+    }
+    for (let i = 0; i < content.tiles.length; i += 4) {
+      const batch = content.tiles.slice(i, i + 4);
+      const assets = await Promise.all(
+        batch.map((item) => decodeAsset(item.assetId)),
+      );
+      batch.forEach((item, n) => {
+        const asset = assets[n];
+        if (!knownBounds.has(asset))
+          knownBounds.set(asset, alphaBounds(asset.canvas!));
+        const bounds = knownBounds.get(asset)!;
+        if (bounds) {
+          asset.bounds = bounds;
+          surface.set(item.tx, item.ty, asset);
+        }
+      });
+      if (i + 4 < content.tiles.length) await yieldRaster();
     }
     return surface;
   }
@@ -193,6 +204,15 @@ export class RasterEditSession {
   >();
   private writable = new Set<TileKey>();
   constructor(readonly surface: RasterSurface) {}
+  /** Remove an occupied tile while retaining its immutable version for cancellation/history. */
+  removeTile(tx: number, ty: number): void {
+    validateRect(tileRect(tx, ty));
+    const key = tileKey(tx, ty);
+    if (!this.before.has(key))
+      this.before.set(key, { tx, ty, asset: this.surface.get(tx, ty) });
+    this.surface.set(tx, ty, null);
+    this.writable.delete(key);
+  }
   mutateRegion(
     rect: PixelRect,
     draw: (ctx: CanvasRenderingContext2D, tileRect: PixelRect) => void,
@@ -249,6 +269,12 @@ export class RasterEditSession {
       ctx.drawImage(canvas, rect.x, rect.y);
     });
   }
+  beforeSurface(): RasterSurface {
+    const surface = this.surface.clone();
+    for (const { tx, ty, asset } of this.before.values())
+      surface.set(tx, ty, asset);
+    return surface;
+  }
   resetToBefore(): void {
     for (const { tx, ty, asset } of this.before.values())
       this.surface.set(tx, ty, asset);
@@ -268,7 +294,10 @@ export class RasterEditSession {
         if (!bounds) {
           this.surface.set(tx, ty, null);
           next = null;
-        } else if (next) next.bounds = bounds;
+        } else if (next) {
+          next.bounds = bounds;
+          knownBounds.set(next, bounds);
+        }
         if (old && next) {
           const a = old
             .canvas!.getContext('2d')!

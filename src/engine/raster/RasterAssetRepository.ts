@@ -10,6 +10,7 @@ export interface RasterAsset {
   blob?: Blob;
   bounds: PixelRect;
   encoding?: Promise<Blob>;
+  decoding?: Promise<RasterAsset>;
   lastUsed?: number;
 }
 export interface StoredRasterContent {
@@ -73,7 +74,9 @@ export async function encodeAsset(id: string): Promise<Blob> {
 }
 export async function decodeAsset(id: string): Promise<RasterAsset> {
   const asset = getAsset(id);
-  if (!asset.canvas) {
+  if (asset.canvas) return asset;
+  if (asset.decoding) return asset.decoding;
+  asset.decoding = (async () => {
     if (!asset.blob) throw new Error('画像タイルが破損しています');
     const bitmap = await createImageBitmap(asset.blob);
     try {
@@ -82,11 +85,16 @@ export async function decodeAsset(id: string): Promise<RasterAsset> {
       const canvas = rasterCanvas();
       canvas.getContext('2d')!.drawImage(bitmap, 0, 0);
       asset.canvas = canvas;
+      return asset;
     } finally {
       bitmap.close();
     }
+  })();
+  try {
+    return await asset.decoding;
+  } finally {
+    asset.decoding = undefined;
   }
-  return asset;
 }
 export function registerAsset(
   id: string,
@@ -135,13 +143,19 @@ export async function assetBlobs(
   const ids = [...collectAssetIds(value)];
   for (const id of ids) pins.set(id, (pins.get(id) ?? 0) + 1);
   try {
-    for (let i = 0; i < ids.length; i += 4) {
+    const pending: string[] = [];
+    for (const id of ids) {
+      const blob = getAsset(id).blob;
+      if (blob) result[id] = blob;
+      else pending.push(id);
+    }
+    for (let i = 0; i < pending.length; i += 4) {
       await Promise.all(
-        ids.slice(i, i + 4).map(async (id) => {
+        pending.slice(i, i + 4).map(async (id) => {
           result[id] = await encodeAsset(id);
         }),
       );
-      if (i + 4 < ids.length) await yieldRaster();
+      if (i + 4 < pending.length) await yieldRaster();
     }
   } finally {
     for (const id of ids) {

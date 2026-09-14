@@ -146,7 +146,7 @@ export class AutosaveService {
       fonts,
     });
     eng.links.noteSavedPage(page);
-    if (!eng.hasOpenSession())
+    if (!eng.hasOpenSession() && !eng.isBusy())
       releaseUnusedCanvases(
         collectAssetIds(
           ls.layers

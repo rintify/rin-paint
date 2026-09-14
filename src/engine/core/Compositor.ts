@@ -793,9 +793,18 @@ export class Compositor {
         ? Math.max(4, 2 ** Math.ceil(Math.log2(evaluationPadding)))
         : 0;
     this.lastCompositedPixels = 0;
+    const nativeOnly = !this.engine
+      .allLayers()
+      .some((layer) => layer.visible && layerHandler(layer).renderer.effect);
     const renderOutput = (output: DirtyRect) => {
       const outputRegion = asRenderRect(output),
         evaluationRegion = asRenderRect(expandDirty(output, pad));
+      if (nativeOnly) {
+        this.regions.renderNativeInto(this.artCacheCtx, outputRegion);
+        this.present(ctx, this.artCache, outputRegion, false);
+        this.lastCompositedPixels += outputRegion.w * outputRegion.h;
+        return;
+      }
       const art = this.renderArt(evaluationRegion, null, true);
       try {
         this.artCacheCtx.clearRect(
@@ -821,8 +830,13 @@ export class Compositor {
         art.release();
       }
     };
+    // Native image/vector composition needs no pixel filtering halo. Replaying a large photo
+    // once per 256px tile multiplies browser resampling work without reducing readback.
     for (const output of outputs) {
-      if (output.maxX - output.minX <= 512 && output.maxY - output.minY <= 512)
+      if (
+        nativeOnly ||
+        (output.maxX - output.minX <= 512 && output.maxY - output.minY <= 512)
+      )
         renderOutput(output);
       else
         for (const tile of tileCoordinates(asRenderRect(output))) {

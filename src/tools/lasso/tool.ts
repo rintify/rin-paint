@@ -5,6 +5,9 @@ import type { Tool, ToolSession } from '../types';
 import { FloatSelection, type Pt } from '../transform/floatSelection';
 
 export class LassoTool implements Tool {
+  get latestMoveOnly(): boolean {
+    return this.floatSelection.phase === 'float';
+  }
   private drawing = false;
   private pts: Pt[] = [];
   private layer: RasterLayer | null = null;
@@ -29,7 +32,9 @@ export class LassoTool implements Tool {
     cancel: () => this.cancelSelection(),
   };
 
-  overlayAnimated(): boolean { return this.floatSelection.overlayAnimated(); }
+  overlayAnimated(): boolean {
+    return this.floatSelection.overlayAnimated();
+  }
 
   setFreeTransform(on: boolean): void {
     this.floatSelection.setFreeTransform(on);
@@ -48,7 +53,9 @@ export class LassoTool implements Tool {
 
   private beginDraw(p: StrokePoint): void {
     const layers = this.eng.selectedRasters();
-    const layer = layers.find(item => item.id === this.eng.activeRaster()?.id) ?? layers[0];
+    const layer =
+      layers.find((item) => item.id === this.eng.activeRaster()?.id) ??
+      layers[0];
     if (!layer && !this.eng.hasSelectedObjects()) {
       this.drawing = false;
       return;
@@ -74,7 +81,8 @@ export class LassoTool implements Tool {
     if (this.drawing) {
       this.drawing = false;
       if (this.pts.length >= 3) {
-        if (!this.floatSelection.extractFromPolygon(this.pts, this.layer?.id)) this.layer = null;
+        if (!this.floatSelection.extractFromPolygon(this.pts, this.layer?.id))
+          this.layer = null;
       } else {
         this.layer = null;
         this.floatSelection.emitSelectionState();
@@ -127,7 +135,8 @@ export class LassoTool implements Tool {
       ctx.strokeStyle = '#4f8cff';
       ctx.beginPath();
       ctx.moveTo(this.pts[0].x, this.pts[0].y);
-      for (let i = 1; i < this.pts.length; i++) ctx.lineTo(this.pts[i].x, this.pts[i].y);
+      for (let i = 1; i < this.pts.length; i++)
+        ctx.lineTo(this.pts[i].x, this.pts[i].y);
       ctx.stroke();
       ctx.restore();
       return;

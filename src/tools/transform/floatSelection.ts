@@ -1,3 +1,4 @@
+import { RasterTransformPreview } from '../../engine/raster/RasterTransformPreview';
 import {
   RasterEditSession,
   RasterSurface,
@@ -32,6 +33,7 @@ interface Float {
 }
 
 interface RasterFloat {
+  preview?: RasterTransformPreview;
   layer: RasterLayer;
   content: RasterSelectionContent;
   edit: RasterEditSession;
@@ -57,6 +59,7 @@ export interface FloatExtractInput {
   maxX: number;
   maxY: number;
   preferredLayerId?: string;
+  rectangular?: boolean;
 }
 
 const ROTATE_HANDLE_OFFSET = 34;
@@ -105,6 +108,8 @@ export class FloatSelection {
   private sourceCorners: Pt[] = [];
   private origRect: DirtyRect | null = null;
   private drag: Drag | null = null;
+  private duplicated = false;
+  private didTransform = false;
 
   constructor(
     private eng: PaintEngine,
@@ -180,6 +185,7 @@ export class FloatSelection {
       maxX,
       maxY,
       preferredLayerId,
+      rectangular: true,
     });
   }
 
@@ -217,6 +223,7 @@ export class FloatSelection {
           { x: minX, y: minY, w, h },
           input.trace,
           edit,
+          input.rectangular,
         );
       }
     } catch (error) {
@@ -280,8 +287,8 @@ export class FloatSelection {
     const d = this.drag;
     const c = centroid(d.startCorners);
     if (d.mode === 'move') {
-      const dx = p.x - d.sx;
-      const dy = p.y - d.sy;
+      const dx = Math.round(p.x - d.sx);
+      const dy = Math.round(p.y - d.sy);
       f.corners = d.startCorners.map((q) => ({
         x: q.x + dx,
         y: q.y + dy,
@@ -306,6 +313,7 @@ export class FloatSelection {
         y: c.y + (q.x - c.x) * sin + (q.y - c.y) * cos,
       })) as Float['corners'];
     }
+    this.didTransform = true;
     const damage = unionRect(beforeRect, this.transformedRect(4));
     if (this.objectTransforms.length)
       this.eng.previewObjectGroup(
@@ -319,6 +327,7 @@ export class FloatSelection {
   }
 
   endDrag(): void {
+    if (this.drag && this.objectTransforms.length) this.eng.syncStore();
     this.drag = null;
   }
 
@@ -326,13 +335,74 @@ export class FloatSelection {
   duplicate(): void {
     if (this.phase !== 'float' || !this.float) return;
     this.stamp();
+    this.duplicated = true;
     this.origRect = unionRect(this.origRect!, this.transformedRect(4));
     for (const item of this.rasterFloats)
       this.eng.bumpLayer(item.layer.id, this.transformedRect(4));
   }
 
+  private finishUnchanged(): boolean {
+    if (
+      !this.float ||
+      this.duplicated ||
+      this.float.corners.some(
+        (p, i) =>
+          p.x !== this.sourceCorners[i].x || p.y !== this.sourceCorners[i].y,
+      )
+    )
+      return false;
+    for (const item of this.rasterFloats) {
+      item.edit.cancel();
+      this.eng.bumpLayer(item.layer.id, this.origRect!);
+    }
+    if (this.didTransform && this.objectTransforms.length)
+      this.eng.restoreObjectGroup(this.objectTransforms);
+    this.reset();
+    this.emitSelectionState();
+    this.eng.requestOverlayRender();
+    return true;
+  }
+
+  async commitAsync(): Promise<void> {
+    if (this.phase !== 'float' || !this.float || this.eng.isBusy()) return;
+    if (this.finishUnchanged()) return;
+    const originals = this.rasterFloats.map((item) => ({
+      layer: item.layer,
+      surface: item.edit.beforeSurface(),
+    }));
+    this.eng.setBusy(true);
+    try {
+      for (const item of this.rasterFloats)
+        await RasterResampler.drawAsync(
+          item.content.surface,
+          item.content.rect,
+          this.float.corners,
+          item.edit,
+        );
+      const entries = this.rasterFloats.map((item) => ({
+        layer: item.layer,
+        change: item.edit.commit(),
+      }));
+      const objects = this.objectTransforms;
+      this.reset();
+      this.eng.commitRasterBatch(entries, this.historyLabel, objects);
+      this.emitSelectionState();
+    } catch (error) {
+      this.cancelSelection();
+      for (const original of originals)
+        original.layer.runtime.surface = original.surface;
+      this.eng.requestRender();
+      throw error;
+    } finally {
+      this.eng.setBusy(false);
+      this.eng.requestRender();
+      this.eng.scheduleSave();
+    }
+  }
+
   commit(): void {
     if (this.phase !== 'float' || !this.float) return;
+    if (this.finishUnchanged()) return;
     this.stamp();
     const entries = this.rasterFloats.map((item) => ({
       layer: item.layer,
@@ -359,6 +429,8 @@ export class FloatSelection {
   }
 
   reset(): void {
+    this.duplicated = false;
+    this.didTransform = false;
     this.phase = 'idle';
     this.free = false;
     this.float = null;
@@ -380,16 +452,42 @@ export class FloatSelection {
         w: ctx.canvas.width,
         h: ctx.canvas.height,
       };
-      const surface = new RasterSurface(),
-        edit = new RasterEditSession(surface);
-      RasterResampler.draw(
+      const corners = this.float.corners,
+        r = item.content.rect;
+      const dx = corners[0].x - r.x,
+        dy = corners[0].y - r.y;
+      if (
+        Number.isInteger(dx) &&
+        Number.isInteger(dy) &&
+        corners.every(
+          (p, i) =>
+            p.x === r.x + (i === 1 || i === 2 ? r.w : 0) + dx &&
+            p.y === r.y + (i >= 2 ? r.h : 0) + dy,
+        )
+      ) {
+        ctx.save();
+        try {
+          ctx.translate(dx, dy);
+          item.content.surface.drawRegion(ctx, {
+            ...region,
+            x: region.x - dx,
+            y: region.y - dy,
+          });
+        } finally {
+          ctx.restore();
+        }
+        return;
+      }
+      item.preview ??= new RasterTransformPreview(
         item.content.surface,
         item.content.rect,
-        this.float.corners,
-        edit,
-        region,
       );
-      surface.drawRegion(ctx, region);
+      item.preview.draw(
+        ctx,
+        region,
+        this.float.corners,
+        1 / this.eng.uiScale(),
+      );
     }
   }
 

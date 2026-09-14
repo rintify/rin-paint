@@ -1,6 +1,10 @@
+import { ContourIndex } from '../raster/ContourIndex';
 import type { RasterSurface } from '../raster/RasterSurface';
 import {
   TILE_SIZE,
+  intersect,
+  union,
+  type PixelRect,
   tileKey,
   tileCoordinates,
   tileRect,
@@ -16,10 +20,7 @@ import type {
 /** Bounds and Canvas stroke use the same cap so sharp tips are never cropped. */
 export const SHARP_OUTLINE_MITER_LIMIT = 12;
 const OUTLINE_CACHE_VERSION = 2;
-const contourBoundsCache = new WeakMap<
-  object,
-  { x: number; y: number; w: number; h: number }
->();
+const contourIndices = new WeakMap<object, ContourIndex>();
 
 function clear(
   ctx: CanvasRenderingContext2D,
@@ -366,16 +367,24 @@ export function traceSparseAlphaContours(
   limit: number,
 ): Array<Array<{ x: number; y: number }>> {
   const pixels = new Map<string, Uint8ClampedArray>(),
-    candidates = new Map<string, { tx: number; ty: number }>();
+    candidates = new Map<string, PixelRect>();
   for (const t of surface.entries()) {
     pixels.set(
       tileKey(t.tx, t.ty),
       t.asset.canvas!.getContext('2d')!.getImageData(0, 0, TILE_SIZE, TILE_SIZE)
         .data,
     );
-    const r = tileRect(t.tx, t.ty);
-    for (const c of tileCoordinates({ ...r, w: r.w + 1, h: r.h + 1 }))
-      candidates.set(tileKey(c.tx, c.ty), c);
+    const r = {
+      x: t.tx * TILE_SIZE + t.asset.bounds.x,
+      y: t.ty * TILE_SIZE + t.asset.bounds.y,
+      w: t.asset.bounds.w + 1,
+      h: t.asset.bounds.h + 1,
+    };
+    for (const c of tileCoordinates(r)) {
+      const key = tileKey(c.tx, c.ty),
+        part = intersect(r, tileRect(c.tx, c.ty))!;
+      candidates.set(key, union(candidates.get(key) ?? null, part));
+    }
   }
   const sample = (gx: number, gy: number) => {
     const x = gx - 1,
@@ -388,10 +397,9 @@ export function traceSparseAlphaContours(
     );
   };
   function* cells() {
-    for (const { tx, ty } of candidates.values())
-      for (let y = ty * TILE_SIZE; y < (ty + 1) * TILE_SIZE; y++)
-        for (let x = tx * TILE_SIZE; x < (tx + 1) * TILE_SIZE; x++)
-          yield { x, y };
+    for (const rect of candidates.values())
+      for (let y = rect.y; y < rect.y + rect.h; y++)
+        for (let x = rect.x; x < rect.x + rect.w; x++) yield { x, y };
   }
   return traceContours(sample, cells(), limit);
 }
@@ -555,9 +563,10 @@ function drawSharpCornerExtensions(
   ctx: CanvasRenderingContext2D,
   contour: Array<{ x: number; y: number }>,
   radius: number,
+  indices: Iterable<number> = contour.keys(),
+  orientation = Math.sign(signedArea(contour)) || 1,
 ): void {
-  const orientation = Math.sign(signedArea(contour)) || 1;
-  for (let index = 0; index < contour.length; index++) {
+  for (const index of indices) {
     const previous = contour[(index - 1 + contour.length) % contour.length];
     const point = contour[index];
     const next = contour[(index + 1) % contour.length];
@@ -743,39 +752,36 @@ export function applyOutline(
       target.lineWidth = radius * 2;
       target.lineCap = 'round';
       target.lineJoin = 'round';
-      for (const contour of contours) {
-        // Cache world bounds; never spread a potentially million-point contour as arguments.
-        let bounds = contourBoundsCache.get(contour);
-        if (!bounds) {
-          let x = Infinity,
-            y = Infinity,
-            right = -Infinity,
-            bottom = -Infinity;
-          for (const p of contour) {
-            x = Math.min(x, p.x);
-            y = Math.min(y, p.y);
-            right = Math.max(right, p.x);
-            bottom = Math.max(bottom, p.y);
-          }
-          bounds = { x, y, w: right - x, h: bottom - y };
-          contourBoundsCache.set(contour, bounds);
-        }
-        const margin = radius * SHARP_OUTLINE_MITER_LIMIT;
-        if (
-          bounds.x + bounds.w < scope.x - margin ||
-          bounds.y + bounds.h < scope.y - margin ||
-          bounds.x > scope.x + scope.width + margin ||
-          bounds.y > scope.y + scope.height + margin
-        )
-          continue;
-        target.beginPath();
-        target.moveTo(contour[0].x, contour[0].y);
-        for (let i = 1; i < contour.length; i++)
-          target.lineTo(contour[i].x, contour[i].y);
-        target.closePath();
-        target.stroke();
-        drawSharpCornerExtensions(target, contour, radius);
+      let index = contourIndices.get(contours);
+      if (!index) {
+        index = new ContourIndex(contours);
+        contourIndices.set(contours, index);
       }
+      const margin = radius * SHARP_OUTLINE_MITER_LIMIT;
+      const edges = [
+        ...index.query({
+          x: scope.x - margin,
+          y: scope.y - margin,
+          w: scope.width + margin * 2,
+          h: scope.height + margin * 2,
+        }),
+      ];
+      target.beginPath();
+      for (const edge of edges) {
+        const a = edge.contour[edge.index],
+          b = edge.contour[(edge.index + 1) % edge.contour.length];
+        target.moveTo(a.x, a.y);
+        target.lineTo(b.x, b.y);
+      }
+      target.stroke();
+      for (const edge of edges)
+        drawSharpCornerExtensions(
+          target,
+          edge.contour,
+          radius,
+          [edge.index],
+          edge.orientation,
+        );
     } finally {
       target.restore();
     }

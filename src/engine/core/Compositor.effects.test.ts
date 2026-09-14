@@ -5,6 +5,8 @@ import { createCanvas, type Canvas } from '@napi-rs/canvas';
 import { Compositor } from './Compositor';
 import {
   createAdjustLayer,
+  createImageLayer,
+  createShapeLayer,
   createClipLayer,
   createOutlineLayer,
   createRasterLayer,
@@ -126,6 +128,105 @@ function darkestRedNear(
 }
 
 describe('effect scopes', () => {
+  it('matches region composition after moving a translucent photo over a shape without scratch allocation', () => {
+    const source = document.createElement('canvas');
+    source.width = source.height = 24;
+    const context = source.getContext('2d')!;
+    context.fillStyle = '#00aaff';
+    context.fillRect(0, 0, 24, 24);
+    context.fillStyle = '#ff8800';
+    context.fillRect(4, 4, 8, 10);
+    const photo = createImageLayer('photo', source, {
+      x: 10,
+      y: 10,
+      width: 50,
+      height: 50,
+      rotation: 0.3,
+    });
+    photo.opacity = 0.65;
+    const shape = createShapeLayer('shape', {
+      kind: 'rect',
+      x: 0,
+      y: 0,
+      width: 90,
+      height: 90,
+      color: '#804080',
+      strokeWidth: 3,
+      paintMode: 'fill-inside',
+    });
+    const layers = [shape, photo],
+      roots = layers.map((l) => l.id);
+    const { main, compositor } = createRenderer(layers, roots, 25.4, 128);
+    const pixels = (canvas: HTMLCanvasElement) =>
+      canvas.getContext('2d')!.getImageData(0, 0, 128, 128).data;
+    const reference = () => {
+      const art = compositor['renderArt'](
+        { x: 0, y: 0, w: 128, h: 128 },
+        null,
+        false,
+      );
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 128;
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, 128, 128);
+      ctx.drawImage(art.canvas, 0, 0);
+      art.release();
+      return pixels(canvas);
+    };
+    expect(pixels(main)).toEqual(reference());
+    photo.state.placement.x += 15;
+    compositor.invalidateLayer(photo.id, {
+      minX: 0,
+      minY: 0,
+      maxX: 90,
+      maxY: 80,
+    });
+    compositor.composite();
+    expect(compositor.renderStats().canvasBorrows).toBe(0);
+    expect(compositor.renderStats().compositedPixels).toBe(90 * 80);
+    expect(pixels(main)).toEqual(reference());
+    compositor.detachCanvases();
+  });
+
+  it('renders large native photo scenes once while retaining partial damage updates', () => {
+    const source = createRasterLayer('photo-like', 768, 768, 'photo-like');
+    paintRaster(
+      source,
+      (ctx) => {
+        ctx.fillStyle = '#ff0000';
+        ctx.fillRect(0, 0, 768, 768);
+      },
+      { x: 0, y: 0, w: 768, h: 768 },
+    );
+    const { main, compositor } = createRenderer(
+      [source],
+      [source.id],
+      25.4,
+      768,
+    );
+    expect(compositor.renderStats().canvasBorrows).toBe(0);
+    expect(rgba(main, 767, 767)).toEqual([255, 0, 0, 255]);
+    paintRaster(
+      source,
+      (ctx) => {
+        ctx.fillStyle = '#00ff00';
+        ctx.fillRect(2, 2, 8, 8);
+      },
+      { x: 2, y: 2, w: 8, h: 8 },
+    );
+    compositor.invalidateLayer(source.id, {
+      minX: 2,
+      minY: 2,
+      maxX: 10,
+      maxY: 10,
+    });
+    compositor.composite();
+    expect(compositor.renderStats().compositedPixels).toBe(64);
+    expect(rgba(main, 5, 5)).toEqual([0, 255, 0, 255]);
+    expect(rgba(main, 767, 767)).toEqual([255, 0, 0, 255]);
+  });
+
   it('applies root adjustment to preceding roots and uses opacity as effect strength', () => {
     const source = raster('source', (ctx) => {
       ctx.fillStyle = '#ff0000';

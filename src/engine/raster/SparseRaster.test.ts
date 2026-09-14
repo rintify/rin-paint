@@ -1,3 +1,8 @@
+import { RasterTransformPreview } from './RasterTransformPreview';
+import { RasterWarpMesh } from './RasterWarpMesh';
+import { FloatSelection } from '../../tools/transform/floatSelection';
+import type { PaintEngine } from '../PaintEngine';
+import { ContourIndex } from './ContourIndex';
 import { drawShape } from '../shapes';
 // @vitest-environment happy-dom
 import 'fake-indexeddb/auto';
@@ -9,6 +14,7 @@ import { RasterResampler } from './RasterResampler';
 import { RasterSelectionContent } from './RasterSelectionContent';
 import {
   assetBlobs,
+  getAsset,
   rasterStats,
   releaseUnusedCanvases,
 } from './RasterAssetRepository';
@@ -98,6 +104,255 @@ const rectCorners = (x: number, y: number, w: number, h: number) => [
   { x, y: y + h },
 ];
 describe('sparse raster storage and transactions', () => {
+  it('shares fully selected tiles without copying pixels and cancels exactly', () => {
+    const source = new RasterSurface();
+    dot(source, -257, -1);
+    dot(source, 1000000, 1);
+    const before = source.snapshot(),
+      copies = rasterStats.copiedPixels;
+    const edit = new RasterEditSession(source);
+    const selection = RasterSelectionContent.extract(
+      source,
+      { x: -257, y: -1, w: 1000258, h: 3 },
+      () => {
+        throw new Error('unneeded clipping');
+      },
+      edit,
+      true,
+    );
+    expect(source.tileCount).toBe(0);
+    expect(selection.surface.snapshot()).toEqual(before);
+    expect(rasterStats.copiedPixels).toBe(copies);
+    edit.cancel();
+    expect(source.snapshot()).toEqual(before);
+  });
+
+  it('previews integer moves without copying or resampling pixels', () => {
+    const layer = createRasterLayer('move', 512, 512);
+    dot(layer.runtime.surface, 100, 100);
+    const engine = {
+      selectedRasters: () => [layer],
+      selectedObjectsInRect: () => [],
+      bumpLayer: () => {},
+      setSelectionState: () => {},
+      requestOverlayRender: () => {},
+      uiScale: () => 1,
+    } as unknown as PaintEngine;
+    const selection = new FloatSelection(engine, 'move');
+    selection.extractFromRect({ minX: 0, minY: 0, maxX: 512, maxY: 512 });
+    selection.beginDrag({ x: 250, y: 250, pressure: 1 });
+    selection.dragTo({ x: 265.2, y: 239.8, pressure: 1 });
+    const copies = rasterStats.copiedPixels,
+      samples = rasterStats.sampledPixels;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 256;
+    const ctx = canvas.getContext('2d')!;
+    selection.drawAboveLayer(ctx, layer.id);
+    expect([...ctx.getImageData(115, 90, 1, 1).data]).toEqual([255, 0, 0, 255]);
+    expect(rasterStats.copiedPixels).toBe(copies);
+    expect(rasterStats.sampledPixels).toBe(samples);
+  });
+
+  it('uses a direct inverse for affine transforms regardless of selection size', () => {
+    const mesh = new RasterWarpMesh([
+      { x: -10, y: 20 },
+      { x: 3990, y: 3020 },
+      { x: 990, y: 7020 },
+      { x: -3010, y: 4020 },
+    ]);
+    expect(mesh.divisions).toBe(1);
+    expect(mesh.sampler({ x: 0, y: 0, w: 4096, h: 4096 })(490, 3520)).toEqual({
+      x: 0.5,
+      y: 0.5,
+    });
+  });
+
+  it('reuses transformed preview tiles and samples only screen resolution', () => {
+    const source = new RasterSurface(),
+      edit = new RasterEditSession(source);
+    edit.mutateRegion({ x: 0, y: 0, w: 128, h: 128 }, (ctx) =>
+      ctx.fillRect(0, 0, 128, 128),
+    );
+    edit.commit();
+    const preview = new RasterTransformPreview(source, {
+      x: 0,
+      y: 0,
+      w: 128,
+      h: 128,
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 512;
+    const ctx = canvas.getContext('2d')!;
+    const region = { x: 0, y: 0, w: 512, h: 512 },
+      corners = rectCorners(0.4, 0.4, 512, 512);
+    const count = rasterStats.sampledPixels,
+      nativeBefore = rasterStats.nativeTransformedPixels;
+    preview.draw(ctx, region, corners, 0.25);
+    const sampled = rasterStats.sampledPixels - count;
+    expect(sampled).toBe(0);
+    const native = rasterStats.nativeTransformedPixels - nativeBefore;
+    expect(native).toBeGreaterThan(0);
+    expect(native).toBeLessThan(256 * 256);
+    const before = [...ctx.getImageData(0, 0, 512, 512).data];
+    ctx.clearRect(0, 0, 512, 512);
+    preview.draw(ctx, region, corners, 0.25);
+    expect(rasterStats.sampledPixels - count).toBe(sampled);
+    expect(rasterStats.nativeTransformedPixels - nativeBefore).toBe(native);
+    expect([...ctx.getImageData(0, 0, 512, 512).data]).toEqual(before);
+  });
+
+  it('matches native whole-image affine rendering across tile boundaries without CPU sampling', () => {
+    const source = new RasterSurface(),
+      edit = new RasterEditSession(source);
+    const sourceRect = { x: -270, y: -60, w: 540, h: 160 };
+    edit.mutateRegion(sourceRect, (ctx) => {
+      ctx.fillStyle = 'rgba(210,30,60,0.5)';
+      ctx.fillRect(-260, -50, 520, 140);
+      ctx.fillStyle = 'rgba(0,180,240,0.8)';
+      ctx.fillRect(-8, -60, 32, 160);
+    });
+    edit.commit();
+    const whole = document.createElement('canvas');
+    whole.width = sourceRect.w + 4;
+    whole.height = sourceRect.h + 4;
+    whole.getContext('2d')!.putImageData(source.readRegion(sourceRect), 2, 2);
+    const output = { x: -512, y: -256, w: 1024, h: 512 };
+    for (const angle of [0, 0.3, -0.75]) {
+      const a = 1.3 * Math.cos(angle),
+        b = 1.3 * Math.sin(angle),
+        c = -b,
+        d = a;
+      const corners = rectCorners(
+        sourceRect.x,
+        sourceRect.y,
+        sourceRect.w,
+        sourceRect.h,
+      ).map((p) => ({
+        x: a * p.x + c * p.y + 0.25,
+        y: b * p.x + d * p.y - 0.4,
+      }));
+      const result = new RasterSurface(),
+        target = new RasterEditSession(result);
+      const samples = rasterStats.sampledPixels,
+        reads = rasterStats.sourceReadbackPixels;
+      RasterResampler.draw(source, sourceRect, corners, target);
+      expect(rasterStats.sampledPixels).toBe(samples);
+      expect(rasterStats.sourceReadbackPixels).toBe(reads);
+      const expected = document.createElement('canvas');
+      expected.width = output.w;
+      expected.height = output.h;
+      const ctx = expected.getContext('2d')!;
+      ctx.setTransform(
+        a,
+        b,
+        c,
+        d,
+        a * (sourceRect.x - 2) + c * (sourceRect.y - 2) + 0.25 - output.x,
+        b * (sourceRect.x - 2) + d * (sourceRect.y - 2) - 0.4 - output.y,
+      );
+      ctx.drawImage(whole, 0, 0);
+      const actual = result.readRegion(output).data,
+        reference = ctx.getImageData(0, 0, output.w, output.h).data;
+      let maxAlphaError = 0,
+        significant = 0;
+      const mismatches: unknown[] = [];
+      for (let i = 3; i < actual.length; i += 4) {
+        const error = Math.abs(actual[i] - reference[i]);
+        maxAlphaError = Math.max(maxAlphaError, error);
+        if (error > 1) {
+          significant++;
+          if (mismatches.length < 12)
+            mismatches.push({
+              x: (((i - 3) / 4) % output.w) + output.x,
+              y: Math.floor((i - 3) / 4 / output.w) + output.y,
+              actual: actual[i],
+              expected: reference[i],
+            });
+        }
+      }
+      expect(
+        maxAlphaError,
+        JSON.stringify({ angle, significant, mismatches }),
+      ).toBeLessThanOrEqual(1);
+      expect(significant).toBe(0);
+    }
+  });
+
+  it('keeps the same warp geometry when preview resolution is reduced', () => {
+    const corners = [
+      { x: -100, y: -200 },
+      { x: 1700, y: 40 },
+      { x: 500, y: 800 },
+      { x: 0, y: 300 },
+    ];
+    const full = new RasterWarpMesh(corners),
+      scale = 0.125;
+    const preview = new RasterWarpMesh(
+      corners.map((p) => ({ x: p.x * scale, y: p.y * scale })),
+      scale,
+    );
+    expect(preview.divisions).toBe(full.divisions);
+    for (const u of [0, 0.13, 0.47, 0.91, 1])
+      for (const v of [0, 0.21, 0.52, 0.88, 1]) {
+        const expected = full.map(u, v),
+          actual = preview.map(u, v);
+        expect(actual.x).toBeCloseTo(expected.x * scale, 10);
+        expect(actual.y).toBeCloseTo(expected.y * scale, 10);
+      }
+  });
+
+  it('scanline warp coverage matches the edge-rule oracle for convex, concave and folded quads', () => {
+    const rect = { x: -32, y: -32, w: 128, h: 128 };
+    const quads = [
+      [
+        { x: 0, y: 0 },
+        { x: 63, y: 9 },
+        { x: 54, y: 65 },
+        { x: -8, y: 58 },
+      ],
+      [
+        { x: 0, y: 0 },
+        { x: 64, y: 0 },
+        { x: 16, y: 16 },
+        { x: 0, y: 64 },
+      ],
+      [
+        { x: 0, y: 0 },
+        { x: 64, y: 64 },
+        { x: 64, y: 0 },
+        { x: 0, y: 64 },
+      ],
+      [
+        { x: 64, y: 0 },
+        { x: 0, y: 0 },
+        { x: -8, y: 64 },
+        { x: 63, y: 65 },
+      ],
+    ];
+    for (const corners of quads) {
+      const mesh = new RasterWarpMesh(corners),
+        oracle = mesh.sampler(rect);
+      const values = new Map<string, { x: number; y: number }>();
+      mesh.forEachSpan(rect, (s) => {
+        for (let x = s.x0; x < s.x1; x++)
+          values.set(`${x},${s.y}`, {
+            x: s.ux * (x + 0.5) + s.uy * (s.y + 0.5) + s.u0,
+            y: s.vx * (x + 0.5) + s.vy * (s.y + 0.5) + s.v0,
+          });
+      });
+      for (let y = rect.y; y < rect.y + rect.h; y++)
+        for (let x = rect.x; x < rect.x + rect.w; x++) {
+          const expected = oracle(x + 0.5, y + 0.5),
+            actual = values.get(`${x},${y}`);
+          expect(!!actual).toBe(!!expected);
+          if (actual && expected) {
+            expect(actual.x).toBeCloseTo(expected.x, 10);
+            expect(actual.y).toBeCloseTo(expected.y, 10);
+          }
+        }
+    }
+  });
+
   it('uses one mesh and one edge owner across clipped transform tiles', () => {
     const source = new RasterSurface(),
       input = new RasterEditSession(source);
@@ -183,6 +438,64 @@ describe('sparse raster storage and transactions', () => {
     expect(read(surface, -5, -5)).toEqual([255, 0, 0, 255]);
     expect(read(surface, 20, 20)).toEqual([0, 255, 0, 255]);
     expect(read(surface, 33, 20)[3]).toBe(0);
+  });
+  it('queries contour segments without enumerating distant empty tiles', () => {
+    const contours = Array.from({ length: 1000 }, (_, i) => {
+      const x = i * 1000000;
+      return [
+        { x, y: 0 },
+        { x: x + 10, y: 0 },
+        { x: x + 10, y: 10 },
+        { x, y: 10 },
+      ];
+    });
+    const index = new ContourIndex(contours);
+    expect([...index.query({ x: 999000000, y: 0, w: 10, h: 10 })]).toHaveLength(
+      4,
+    );
+    expect([...index.query({ x: 500000, y: 0, w: 10, h: 10 })]).toHaveLength(0);
+  });
+  it('encodes a frozen version while a new edit changes the same tile', async () => {
+    const surface = new RasterSurface();
+    dot(surface, 0, 0);
+    const snapshot = surface.snapshot();
+    let release!: () => void;
+    vi.mocked(HTMLCanvasElement.prototype.toBlob).mockImplementationOnce(
+      function (this: HTMLCanvasElement, cb) {
+        release = () => {
+          void backing(this)
+            .encode('png')
+            .then((b) => cb(new Blob([new Uint8Array(b)])));
+        };
+      },
+    );
+    const pending = assetBlobs(snapshot);
+    dot(surface, 0, 0, '#0000ff');
+    release();
+    await pending;
+    const restored = await RasterSurface.restore(snapshot);
+    expect(read(restored, 0, 0)).toEqual([255, 0, 0, 255]);
+    expect(read(surface, 0, 0)).toEqual([0, 0, 255, 255]);
+  });
+  it('evicts old decoded history tiles while pinning active pixels', async () => {
+    const a = new RasterSurface(),
+      b = new RasterSurface(),
+      active = new RasterSurface();
+    dot(a, 0, 0);
+    dot(b, 0, 0);
+    dot(active, 0, 0);
+    const snapshots = [a.snapshot(), b.snapshot(), active.snapshot()];
+    await assetBlobs(snapshots);
+    const ids = snapshots.map((s) => s.tiles[0].assetId);
+    getAsset(ids[0]);
+    getAsset(ids[1]);
+    releaseUnusedCanvases(new Set([ids[2]]), 256 * 256 * 4);
+    expect(a.get(0, 0)!.canvas).toBeUndefined();
+    expect(b.get(0, 0)!.canvas).toBeDefined();
+    expect(active.get(0, 0)!.canvas).toBeDefined();
+    expect(read(await RasterSurface.restore(snapshots[0]), 0, 0)).toEqual([
+      255, 0, 0, 255,
+    ]);
   });
   it('allocates no pixel buffers for 100 empty layers', () => {
     expect(

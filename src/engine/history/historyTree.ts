@@ -215,6 +215,7 @@ export class HistoryTree {
   root: HistoryNode;
   current: HistoryNode;
   private seq = 0;
+  revision = 0;
 
   constructor() {
     this.root = {
@@ -443,6 +444,7 @@ export class HistoryTree {
       this.root = root;
       this.current = current;
       this.seq = Math.max(...nodes.keys()) + 1;
+      this.revision++;
       return true;
     } catch {
       return false;
@@ -458,6 +460,7 @@ export class HistoryTree {
       children: [],
       lastChild: 0,
     };
+    this.revision++;
     this.current.children.push(node);
     this.current.lastChild = this.current.children.length - 1;
     this.current = node;
@@ -496,6 +499,7 @@ export class HistoryTree {
     if (node === this.root || node.children.length > 0) return null;
     const parent = node.parent!;
     const i = parent.children.indexOf(node);
+    this.revision++;
     parent.children.splice(i, 1);
     parent.lastChild = Math.max(
       0,
@@ -553,6 +557,7 @@ export class HistoryTree {
 
     const baseIndex = Math.max(0, path.length - keep - 1);
     const retained = path.slice(baseIndex);
+    this.revision++;
     const base = retained[0];
     base.parent = null;
     base.op = null;

@@ -1,3 +1,4 @@
+import { runtimeCheckpoint } from './RuntimeCheckpoint';
 import { RasterBakeService } from './RasterBakeService';
 import { useStore } from '../../state/store';
 import {
@@ -939,12 +940,13 @@ export class LayerService {
 
   async mergeLayerDown(id = this.activeLayerId): Promise<void> {
     if (this.engine.isBusy()) return;
-    this.finishFloating();
+    await this.engine.commitFloatSelection();
     const upper = this.byId(id);
     if (!upper) return;
     const lower = this.mergeTargetFor(upper);
     if (!lower) return;
 
+    const rollback = runtimeCheckpoint(this.engine);
     this.engine.setBusy(true);
     try {
       await this.engine.readyToRender();
@@ -959,8 +961,40 @@ export class LayerService {
         this.activeLayerId,
         changes,
       );
+    } catch (error) {
+      rollback();
+      throw error;
     } finally {
       this.engine.setBusy(false);
+    }
+  }
+
+  async transferShapeLayerAsync(): Promise<void> {
+    if (this.engine.isBusy()) return;
+    await this.engine.commitFloatSelection();
+    if (!this.canTransferShape()) return;
+    const layer = this.byId(this.activeLayerId)!,
+      parent = this.rasterById(layer.parentId!)!;
+    const rollback = runtimeCheckpoint(this.engine);
+    this.engine.setBusy(true);
+    try {
+      const changes = await new RasterBakeService(this.engine).bakeAsync(
+        parent,
+        layer,
+      );
+      this.bakeAndMerge(
+        layer,
+        parent,
+        layer.type === 'image' ? '画像を転写' : '図形を転写',
+        layer.id,
+        changes,
+      );
+    } catch (error) {
+      rollback();
+      throw error;
+    } finally {
+      this.engine.setBusy(false);
+      this.engine.scheduleSave();
     }
   }
 

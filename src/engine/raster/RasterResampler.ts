@@ -1,8 +1,9 @@
-import { RasterWarpMesh } from './RasterWarpMesh';
+import { rasterStats } from './RasterMetrics';
+import { RasterTransformPlan, pointBounds } from './RasterTransformPlan';
+import { RasterAffineRenderer } from './RasterAffineRenderer';
 import { RasterEditSession, RasterSurface } from './RasterSurface';
 import {
   intersect,
-  tileCoordinates,
   tileKey,
   tileRect,
   TILE_SIZE,
@@ -17,15 +18,10 @@ export interface RasterPoint {
   y: number;
 }
 type Quad = readonly RasterPoint[];
-function box(points: readonly RasterPoint[], pad = 0): PixelRect {
-  const x = Math.floor(Math.min(...points.map((p) => p.x)) - pad),
-    y = Math.floor(Math.min(...points.map((p) => p.y)) - pad);
-  return {
-    x,
-    y,
-    w: Math.ceil(Math.max(...points.map((p) => p.x)) + pad) - x,
-    h: Math.ceil(Math.max(...points.map((p) => p.y)) + pad) - y,
-  };
+export interface RasterResampleCache {
+  plan?: RasterTransformPlan;
+  pixels: Map<TileKey, Uint8ClampedArray>;
+  affine: RasterAffineRenderer;
 }
 /** Destination sampling across source tiles avoids seams and transparent edge fringes. */
 export class RasterResampler {
@@ -35,8 +31,16 @@ export class RasterResampler {
     corners: Quad,
     target: RasterEditSession,
     clip?: PixelRect,
+    cache?: RasterResampleCache,
   ): void {
-    for (const _ of this.steps(source, sourceRect, corners, target, clip)) {
+    for (const _ of this.steps(
+      source,
+      sourceRect,
+      corners,
+      target,
+      clip,
+      cache,
+    )) {
       /* Synchronous preview / atomic tool callbacks. */
     }
   }
@@ -85,8 +89,9 @@ export class RasterResampler {
     corners: Quad,
     target: RasterEditSession,
     clip?: PixelRect,
+    cache?: RasterResampleCache,
   ): Generator<void> {
-    const destBounds = box(corners, 2);
+    const destBounds = pointBounds(corners, 2);
     validateRect(destBounds);
     const dx = corners[0].x - sourceRect.x,
       dy = corners[0].y - sourceRect.y;
@@ -99,7 +104,11 @@ export class RasterResampler {
           p.y === sourceRect.y + (i >= 2 ? sourceRect.h : 0) + dy,
       );
     if (translation) {
-      for (const t of source.entries()) {
+      const requested = clip
+        ? intersect(sourceRect, { ...clip, x: clip.x - dx, y: clip.y - dy })
+        : sourceRect;
+      if (!requested) return;
+      for (const t of source.queryTiles(requested)) {
         const r = intersect(tileRect(t.tx, t.ty), sourceRect);
         if (!r) continue;
         const dest = { ...r, x: r.x + dx, y: r.y + dy },
@@ -116,111 +125,98 @@ export class RasterResampler {
       }
       return;
     }
-    const mesh = new RasterWarpMesh(corners);
-    const candidates = new Map<TileKey, { tx: number; ty: number }>();
-    for (const t of source.entries()) {
-      const r = intersect(
-        {
-          x: t.tx * TILE_SIZE + t.asset.bounds.x - 1,
-          y: t.ty * TILE_SIZE + t.asset.bounds.y - 1,
-          w: t.asset.bounds.w + 2,
-          h: t.asset.bounds.h + 2,
-        },
-        sourceRect,
-      );
-      if (!r) continue;
-      const points = mesh.regionPoints(
-        (r.x - sourceRect.x) / sourceRect.w,
-        (r.y - sourceRect.y) / sourceRect.h,
-        (r.x + r.w - sourceRect.x) / sourceRect.w,
-        (r.y + r.h - sourceRect.y) / sourceRect.h,
-      );
-      const area = clip ? intersect(box(points, 2), clip) : box(points, 2);
-      if (!area) continue;
-      for (const t of tileCoordinates(area))
-        candidates.set(tileKey(t.tx, t.ty), t);
-    }
-    const data = new Map<TileKey, Uint8ClampedArray>();
-    const pixel = (x: number, y: number): ArrayLike<number> => {
+    const plan =
+      cache?.plan ?? new RasterTransformPlan(source, sourceRect, corners);
+    const mesh = plan.mesh,
+      candidates = plan.candidates(clip);
+    const native = cache?.affine ?? new RasterAffineRenderer();
+    const data = cache?.pixels ?? new Map<TileKey, Uint8ClampedArray>();
+    let lastTx = NaN,
+      lastTy = NaN,
+      pixels: Uint8ClampedArray | undefined;
+    let alpha = 0,
+      red = 0,
+      green = 0,
+      blue = 0;
+    const accumulate = (x: number, y: number, weight: number): void => {
       if (
+        !weight ||
         x < sourceRect.x ||
         y < sourceRect.y ||
         x >= sourceRect.x + sourceRect.w ||
         y >= sourceRect.y + sourceRect.h
       )
-        return [0, 0, 0, 0];
+        return;
       const tx = Math.floor(x / TILE_SIZE),
-        ty = Math.floor(y / TILE_SIZE),
-        key = tileKey(tx, ty),
-        tile = source.get(tx, ty);
-      if (!tile) return [0, 0, 0, 0];
-      let a = data.get(key);
-      if (!a) {
-        a = tile
-          .canvas!.getContext('2d')!
-          .getImageData(0, 0, TILE_SIZE, TILE_SIZE).data;
-        data.set(key, a);
+        ty = Math.floor(y / TILE_SIZE);
+      if (tx !== lastTx || ty !== lastTy) {
+        lastTx = tx;
+        lastTy = ty;
+        const key = tileKey(tx, ty);
+        pixels = data.get(key);
+        if (!pixels) {
+          const tile = source.get(tx, ty);
+          if (tile) {
+            pixels = tile
+              .canvas!.getContext('2d')!
+              .getImageData(0, 0, TILE_SIZE, TILE_SIZE).data;
+            data.set(key, pixels);
+            rasterStats.sourceReadbackPixels += TILE_SIZE * TILE_SIZE;
+          }
+        }
       }
+      if (!pixels) return;
       const i = ((y - ty * TILE_SIZE) * TILE_SIZE + x - tx * TILE_SIZE) * 4;
-      return a.subarray(i, i + 4);
+      const aw = pixels[i + 3] * weight;
+      alpha += aw;
+      red += pixels[i] * aw;
+      green += pixels[i + 1] * aw;
+      blue += pixels[i + 2] * aw;
     };
-    for (const { tx, ty } of candidates.values()) {
-      const r = tileRect(tx, ty),
-        image = rasterCanvas()
-          .getContext('2d')!
-          .createImageData(TILE_SIZE, TILE_SIZE);
-      const sample = mesh.sampler(r);
-      for (let y = 0; y < TILE_SIZE; y++)
-        for (let x = 0; x < TILE_SIZE; x++) {
-          const wx = r.x + x + 0.5,
-            wy = r.y + y + 0.5;
-          if (
-            clip &&
-            (wx < clip.x ||
-              wy < clip.y ||
-              wx >= clip.x + clip.w ||
-              wy >= clip.y + clip.h)
-          )
-            continue;
-          const uv = sample(wx, wy);
-          if (!uv) continue;
-          const u = uv.x,
-            v = uv.y;
+    let canvas: HTMLCanvasElement | undefined;
+    let buffer: ImageData | undefined;
+    for (const { tx, ty } of candidates) {
+      const r = tileRect(tx, ty);
+      const occupied = intersect(r, destBounds),
+        area = occupied && (clip ? intersect(occupied, clip) : occupied);
+      if (!area) continue;
+      if (native.draw(source, plan, area, target)) {
+        yield;
+        continue;
+      }
+      const scratch = (canvas ??= rasterCanvas());
+      const ctx = scratch.getContext('2d')!;
+      const image = (buffer ??= ctx.createImageData(TILE_SIZE, TILE_SIZE));
+      image.data.fill(0);
+      mesh.forEachSpan(area, (span) => {
+        const wy = span.y + 0.5;
+        for (let wxInt = span.x0; wxInt < span.x1; wxInt++) {
+          const wx = wxInt + 0.5;
+          const u = span.ux * wx + span.uy * wy + span.u0;
+          const v = span.vx * wx + span.vy * wy + span.v0;
           const sx = sourceRect.x + u * sourceRect.w - 0.5,
             sy = sourceRect.y + v * sourceRect.h - 0.5,
             ix = Math.floor(sx),
             iy = Math.floor(sy),
             fx = sx - ix,
             fy = sy - iy;
-          const samples = [
-              pixel(ix, iy),
-              pixel(ix + 1, iy),
-              pixel(ix, iy + 1),
-              pixel(ix + 1, iy + 1),
-            ],
-            weights = [
-              (1 - fx) * (1 - fy),
-              fx * (1 - fy),
-              (1 - fx) * fy,
-              fx * fy,
-            ];
-          let alpha = 0;
-          const rgb = [0, 0, 0];
-          samples.forEach((p, i) => {
-            const aw = p[3] * weights[i];
-            alpha += aw;
-            for (let k = 0; k < 3; k++) rgb[k] += p[k] * aw;
-          });
-          const i = (y * TILE_SIZE + x) * 4;
+          alpha = red = green = blue = 0;
+          accumulate(ix, iy, (1 - fx) * (1 - fy));
+          accumulate(ix + 1, iy, fx * (1 - fy));
+          accumulate(ix, iy + 1, (1 - fx) * fy);
+          accumulate(ix + 1, iy + 1, fx * fy);
+          rasterStats.sampledPixels++;
+          const i = ((span.y - r.y) * TILE_SIZE + wxInt - r.x) * 4;
           if (alpha) {
-            for (let k = 0; k < 3; k++) image.data[i + k] = rgb[k] / alpha;
+            image.data[i] = red / alpha;
+            image.data[i + 1] = green / alpha;
+            image.data[i + 2] = blue / alpha;
             image.data[i + 3] = alpha;
-          }
+          } else image.data.fill(0, i, i + 4);
         }
-      const canvas = document.createElement('canvas');
-      canvas.width = canvas.height = TILE_SIZE;
-      canvas.getContext('2d')!.putImageData(image, 0, 0);
-      target.mutateRegion(r, (ctx) => ctx.drawImage(canvas, r.x, r.y));
+      });
+      ctx.putImageData(image, 0, 0);
+      target.mutateRegion(r, (ctx) => ctx.drawImage(scratch, r.x, r.y));
       yield;
     }
   }

@@ -91,7 +91,7 @@ export interface SavedReferenceImage {
 const DB_NAME = 'rin-paint';
 let dbPromise: Promise<IDBPDatabase> | null = null;
 let activePageId = '';
-let projectBytes = 0;
+let projectBytes: number | null = null;
 let frameBytes: number | null = null;
 let referenceGeneration = 0;
 export function referenceEpoch(): number {
@@ -181,13 +181,19 @@ function queued<T>(work: () => Promise<T>): Promise<T> {
   saveQueue = next.catch(() => undefined);
   return next;
 }
-async function readAssets(value: unknown): Promise<void> {
+export async function loadRasterAssets(value: unknown): Promise<void> {
+  const ids = [...collectAssetIds(value)];
+  if (!ids.length) return;
   const d = await db();
-  for (const id of collectAssetIds(value)) {
-    const blob = (await d.get('rasterAssets', id)) as Blob | undefined;
-    if (!blob) throw new Error('保存画像の一部が見つかりません');
-    registerAsset(id, blob);
-  }
+  // One readonly transaction; enqueue all requests before awaiting any result.
+  const tx = d.transaction('rasterAssets', 'readonly');
+  const blobs = await Promise.all(
+    ids.map((id) => tx.store.get(id) as Promise<Blob | undefined>),
+  );
+  await tx.done;
+  if (blobs.some((blob) => !blob))
+    throw new Error('保存画像の一部が見つかりません');
+  ids.forEach((id, i) => registerAsset(id, blobs[i]!));
 }
 export function savePage(
   page: SavedPage,
@@ -212,11 +218,14 @@ export function savePage(
     void refreshProjectBytes();
   });
 }
-export async function loadPage(id: string): Promise<SavedPage | undefined> {
+export async function loadPage(
+  id: string,
+  withAssets = true,
+): Promise<SavedPage | undefined> {
   const value = (await (await db()).get('pages', id)) as unknown;
   if (value === undefined) return undefined;
   const page = migrateSavedPage(value);
-  await readAssets(page);
+  if (withAssets) await loadRasterAssets(page);
   return page;
 }
 export function collectUnusedRasterAssets(): Promise<void> {
@@ -315,12 +324,12 @@ export async function saveClipboard(value: LayerClipboard): Promise<void> {
 export async function loadClipboard(): Promise<LayerClipboard | undefined> {
   const d = await db();
   const value = migrateClipboard(await d.get('clipboard', 'layers'));
-  if (value) await readAssets(value);
+  if (value) await loadRasterAssets(value);
   else await d.delete('clipboard', 'layers');
   return value;
 }
 export async function hasClipboard(): Promise<boolean> {
-  return !!(await loadClipboard());
+  return !!migrateClipboard(await (await db()).get('clipboard', 'layers'));
 }
 export async function clearClipboard(): Promise<void> {
   await (await db()).clear('clipboard');
@@ -406,15 +415,17 @@ export interface PersistenceUsage {
 }
 export async function getPersistenceUsage(): Promise<PersistenceUsage> {
   const timelapse = await ensureFrameBytes();
-  let originUsage = projectBytes + timelapse;
+  if (projectBytes === null) await refreshProjectBytes();
+  const project = projectBytes ?? 0;
+  let originUsage = project + timelapse;
   try {
     originUsage = (await navigator.storage?.estimate?.())?.usage ?? originUsage;
   } catch {
     /* optional */
   }
   return {
-    project: projectBytes,
+    project,
     timelapse,
-    other: Math.max(0, originUsage - projectBytes - timelapse),
+    other: Math.max(0, originUsage - project - timelapse),
   };
 }
