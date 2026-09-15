@@ -414,11 +414,9 @@ export class LayerService {
     layer.state.text = structuredClone(after);
     if (linkChange) layer.parameterLink = structuredClone(linkChange.after);
     this.bumpLayer(id, unionRect(previousDamage, textDamage()));
-    const contentBefore = { ...before, x: 0, y: 0, rotation: 0, width: null, height: null };
-    const contentAfter = { ...after, x: 0, y: 0, rotation: 0, width: null, height: null };
-    const frameOnlyPreview =
-      preview && JSON.stringify(contentBefore) === JSON.stringify(contentAfter);
-    if (!frameOnlyPreview) this.engine.syncTextRendersPublic();
+    // The live editor already lays out text. Rasterize once when its edit commits.
+    // Outside editing, resize previews need fresh wrapping just like content changes.
+    if (!preview || useStore.getState().textEditingId !== id) this.engine.syncTextRendersPublic();
     if (!preview && JSON.stringify(before) !== JSON.stringify(after)) {
       const propsOp = {
         kind: 'layerProps' as const,

@@ -7,6 +7,7 @@ import { EngineProvider } from './EngineContext';
 import { useStore } from '../state/store';
 import { createTextLayer } from '../engine/layers';
 import { newText } from '../engine/text/model';
+import { useTextSession } from '../engine/text/session';
 import type { PaintEngine } from '../engine/PaintEngine';
 
 const original = useStore.getState();
@@ -30,6 +31,8 @@ function renderEditor(tool: typeof original.tool) {
   const engine = {
     events: { on() {}, off() {} },
     getLayerCanvas: () => null,
+    beginTextPreview: vi.fn(() => vi.fn()),
+    readyToRender: vi.fn(async () => {}),
     getText: () => text,
     view: { clientToArt: (x: number, y: number) => ({ x, y }) },
   } as unknown as PaintEngine;
@@ -120,6 +123,118 @@ it('coalesces text frame moves and flushes the latest position before committing
     expect(current.x).toBe(160);
     expect(engine.updateText).toHaveBeenLastCalledWith('text', expect.anything(), expect.objectContaining({ x: 160 }));
     expect(frames.size).toBe(0);
+  } finally {
+    await act(async () => root.unmount());
+    element.remove();
+  }
+});
+
+it('batches rapid typing, preserves native nodes, and flushes input before commit', async () => {
+  const { element, root, engine } = renderEditor(null);
+  let current = engine.getText('text')!;
+  const frames = new Map<number, FrameRequestCallback>();
+  let serial = 0;
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+    frames.set(++serial, callback);
+    return serial;
+  });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => { frames.delete(id); });
+  const events = new Map<string, () => void>();
+  engine.events.on = vi.fn((name, callback) => { events.set(name, callback as () => void); });
+  engine.getText = () => current;
+  engine.updateText = vi.fn((_id, _before, after) => {
+    current = after;
+    useStore.setState({ layers: useStore.getState().layers.map(layer => layer.type === 'text'
+      ? { ...layer, state: { ...layer.state, text: structuredClone(after) } } : layer) });
+  });
+  useTextSession.getState().set({ id: null, typingStyle: current.style });
+  useStore.setState({ textEditingId: 'text' });
+  try {
+    await act(async () => root.render(<EngineProvider engine={engine}><TextEditor fitScale={1} /></EngineProvider>));
+    const editor = element.querySelector<HTMLElement>('.text-editor')!;
+    const span = editor.querySelector('span')!;
+    await act(async () => {
+      for (let i = 1; i <= 30; i++) {
+        span.textContent = 'あ' + 'い'.repeat(i);
+        editor.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      }
+    });
+    expect(engine.updateText).not.toHaveBeenCalled();
+    expect(frames.size).toBe(1);
+    await act(async () => {
+      const callbacks = [...frames.values()];
+      frames.clear();
+      callbacks.forEach(callback => callback(0));
+    });
+    expect(engine.updateText).toHaveBeenCalledTimes(1);
+    expect(current.content).toBe('あ' + 'い'.repeat(30));
+    expect(editor.querySelector('span')).toBe(span);
+    await act(async () => {
+      span.textContent += 'う';
+      editor.dispatchEvent(new InputEvent('input', { bubbles: true }));
+      events.get('textCommitRequest')!();
+    });
+    expect(frames.size).toBe(0);
+    expect(engine.updateText).toHaveBeenLastCalledWith('text', expect.objectContaining({ content: 'あ' }),
+      expect.objectContaining({ content: 'あ' + 'い'.repeat(30) + 'う' }));
+  } finally {
+    await act(async () => root.unmount());
+    element.remove();
+  }
+});
+
+it.each([['horizontal', true], ['vertical', true], ['horizontal', false], ['vertical', false]] as const)('updates %s text layout (editing=%s) locally during resize', async (direction, editing) => {
+  const { element, root, engine } = renderEditor(null);
+  let current = { ...engine.getText('text')!, direction };
+  let finishBitmap!: () => void;
+  const release = vi.fn();
+  engine.beginTextPreview = vi.fn(() => release);
+  engine.readyToRender = vi.fn(() => new Promise<void>(resolve => { finishBitmap = resolve; }));
+  engine.getText = () => current;
+  engine.updateText = vi.fn((_id, _before, after) => {
+    current = after;
+    useStore.setState({ layers: useStore.getState().layers.map(layer => layer.type === 'text'
+      ? { ...layer, state: { ...layer.state, text: after } } : layer) });
+  });
+  useTextSession.getState().set({ id: null });
+  useStore.setState({ textEditingId: editing ? 'text' : null, layers: useStore.getState().layers.map(layer => layer.type === 'text'
+    ? { ...layer, state: { ...layer.state, text: current } } : layer) });
+  let frameCallback!: FrameRequestCallback;
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { frameCallback = callback; return 1; });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
+  try {
+    await act(async () => root.render(<EngineProvider engine={engine}><TextEditor fitScale={1} /></EngineProvider>));
+    const handle = element.querySelector<HTMLElement>('.text-resize-handle.se')!;
+    handle.setPointerCapture = () => {};
+    handle.hasPointerCapture = () => false;
+    await act(async () => {
+      handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0, clientX: 100, clientY: 100 }));
+    });
+    const editor = element.querySelector<HTMLElement>('.text-editor')!;
+    const span = editor.querySelector('span');
+    await act(async () => {
+      handle.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 1, clientX: 140, clientY: 120 }));
+      frameCallback(0);
+    });
+    expect(engine.updateText).not.toHaveBeenCalled();
+    expect(engine.readyToRender).not.toHaveBeenCalled();
+    expect(editor.style.width).toBe('120px');
+    expect(editor.style.height).toBe('60px');
+    expect(editor.style.writingMode).toBe(direction === 'vertical' ? 'vertical-rl' : 'horizontal-tb');
+    expect(editor.querySelector('span')).toBe(span);
+    await act(async () => handle.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 })));
+    expect(engine.updateText).toHaveBeenCalledTimes(1);
+    expect(current).toMatchObject({ width: 120, height: 60 });
+    if (editing) {
+      expect(engine.readyToRender).not.toHaveBeenCalled();
+    } else {
+      expect(engine.readyToRender).toHaveBeenCalledTimes(1);
+      expect(release).not.toHaveBeenCalled();
+      expect(element.querySelector('.text-editor')).toBe(editor);
+      await act(async () => finishBitmap());
+      expect(element.querySelector('.text-editor')).toBeNull();
+    }
+    expect(release).toHaveBeenCalledTimes(1);
   } finally {
     await act(async () => root.unmount());
     element.remove();

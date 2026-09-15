@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { liftListOriginIfTooLow } from './hierarchyListLayout';
+import { liftListOriginIfTooLow, shouldPreserveRowAnchor } from './hierarchyListLayout';
+
+describe('shouldPreserveRowAnchor', () => {
+  it('lets a row in the lower half naturally move upward', () => {
+    expect(shouldPreserveRowAnchor(240, 144, 400)).toBe(false);
+    expect(shouldPreserveRowAnchor(200, 199, 400)).toBe(false);
+  });
+
+  it('preserves a row in the upper half or one that would move downward', () => {
+    expect(shouldPreserveRowAnchor(199, 100, 400)).toBe(true);
+    expect(shouldPreserveRowAnchor(240, 288, 400)).toBe(true);
+    expect(shouldPreserveRowAnchor(240, 240, 400)).toBe(true);
+  });
+});
 
 describe('liftListOriginIfTooLow', () => {
   it('leaves the origin alone when the first row is above 30%', () => {

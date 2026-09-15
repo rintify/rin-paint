@@ -297,8 +297,20 @@ export class PaintEngine {
   /** @internal */ getActiveLayerId(): string {
     return this.layerService.activeLayerId;
   }
-  /** @internal */ getTextEditingId(): string | null {
-    return useStore.getState().textEditingId;
+  private textPreview: { id: string } | null = null;
+  /** Text drawn by the DOM overlay should be omitted from the on-screen canvas. */
+  getTextOverlayId(): string | null {
+    return this.textPreview?.id ?? useStore.getState().textEditingId;
+  }
+  beginTextPreview(id: string): () => void {
+    const preview = { id };
+    this.textPreview = preview;
+    this.requestRender();
+    return () => {
+      if (this.textPreview !== preview) return;
+      this.textPreview = null;
+      this.requestRender();
+    };
   }
   /** @internal */ activeTool(): Tool {
     const kind = useStore.getState().tool;

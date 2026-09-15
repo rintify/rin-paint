@@ -62,10 +62,10 @@ export class RegionRenderer {
   /** Layers contributing to the scope immediately before an effect. */
   effectInputLayers(effectId: string, withTools: boolean): Layer[] {
     const eng = this.host.engine;
-    const editingTextId = withTools ? eng.getTextEditingId?.() : null;
+    const textOverlayId = withTools ? eng.getTextOverlayId?.() : null;
     const visible = (layer: Layer) =>
       layer.visible &&
-      !(layer.type === 'text' && layer.id === editingTextId);
+      !(layer.type === 'text' && layer.id === textOverlayId);
     let result: Layer[] = [];
     const visit = (ids: string[], scope: Layer[]): boolean => {
       for (const id of ids) {
@@ -113,14 +113,14 @@ export class RegionRenderer {
   renderNativeInto(target: CanvasRenderingContext2D, region: RenderRect): void {
     const eng = this.host.engine;
     const env = this.host.drawEnv(true, region.w, region.h, region.x, region.y);
-    const editingTextId = eng.getTextEditingId?.() ?? null;
+    const textOverlayId = eng.getTextOverlayId?.() ?? null;
     const visit = (ids: string[]) => {
       for (const id of ids) {
         const layer = renderLayerById(eng, id);
         if (!layer) continue;
         if (
           layer.visible &&
-          !(layer.type === 'text' && layer.id === editingTextId)
+          !(layer.type === 'text' && layer.id === textOverlayId)
         )
           this.drawLayer(target, layer, env, 0, 0);
         visit(layer.childIds);
@@ -155,14 +155,14 @@ export class RegionRenderer {
       0,
       0,
     );
-    const editingTextId = eng.getTextEditingId?.() ?? null;
+    const textOverlayId = eng.getTextOverlayId?.() ?? null;
     const visit = (ids: string[]) => {
       for (const id of ids) {
         const layer = renderLayerById(eng, id);
         if (!layer) continue;
         if (
           layer.visible &&
-          !(layer.type === 'text' && layer.id === editingTextId)
+          !(layer.type === 'text' && layer.id === textOverlayId)
         ) {
           target.save();
           try {
@@ -188,8 +188,8 @@ export class RegionRenderer {
     // The contenteditable text is the synchronous on-canvas preview while typing.
     // Omitting its asynchronously rasterized copy keeps the visible glyphs and
     // the browser caret on the same DOM layout.
-    const editingTextId = drawToolOverlay
-      ? (eng.getTextEditingId?.() ?? null)
+    const textOverlayId = drawToolOverlay
+      ? (eng.getTextOverlayId?.() ?? null)
       : null;
     const art = this.host.borrowCanvas(region.w, region.h);
     const artCtx = art.ctx;
@@ -208,7 +208,7 @@ export class RegionRenderer {
     );
     const participates = (layer: Layer) =>
       layer.visible &&
-      !(layer.type === 'text' && layer.id === editingTextId) &&
+      !(layer.type === 'text' && layer.id === textOverlayId) &&
       (included === null || included.has(layer.id));
     const resetTarget = (target: CanvasRenderingContext2D) => {
       target.setTransform(1, 0, 0, 1, 0, 0);

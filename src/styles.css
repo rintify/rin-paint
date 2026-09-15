@@ -298,7 +298,6 @@
 .text-move-edge.right { right: calc(var(--text-hit-size) * -0.5); }
 .text-move-edge.bottom { bottom: calc(var(--text-hit-size) * -0.5); }
 .text-move-edge.left { left: calc(var(--text-hit-size) * -0.5); }
-.text-overflow-hint { position: absolute; left: 0; bottom: 0; translate: 0 100%; transform: scale(var(--text-ui-scale)); transform-origin: top left; white-space: nowrap; font: 11px sans-serif; padding: 3px 6px; border-radius: 3px; background: #783d15; color: white; user-select: none; pointer-events: none; }
 .text-snap-guide { position: absolute; z-index: 2; pointer-events: none; border-color: #4f8cff; border-style: dashed; }
 .text-snap-guide.vertical { top: 0; bottom: 0; border-width: 0 0 0 1px; }
 .text-snap-guide.horizontal { left: 0; right: 0; border-width: 1px 0 0; }

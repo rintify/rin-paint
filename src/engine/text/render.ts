@@ -105,7 +105,8 @@ export function populateText(el: HTMLElement, text: TextParams, ppi: number): vo
   el.replaceChildren(fragment);
 }
 
-interface Cache { key: string; canvas: HTMLCanvasElement | null; ready: Promise<void>; error?: unknown }
+interface RenderRequest { text: TextParams; ppi: number; onReady: () => void }
+interface Cache { key: string; canvas: HTMLCanvasElement | null; ready: Promise<void>; pending?: RenderRequest; running: boolean; error?: unknown }
 /**
  * DOM + html-to-image による文字ビットマップ生成。
  * 公開 API は request / draw / ready / get / clear / retain。
@@ -120,52 +121,75 @@ export class TextRenderer {
     // Placement is applied by draw(), and does not change the local bitmap.
     const key = JSON.stringify([{ ...text, x: 0, y: 0, rotation: 0 }, ppi, fontEpoch]);
     if (this.cache.get(id)?.key === key) return;
-    const item: Cache = { key, canvas: this.get(id), ready: Promise.resolve() };
-    this.cache.set(id, item);
-    item.ready = (async () => {
-      const host = document.createElement('div');
-      Object.assign(host.style, { position: 'fixed', left: '-100000px', top: '0', pointerEvents: 'none', boxSizing: 'border-box', display: 'flow-root' });
-      const node = document.createElement('div');
-      populateText(node, text, ppi);
-      host.append(node);
-      document.body.append(host);
-      try {
-        const families = new Set([text.style.fontId, ...text.ranges.map(r => r.fontId)]);
-        await Promise.all([...families].map(id => document.fonts.load(`16px ${fontFamily(id)}`)));
-        if (this.cache.get(id) !== item) return;
-        const rect = node.getBoundingClientRect();
-        // Padding accommodates ruby above/right without clipping it from the bitmap.
-        const pad = Math.ceil(Math.max(text.style.sizePt, ...text.ranges.map(r => r.sizePt)) * ppi / 72);
-        const range = document.createRange();
-        range.selectNodeContents(node);
-        const measured = range.getBoundingClientRect();
-        const bounds = text.content && (measured.width || measured.height) ? measured : rect;
-        const left = Math.max(0, rect.left - bounds.left);
-        const top = Math.max(0, rect.top - bounds.top);
-        const right = Math.max(0, bounds.right - rect.right);
-        const bottom = Math.max(0, bounds.bottom - rect.bottom);
-        const offsetX = Math.ceil(pad + left), offsetY = Math.ceil(pad + top);
-        host.style.padding = `${offsetY}px ${Math.ceil(pad + right)}px ${Math.ceil(pad + bottom)}px ${offsetX}px`;
-        const width = Math.max(1, Math.ceil(rect.width + left + right + pad * 2));
-        const height = Math.max(1, Math.ceil(rect.height + top + bottom + pad * 2));
-        // html-to-image renders through a standalone SVG. Asset URLs that work
-        // in the live DOM are not resolvable there, so built-ins must be data URLs.
-        const fontEmbedCSS = fontCss(loadedFonts.filter(font => families.has(font.id)), true, families);
-        const canvas = await toCanvas(host, { width, height, pixelRatio: 1, fontEmbedCSS, skipFonts: !fontEmbedCSS, style: { position: 'static', left: 'auto', top: 'auto', width: `${width}px`, height: `${height}px` } });
-        canvas.dataset.textPadding = String(pad);
-        canvas.dataset.textOffsetX = String(offsetX);
-        canvas.dataset.textOffsetY = String(offsetY);
-        canvas.dataset.textWidth = String(rect.width);
-        canvas.dataset.textHeight = String(rect.height);
-        if (this.cache.get(id) === item) { item.canvas = canvas; onReady(); }
-      } catch (error) { if (this.cache.get(id) === item) item.error = error; }
-      finally { host.remove(); }
-    })();
+    let item = this.cache.get(id);
+    if (!item) {
+      item = { key, canvas: null, ready: Promise.resolve(), running: false };
+      this.cache.set(id, item);
+    }
+    item.key = key;
+    item.pending = { text, ppi, onReady };
+    if (item.running) return;
+    item.running = true;
+    item.ready = this.drain(id, item);
+  }
+  private async drain(id: string, item: Cache): Promise<void> {
+    // One image conversion per layer at a time. Keep only the latest queued frame,
+    // but display completed frames during a continuous drag instead of starving it.
+    try {
+      while (item.pending && this.cache.get(id) === item) {
+        const request = item.pending;
+        item.pending = undefined;
+        try {
+          const canvas = await this.rasterize(request.text, request.ppi);
+          if (this.cache.get(id) !== item) return;
+          item.canvas = canvas;
+          item.error = undefined;
+          request.onReady();
+        } catch (error) { item.error = error; }
+      }
+    } finally { item.running = false; }
+  }
+  private async rasterize(text: TextParams, ppi: number): Promise<HTMLCanvasElement> {
+    const host = document.createElement('div');
+    Object.assign(host.style, { position: 'fixed', left: '-100000px', top: '0', pointerEvents: 'none', boxSizing: 'border-box', display: 'flow-root' });
+    const node = document.createElement('div');
+    populateText(node, text, ppi);
+    host.append(node);
+    document.body.append(host);
+    try {
+      const families = new Set([text.style.fontId, ...text.ranges.map(r => r.fontId)]);
+      await Promise.all([...families].map(id => document.fonts.load(`16px ${fontFamily(id)}`)));
+      const rect = node.getBoundingClientRect();
+      // Padding accommodates ruby above/right without clipping it from the bitmap.
+      const pad = Math.ceil(Math.max(text.style.sizePt, ...text.ranges.map(r => r.sizePt)) * ppi / 72);
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const measured = range.getBoundingClientRect();
+      const bounds = text.content && (measured.width || measured.height) ? measured : rect;
+      const left = Math.max(0, rect.left - bounds.left);
+      const top = Math.max(0, rect.top - bounds.top);
+      const right = Math.max(0, bounds.right - rect.right);
+      const bottom = Math.max(0, bounds.bottom - rect.bottom);
+      const offsetX = Math.ceil(pad + left), offsetY = Math.ceil(pad + top);
+      host.style.padding = `${offsetY}px ${Math.ceil(pad + right)}px ${Math.ceil(pad + bottom)}px ${offsetX}px`;
+      const width = Math.max(1, Math.ceil(rect.width + left + right + pad * 2));
+      const height = Math.max(1, Math.ceil(rect.height + top + bottom + pad * 2));
+      // html-to-image renders through a standalone SVG. Asset URLs that work
+      // in the live DOM are not resolvable there, so built-ins must be data URLs.
+      const fontEmbedCSS = fontCss(loadedFonts.filter(font => families.has(font.id)), true, families);
+      const canvas = await toCanvas(host, { width, height, pixelRatio: 1, fontEmbedCSS, skipFonts: !fontEmbedCSS, style: { position: 'static', left: 'auto', top: 'auto', width: `${width}px`, height: `${height}px` } });
+      canvas.dataset.textPadding = String(pad);
+      canvas.dataset.textOffsetX = String(offsetX);
+      canvas.dataset.textOffsetY = String(offsetY);
+      canvas.dataset.textWidth = String(rect.width);
+      canvas.dataset.textHeight = String(rect.height);
+      return canvas;
+    } finally { host.remove(); }
   }
   async ready(): Promise<void> {
-    let entries: Cache[];
-    do { entries = [...this.cache.values()]; await Promise.all(entries.map(c => c.ready)); }
-    while ([...this.cache.values()].some(c => !entries.includes(c)));
+    let pending: Promise<void>[];
+    do { pending = [...this.cache.values()].map(c => c.ready); await Promise.all(pending); }
+    while ([...this.cache.values()].some(c => !pending.includes(c.ready)));
     const failed = [...this.cache.values()].find(c => c.error);
     if (failed) throw new Error('文字の描画に失敗しました。フォントまたは文字枠を確認してください。');
   }

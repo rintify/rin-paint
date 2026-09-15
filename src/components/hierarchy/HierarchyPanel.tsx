@@ -21,7 +21,7 @@ import {
 } from '@mui/material';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { hasLayerControls } from './layerControls';
-import { liftListOriginIfTooLow } from './hierarchyListLayout';
+import { liftListOriginIfTooLow, shouldPreserveRowAnchor } from './hierarchyListLayout';
 import { selectedLayerRows } from '../../engine/layerTree';
 import { useStore } from '../../state/store';
 import type { LayerMeta } from '../../model';
@@ -146,10 +146,13 @@ export function HierarchyPanel() {
     let scroll = el.scrollTop;
     if (selected && change.preserveAnchor) {
       if (change.anchorY !== null) {
-        scroll = top + selected.index * ROW_HEIGHT - change.anchorY;
-        if (scroll < 0) {
-          top -= scroll;
-          scroll = 0;
+        const naturalY = top + selected.index * ROW_HEIGHT - scroll;
+        if (shouldPreserveRowAnchor(change.anchorY, naturalY, el.clientHeight)) {
+          scroll = top + selected.index * ROW_HEIGHT - change.anchorY;
+          if (scroll < 0) {
+            top -= scroll;
+            scroll = 0;
+          }
         }
       } else {
         const y = top + selected.index * ROW_HEIGHT;

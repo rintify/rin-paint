@@ -33,6 +33,28 @@ describe('text bitmap reuse', () => {
     expect(toCanvas).toHaveBeenCalledTimes(2);
   });
 
+  it('coalesces resize requests while displaying completed frames and awaiting the final size', async () => {
+    const renderer = new TextRenderer();
+    const text = { ...newText(0, 0, '#000'), content: '折り返す文字', width: 100, height: 40 };
+    let complete!: (canvas: HTMLCanvasElement) => void;
+    vi.mocked(toCanvas).mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+    const onReady = vi.fn();
+    renderer.request('text', text, 72, onReady);
+    await vi.waitFor(() => expect(toCanvas).toHaveBeenCalledTimes(1));
+    for (let width = 101; width <= 200; width++) {
+      renderer.request('text', { ...text, width }, 72, onReady);
+    }
+    expect(toCanvas).toHaveBeenCalledTimes(1);
+    const first = document.createElement('canvas');
+    complete(first);
+    await renderer.ready();
+    expect(toCanvas).toHaveBeenCalledTimes(2);
+    expect(onReady).toHaveBeenCalledTimes(2);
+    expect((vi.mocked(toCanvas).mock.calls[1][0].firstElementChild as HTMLElement).style.width).toBe('200px');
+    expect(renderer.get('text')).not.toBe(first);
+    expect(document.body.querySelector('[style*="-100000px"]')).toBeNull();
+  });
+
   it('does not embed the bundled font in text using a system font', async () => {
     const renderer = new TextRenderer();
     const text = newText(0, 0, '#000');
