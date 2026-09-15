@@ -33,6 +33,7 @@ function emptySettings(): SavedAppSettings {
     colorHistory: [],
     timelapseEnabled: false,
     showEffectRangeGuides: true,
+    autoLinkOnPaste: false,
     shortcuts: defaultShortcutBindings(),
   };
 }

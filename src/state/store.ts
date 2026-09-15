@@ -72,6 +72,7 @@ export interface PaintState {
 
   timelapseEnabled: boolean;
   showEffectRangeGuides: boolean;
+  autoLinkOnPaste: boolean;
   storageUsage: StorageUsage;
 
   selectionActive: boolean;
@@ -169,6 +170,7 @@ export const useStore = create<PaintState>((set) => ({
 
   timelapseEnabled: true,
   showEffectRangeGuides: true,
+  autoLinkOnPaste: false,
   storageUsage: { history: 0, project: 0, timelapse: 0, other: 0, total: 0 },
 
   selectionActive: false,

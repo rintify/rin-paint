@@ -54,6 +54,7 @@ export interface SavedAppSettings {
   colorHistory: string[];
   timelapseEnabled: boolean;
   showEffectRangeGuides: boolean;
+  autoLinkOnPaste: boolean;
   shortcuts: ShortcutBindings;
 }
 export interface SavedAppSettingsFile {

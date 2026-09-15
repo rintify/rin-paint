@@ -20,6 +20,7 @@ function settings(): SavedAppSettings {
     colorHistory: ['#112233', '#abcdef'],
     timelapseEnabled: false,
     showEffectRangeGuides: true,
+    autoLinkOnPaste: false,
     shortcuts: defaultShortcutBindings(),
   };
 }
@@ -56,6 +57,15 @@ describe('app settings file', () => {
     delete data.showEffectRangeGuides;
     view.data = data;
     expect(parseAppSettingsFile(file).showEffectRangeGuides).toBe(true);
+  });
+
+  it('defaults automatic paste linking to off when the setting is missing', () => {
+    const file = makeAppSettingsFile(settings());
+    const preferences = file.namespaces![SETTINGS_NAMESPACE_IDS.preferences]!;
+    const data = { ...(preferences.data as Record<string, unknown>) };
+    delete data.autoLinkOnPaste;
+    preferences.data = data;
+    expect(parseAppSettingsFile(file).autoLinkOnPaste).toBe(false);
   });
 
   it('keeps an unknown tool unusable without dropping it', () => {

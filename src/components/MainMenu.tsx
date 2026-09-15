@@ -31,6 +31,7 @@ import { appAlert, appConfirm } from './AppDialogs';
 import { useEngine } from './EngineContext';
 import { pickFile } from './hooks/pickFile';
 import { ShortcutSettingsDialog } from './ShortcutSettingsDialog';
+import { PreferencesDialog } from './PreferencesDialog';
 import {
   importProjectWithConfirmation,
   importSettingsWithConfirmation,
@@ -161,6 +162,7 @@ export function MainMenu() {
   const [newOpen, setNewOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
   const progress = useStore((s) => s.exportProgress);
   const timelapseEnabled = useStore((s) => s.timelapseEnabled);
   const historyPrunableCount = useStore((s) => s.historyPrunableCount);
@@ -258,6 +260,9 @@ export function MainMenu() {
           プロジェクトを読み込み…
         </MenuItem>
         <Divider />
+        <MenuItem onClick={() => { setPreferencesOpen(true); close(); }}>
+          環境設定…
+        </MenuItem>
         <MenuItem
           onClick={() => {
             close();
@@ -316,6 +321,7 @@ export function MainMenu() {
         </MenuItem>
       </Menu>
       {sizeOpen && <PageSizeDialog onClose={() => setSizeOpen(false)} />}
+      {preferencesOpen && <PreferencesDialog onClose={() => setPreferencesOpen(false)} />}
       {shortcutsOpen && <ShortcutSettingsDialog onClose={() => setShortcutsOpen(false)} />}
       <Dialog open={newOpen} onClose={creating ? undefined : () => setNewOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>新規プロジェクトを作成しますか？</DialogTitle>

@@ -57,7 +57,20 @@ export class ClipboardService {
     for (const source of clipboard.layers) {
       const snapshot: LayerSnapshot = structuredClone({ ...source, content: source.content });
       remapRecordIds(snapshot, id => ids.get(id));
-      snapshot.common.parameterLink = undefined;
+      const existingLink = snapshot.common.parameterLink;
+      const remappedSourceId = existingLink?.source.pageId === clipboard.sourcePageId
+        ? ids.get(existingLink.source.layerId)
+        : undefined;
+      if (existingLink && remappedSourceId) {
+        existingLink.source = {
+          pageId: eng.pages.activePageId,
+          layerId: remappedSourceId,
+        };
+        existingLink.sourcePageIndexHint = Math.max(
+          0,
+          eng.pages.pageOrder.indexOf(eng.pages.activePageId),
+        );
+      }
       await scaleStoredLayer(snapshot, { artboard: eng.artboard, factor });
       snapshots.push(snapshot);
     }
@@ -66,6 +79,7 @@ export class ClipboardService {
     const ops: Extract<Op, { kind: 'batch' }>['ops'] = [];
     const sourceById = new Map(clipboard.layers.map(layer => [layer.id, layer]));
     const sourceIdByNew = new Map([...ids].map(([oldId, newId]) => [newId, oldId]));
+    const autoLinkOnPaste = useStore.getState().autoLinkOnPaste;
     const pending = [...snapshots];
     while (pending.length) {
       const index = pending.findIndex(snapshot => !snapshot.common.parentId || !!ls.byId(snapshot.common.parentId));
@@ -80,11 +94,13 @@ export class ClipboardService {
       snapshot.common.childIds = [];
       const restored = await ls.restoreLayer(snapshot, location);
       if (!restored) continue;
-      eng.links.createPasteLink(
-        restored.id,
-        { pageId: clipboard.sourcePageId, layerId: source.id },
-        { name: source.common.name, pageIndex: clipboard.sourcePageIndex },
-      );
+      if (autoLinkOnPaste && !snapshot.common.parameterLink) {
+        eng.links.createPasteLink(
+          restored.id,
+          { pageId: clipboard.sourcePageId, layerId: source.id },
+          { name: source.common.name, pageIndex: clipboard.sourcePageIndex },
+        );
+      }
       // Redo must restore the values and direct source chosen at paste time. Keep the
       // original raster blob while refreshing all ordinary/link fields from the live copy.
       Object.assign(snapshot, ls.snapshotLayer(restored, false));

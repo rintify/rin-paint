@@ -100,6 +100,23 @@ function rotateAll(shape: BubbleTailShapeParams, angle: number, pivot: ShapePoin
   };
 }
 
+/** Keep the curve's offset from the midpoint of its endpoints while either endpoint moves. */
+function moveEndpoint(
+  shape: BubbleTailShapeParams,
+  endpoint: 'start' | 'tip',
+  point: ShapePoint,
+): BubbleTailShapeParams {
+  const previous = shape[endpoint];
+  return {
+    ...shape,
+    [endpoint]: { x: point.x, y: point.y },
+    control: {
+      x: shape.control.x + (point.x - previous.x) / 2,
+      y: shape.control.y + (point.y - previous.y) / 2,
+    },
+  };
+}
+
 export const bubbleTailShapeKind: ShapeKindHandler<BubbleTailShapeParams> = {
   kind: 'bubble-tail',
   label: 'しっぽ',
@@ -203,9 +220,9 @@ export const bubbleTailShapeKind: ShapeKindHandler<BubbleTailShapeParams> = {
     },
     dragHandle({ mode, before, vertexIndex, point }) {
       if (mode !== 'vertex' || vertexIndex === undefined) return null;
-      if (vertexIndex === 0) return { shape: { ...before, start: { x: point.x, y: point.y } } };
+      if (vertexIndex === 0) return { shape: moveEndpoint(before, 'start', point) };
       if (vertexIndex === 1) return { shape: { ...before, control: { x: point.x, y: point.y } } };
-      if (vertexIndex === 2) return { shape: { ...before, tip: { x: point.x, y: point.y } } };
+      if (vertexIndex === 2) return { shape: moveEndpoint(before, 'tip', point) };
       return null;
     },
     vertexCount: () => 3,

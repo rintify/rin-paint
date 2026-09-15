@@ -104,6 +104,7 @@ export class SettingsService {
       colorHistory: [...settings.colorHistory],
       timelapseEnabled: settings.timelapseEnabled,
       showEffectRangeGuides: settings.showEffectRangeGuides,
+      autoLinkOnPaste: settings.autoLinkOnPaste,
       shortcuts: { ...settings.shortcuts },
     });
     this.engine.recorderPublic().setEnabled(settings.timelapseEnabled);

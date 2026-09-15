@@ -19,6 +19,7 @@ function saved(color = '#123456'): SavedAppSettings {
     colorHistory: [color, '#abcdef'],
     timelapseEnabled: false,
     showEffectRangeGuides: true,
+    autoLinkOnPaste: false,
     shortcuts: defaultShortcutBindings(),
   };
 }

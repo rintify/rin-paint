@@ -32,7 +32,7 @@ export async function importSettingsWithConfirmation(
   file: File,
 ): Promise<void> {
   const ok = await appConfirm(
-    '登録ツール、ツールの並び・設定、色履歴、ショートカット、タイムラプス設定を読み込んだ内容で置き換えます。よろしいですか？',
+    '登録ツール、ツールの並び・設定、色履歴、ショートカット、環境設定を読み込んだ内容で置き換えます。よろしいですか？',
   );
   if (!ok) return;
   try {

@@ -186,6 +186,8 @@ const viewSchema = z.object({
   showEffectRangeGuides: z.boolean(),
 });
 
+const preferencesSchema = z.object({ autoLinkOnPaste: z.boolean() });
+
 export const toolsNamespace: SettingsNamespace<ToolsSettings> = {
   id: SETTINGS_NAMESPACE_IDS.tools,
   revision: 1,
@@ -252,6 +254,16 @@ export const viewNamespace: SettingsNamespace<z.infer<typeof viewSchema>> = {
   extras: (raw) => extrasOf(viewNamespace.loadDefaults, raw),
 };
 
+export const preferencesNamespace: SettingsNamespace<z.infer<typeof preferencesSchema>> = {
+  id: SETTINGS_NAMESPACE_IDS.preferences,
+  revision: 1,
+  loadDefaults: { autoLinkOnPaste: false },
+  fromFlat: (settings) => ({ autoLinkOnPaste: settings.autoLinkOnPaste }),
+  toFlat: (value) => ({ autoLinkOnPaste: value.autoLinkOnPaste }),
+  load: (raw) => loadKnown(preferencesSchema, preferencesNamespace.loadDefaults, raw),
+  extras: (raw) => extrasOf(preferencesNamespace.loadDefaults, raw),
+};
+
 export const shortcutsNamespace: SettingsNamespace<ShortcutBindings> = {
   id: SETTINGS_NAMESPACE_IDS.shortcuts,
   revision: 1,
@@ -266,5 +278,6 @@ const builtins: SettingsNamespace<unknown>[] = [
   toolsNamespace as SettingsNamespace<unknown>,
   colorsNamespace as SettingsNamespace<unknown>,
   viewNamespace as SettingsNamespace<unknown>,
+  preferencesNamespace as SettingsNamespace<unknown>,
   shortcutsNamespace as SettingsNamespace<unknown>,
 ];

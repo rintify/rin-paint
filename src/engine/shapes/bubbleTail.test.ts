@@ -54,4 +54,23 @@ describe('bubble tail geometry', () => {
     expect(labels).toEqual(['根元', '曲がり', '先端']);
     expect(context.strokeRect).not.toHaveBeenCalled();
   });
+
+  it('moves the control point by half the endpoint movement', () => {
+    const handler = shapeKindHandler(tail('pointed'));
+    const moveRoot = handler.edit.dragHandle({
+      mode: 'vertex', before: tail('pointed'), current: tail('pointed'),
+      vertexIndex: 0, point: { x: 30, y: 10, pressure: 1 },
+    });
+    const moveTip = handler.edit.dragHandle({
+      mode: 'vertex', before: tail('pointed'), current: tail('pointed'),
+      vertexIndex: 2, point: { x: 130, y: 50, pressure: 1 },
+    });
+
+    expect(moveRoot?.shape).toMatchObject({
+      start: { x: 30, y: 10 }, control: { x: 70, y: -5 }, tip: { x: 110, y: 20 },
+    });
+    expect(moveTip?.shape).toMatchObject({
+      start: { x: 10, y: 20 }, control: { x: 70, y: 15 }, tip: { x: 130, y: 50 },
+    });
+  });
 });

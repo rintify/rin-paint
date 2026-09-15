@@ -38,5 +38,6 @@ export const SETTINGS_NAMESPACE_IDS = {
   tools: 'rin.settings.tools',
   colors: 'rin.settings.colors',
   view: 'rin.settings.view',
+  preferences: 'rin.settings.preferences',
   shortcuts: 'rin.settings.shortcuts',
 } as const;
