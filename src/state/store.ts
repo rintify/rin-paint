@@ -55,6 +55,7 @@ export interface PaintState {
   pages: { id: string; thumbnailVersion: number }[];
   activePageId: string;
   pageBusy: boolean;
+  loadingPage: { id: string; spec: PageSpec; thumbnail?: Blob } | null;
 
   pageW: number;
   pageH: number;
@@ -151,6 +152,7 @@ export const useStore = create<PaintState>((set) => ({
   pages: [],
   activePageId: '',
   pageBusy: false,
+  loadingPage: null,
 
   pageW: 1600,
   pageH: 1200,

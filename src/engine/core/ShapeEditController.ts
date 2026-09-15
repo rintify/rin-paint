@@ -106,6 +106,13 @@ export class ShapeEditController {
     };
   }
 
+  resetPageInteraction(): void {
+    this.cancelShapeEdit();
+    this.selectedHandle = null;
+    this.syncVertexState();
+    this.engine.requestOverlayRender();
+  }
+
   refreshVertexState(): void {
     this.syncVertexState();
   }

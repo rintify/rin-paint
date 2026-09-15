@@ -256,6 +256,15 @@ export class Compositor {
     });
   }
 
+  private frameWaiters: Array<{ resolve: () => void; reject: (error: unknown) => void }> = [];
+
+  /** Resolve only after both the page and its overlay have been presented. */
+  renderNextFrame(): Promise<void> {
+    this.requestRender();
+    if (!this.main && !this.overlayCtx) return Promise.resolve();
+    return new Promise((resolve, reject) => this.frameWaiters.push({ resolve, reject }));
+  }
+
   requestRender(): void {
     this.dirty = true;
     this.fullDirty = true;
@@ -284,8 +293,22 @@ export class Compositor {
     this.scheduleFrame();
   }
 
+  private presentationHolds = 0;
+
+  /** Batch restoration invalidations without compositing incomplete pages. */
+  suspendPresentation(): () => void {
+    this.presentationHolds++;
+    this.stopLoop();
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (--this.presentationHolds === 0) this.scheduleFrame();
+    };
+  }
+
   private scheduleFrame(): void {
-    if (this.raf || (!this.main && !this.overlayCtx)) return;
+    if (this.presentationHolds || this.raf || (!this.main && !this.overlayCtx)) return;
     this.raf = requestAnimationFrame(this.loop);
   }
 
@@ -594,6 +617,7 @@ export class Compositor {
   detachCanvases(): void {
     this.endTransformPreview();
     this.stopLoop();
+    for (const waiter of this.frameWaiters.splice(0)) waiter.resolve();
     this.main = null;
     this.mainCtx = null;
     this.overlaySurface = null;
@@ -605,15 +629,22 @@ export class Compositor {
 
   private loop = (): void => {
     this.raf = 0;
-    if (this.dirty) this.composite();
-    else if (this.overlayDirty) this.presentDisplay();
-    if (
-      this.overlayDirty ||
-      this.engine.overlayAnimated?.() ||
-      this.engine.activeTool().overlayAnimated?.()
-    ) {
-      this.drawOverlayFrame();
-      this.overlayDirty = false;
+    const waiters = this.frameWaiters.splice(0);
+    try {
+      if (this.dirty) this.composite();
+      else if (this.overlayDirty) this.presentDisplay();
+      if (
+        this.overlayDirty ||
+        this.engine.overlayAnimated?.() ||
+        this.engine.activeTool().overlayAnimated?.()
+      ) {
+        this.drawOverlayFrame();
+        this.overlayDirty = false;
+      }
+      for (const waiter of waiters) waiter.resolve();
+    } catch (error) {
+      for (const waiter of waiters) waiter.reject(error);
+      if (!waiters.length) throw error;
     }
     if (
       this.engine.overlayAnimated?.() ||

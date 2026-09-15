@@ -18,6 +18,7 @@ import type { PaintEngine } from '../PaintEngine';
 /** Debounced project persistence and storage usage refresh. */
 export class AutosaveService {
   initialized = false;
+  private flushingPageSwitch = false;
   storageTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly scheduler: SaveScheduler;
 
@@ -29,7 +30,7 @@ export class AutosaveService {
         ready: () =>
           this.initialized
           && this.engine.document.mode === 'edit'
-          && !this.engine.isBusy()
+          && (!this.engine.isBusy() || this.flushingPageSwitch)
           && !this.engine.hasOpenSession(),
         onFailure: () => {
           useStore.getState().set({
@@ -62,6 +63,15 @@ export class AutosaveService {
   flushSave(): Promise<void> {
     if (!this.initialized) return Promise.resolve();
     return this.scheduler.flush() ?? Promise.resolve();
+  }
+
+  async flushForPageSwitch(): Promise<void> {
+    this.flushingPageSwitch = true;
+    try {
+      await this.flushSave();
+    } finally {
+      this.flushingPageSwitch = false;
+    }
   }
 
   cancelPending(): void {

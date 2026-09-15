@@ -1,3 +1,4 @@
+import { runtimeCheckpoint } from './RuntimeCheckpoint';
 import { useStore } from '../../state/store';
 import { HistoryTree } from '../history/historyTree';
 import { canvasToBlob, createRasterLayer } from '../layers';
@@ -74,31 +75,56 @@ export class PageService {
       !this.pageOrder.includes(id)
     )
       return;
-    eng.layerService.finishFloating();
-    eng.cancelSessions();
-    eng.cancelShapeEdit();
-    eng.layerService.exitMultiSelect();
-    await eng.flushSavePublic();
-    await eng.links.flush();
-    await eng.recorderPublic().reset();
-    eng.setBusy(true);
-    useStore.getState().set({ pageBusy: true });
+    // Lock before the first await so repeated page clicks cannot race the save.
+    let rollback: (() => void) | undefined;
+    const previousId = this.activePageId;
+    const previousHistory = eng.history;
+    const previousThumbnailVersion = this.thumbnailVersion;
     try {
+      eng.layerService.finishFloating();
+      eng.cancelSessions();
+      eng.activeTool().cancel?.();
+      eng.cursor.cancel();
+      eng.input.resetPageInteraction();
+      eng.shapeEdit.resetPageInteraction();
+      // exitMultiSelect notifies the move tool and creates a float on the OLD page.
+      useStore.getState().set({ multiSelectMode: false, selectedLayerIds: [], toolNotice: null });
+      eng.syncStore();
+      const preview = eng.document.getPage(id);
+      useStore.getState().set({
+        pageBusy: true,
+        loadingPage: { id, spec: { ...(preview?.spec ?? eng.getPageSpec()) }, thumbnail: preview?.thumbnail },
+      });
+      eng.setBusy(true);
+      // Give React and the browser a paint opportunity before expensive decoding.
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      await eng.autosave.flushForPageSwitch();
+      if (eng.autosave.failed) throw new Error('ページを保存できませんでした');
+      await eng.links.flush();
+      await eng.recorderPublic().reset();
       const page = await loadPage(id, false);
       if (!page) throw new Error('ページを読み込めませんでした');
+      rollback = runtimeCheckpoint(eng);
       this.activePageId = id;
       setPersistencePageId(id);
-      await eng.restoreSavedPagePublic(page);
+      await eng.restoreSavedPagePublic(page, { preserveView: true });
       eng.links.reconcileAll();
       await this.saveMeta();
       eng.events.emit('projectReset');
       eng.shapeEdit.refreshVertexState();
-      eng.requestRender();
       eng.syncStore();
+      await eng.compositor.renderNextFrame();
       eng.scheduleSave();
+    } catch (error) {
+      this.activePageId = previousId;
+      this.thumbnailVersion = previousThumbnailVersion;
+      setPersistencePageId(previousId);
+      eng.history = previousHistory;
+      rollback?.();
+      throw error;
     } finally {
       eng.setBusy(false);
-      useStore.getState().set({ pageBusy: false });
+      useStore.getState().set({ pageBusy: false, loadingPage: null });
     }
   }
 

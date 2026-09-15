@@ -47,15 +47,12 @@ export class ProjectService {
 
   constructor(private engine: PaintEngine) {}
 
-  async restoreSavedPage(page: SavedPage): Promise<void> {
+  async restoreSavedPage(page: SavedPage, options: { preserveView?: boolean } = {}): Promise<void> {
     const eng = this.engine;
     const ls = eng.layerService;
     ls.layers = [];
     ls.rootLayerIds = [...page.rootLayerIds];
-    this.pageSpec = { ...page.pageSpec };
-    const pixels = pagePixels(this.pageSpec);
-    eng.artboard.resize(pixels.width, pixels.height);
-    eng.compositor.syncWorkCanvases();
+    this.restoreRuntimePageSpec(page.pageSpec);
     const reasons: string[] = [];
     for (const sl of page.layers) {
       const inspected = inspectLayerRecord(sl);
@@ -63,9 +60,14 @@ export class ProjectService {
     }
     eng.links.noteSavedPage(page);
     await loadRasterAssets(page);
+    let lastYield = performance.now();
     for (const sl of page.layers) {
       const layer = await restoreLayerFrom(sl, { artboard: eng.artboard });
       if (layer) ls.layers.push(layer);
+      if (performance.now() - lastYield >= 8) {
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        lastYield = performance.now();
+      }
     }
     if (eng.document.mode === 'view-only') {
       useStore.getState().set({
@@ -81,7 +83,7 @@ export class ProjectService {
     ls.activeLayerId = page.activeLayerId;
     eng.history = new HistoryTree();
     if (!reasons.length && isPersistedHistory(page.history)) eng.history.restore(page.history);
-    eng.view.restore(page.view);
+    if (!options.preserveView) eng.view.restore(page.view);
     eng.pages.thumbnailVersion = page.thumbnailVersion;
     ls.resetCountersFromLayers();
     ls.clearVersions();

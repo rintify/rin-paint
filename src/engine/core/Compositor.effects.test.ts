@@ -1415,3 +1415,25 @@ describe('shape outline translation cache', () => {
     compareUncached();
   });
 });
+
+it('coalesces restoration redraws until all presentation holds are released', () => {
+  const { compositor } = createRenderer([], []);
+  compositor.stopLoop();
+  const frame = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(123);
+  try {
+    const releaseFirst = compositor.suspendPresentation();
+    const releaseSecond = compositor.suspendPresentation();
+    compositor.requestRender();
+    compositor.requestOverlayRender();
+    compositor.requestRender();
+    expect(frame).not.toHaveBeenCalled();
+    releaseFirst();
+    releaseFirst();
+    expect(frame).not.toHaveBeenCalled();
+    releaseSecond();
+    expect(frame).toHaveBeenCalledOnce();
+  } finally {
+    compositor.detachCanvases();
+    frame.mockRestore();
+  }
+});

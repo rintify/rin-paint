@@ -1788,6 +1788,43 @@ describe('selection and layer transform', () => {
     expect(pixel(rasterId, 35, 15)[0]).toBeGreaterThan(200);
   });
 
+  it('clears the old move gizmo on page switches and preserves the source pixels', async () => {
+    await engine.newProject();
+    engine.cancelSessions();
+    useStore.getState().deactivateTool();
+    const layer = engine.activeRaster()!;
+    const pageId = engine.pages.activePageId;
+    const originalSpec = { ...engine.getPageSpec() };
+    paintRaster(layer, ctx => ctx.fillRect(10, 10, 20, 20));
+    engine.bumpLayer(layer.id);
+    engine.scheduleSave();
+    await engine.addPage();
+    const nextId = engine.pages.pageOrder.find(id => id !== pageId)!;
+    activateKind('move');
+    expect(engine.activeFloat()?.phase).toBe('float');
+    const sharedView = { x: 123, y: -45, scale: 1.7, rot: 0.6 };
+    engine.view.restore(sharedView);
+    await engine.switchPage(nextId);
+    expect(engine.view.snapshot()).toEqual(sharedView);
+    expect(engine.activeFloat()?.phase).toBe('idle');
+    expect(useStore.getState().selectionActive).toBe(false);
+    expect(engine.hasOpenSession()).toBe(false);
+    const smaller = { widthMm: 40, heightMm: 32, ppi: 50.8 };
+    await engine.resizePage(smaller);
+    await engine.switchPage(pageId);
+    expect(engine.view.snapshot()).toEqual(sharedView);
+    expect(useStore.getState().pageSpec).toEqual(originalSpec);
+    expect(useStore.getState().pageW).toBe(engine.artboard.w);
+    expect(useStore.getState().pageH).toBe(engine.artboard.h);
+    expect(pixel(layer.id, 15, 15)[3]).toBe(255);
+    expect(engine.activeFloat()?.phase).toBe('idle');
+    await engine.switchPage(nextId);
+    expect(useStore.getState().pageSpec).toEqual(smaller);
+    expect(useStore.getState().pageW).toBe(80);
+    expect(useStore.getState().pageH).toBe(64);
+    useStore.getState().deactivateTool();
+  });
+
   it('resizes with the move tool active without cutting pixels out of page history', async () => {
     await engine.newProject();
     engine.cancelSessions();

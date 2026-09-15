@@ -1,3 +1,4 @@
+import { PageLoadingOverlay, fitPageSize } from './PageLoadingOverlay';
 import { TransformLayerControls } from './TransformLayerControls';
 import { Box, Button, Chip, FormControlLabel, LinearProgress, Paper, Snackbar, Switch, Typography } from '@mui/material';
 import { useEffect, useRef, useState } from 'react';
@@ -34,14 +35,20 @@ function ViewChip() {
   );
 }
 
-export function PageView() {
+export function PageView({ onReady, onError }: {
+  onReady?: () => void;
+  onError?: (error: unknown) => void;
+} = {}) {
   const engine = useEngine();
   const areaRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
+  const [areaSize, setAreaSize] = useState({ w: 0, h: 0 });
   const [dropActive, setDropActive] = useState(false);
+  const pageBusy = useStore((s) => s.pageBusy);
+  const activePageId = useStore((s) => s.activePageId);
   const selectionActive = useStore((s) => s.selectionActive);
   const freeTransform = useStore((s) => s.freeTransform);
   const objectSelected = useStore((s) => s.selectedLayerIds.some(id => { const layer = s.layers.find(item => item.id === id); return !!layer && canTransformObjectType(layer.type); }));
@@ -66,13 +73,10 @@ export function PageView() {
   useEffect(() => {
     const el = areaRef.current!;
     const refit = () => {
-      const pad = 24;
-      const bw = el.clientWidth - pad * 2;
-      const bh = el.clientHeight - pad * 2;
-      const scale = Math.max(0.01, Math.min(bw / pageW, bh / pageH));
-      const w = Math.round(pageW * scale);
-      setSize({ w, h: Math.round(pageH * scale) });
-      engine.setFitWidth(w);
+      setAreaSize({ w: el.clientWidth, h: el.clientHeight });
+      const fitted = fitPageSize(pageW, pageH, el.clientWidth, el.clientHeight);
+      setSize(fitted);
+      engine.setFitWidth(fitted.w);
     };
     const ro = new ResizeObserver(refit);
     ro.observe(el);
@@ -81,9 +85,12 @@ export function PageView() {
   }, [pageW, pageH]);
 
   useEffect(() => {
-    engine.attach(mainRef.current!, overlayRef.current!, wrapRef.current!, areaRef.current!);
-    return () => engine.detach();
-  }, []);
+    let active = true;
+    void Promise.resolve(engine.attach(mainRef.current!, overlayRef.current!, wrapRef.current!, areaRef.current!))
+      .then(() => { if (active) onReady?.(); })
+      .catch(error => { if (active) onError?.(error); });
+    return () => { active = false; engine.detach(); };
+  }, [engine, onReady, onError]);
 
   useEffect(() => {
     engine.requestRender();
@@ -97,6 +104,7 @@ export function PageView() {
     <Box
       className={`canvas-area${dropActive ? ' image-drop-active' : ''}`}
       ref={areaRef}
+      aria-busy={pageBusy}
       onDragEnter={(event) => {
         if ([...event.dataTransfer.items].some((item) => item.kind === 'file')) {
           event.preventDefault();
@@ -116,6 +124,7 @@ export function PageView() {
       onDrop={(event) => {
         event.preventDefault();
         setDropActive(false);
+        if (pageBusy) return;
         const files = [...event.dataTransfer.files];
         if (files.some(file => importFileKind(file) !== null)) return;
         const file = files.find(item => !item.type || item.type.startsWith('image/'));
@@ -131,7 +140,7 @@ export function PageView() {
         ref={wrapRef}
         style={{ width: size.w, height: size.h }}
       >
-        <TextEditor fitScale={size.w / pageW} />
+        <TextEditor key={activePageId} fitScale={size.w / pageW} />
       </Box>
       <canvas ref={mainRef} className="canvas-main" aria-hidden="true" />
       <canvas ref={overlayRef} className="canvas-overlay" aria-hidden="true" />
@@ -224,6 +233,7 @@ export function PageView() {
       )}
       {dropActive && <Box className="image-drop-hint">画像を配置</Box>}
       <ViewChip />
+      <PageLoadingOverlay areaSize={areaSize} />
       <Snackbar
         open={!!toolNotice}
         message={toolNotice ?? ''}

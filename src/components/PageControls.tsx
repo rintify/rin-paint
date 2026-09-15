@@ -35,7 +35,7 @@ function Thumbnail({ id, version }: { id: string; version: number }) {
 function PageManager({ onClose }: { onClose: () => void }) {
   const engine = useEngine();
   const pages = useStore(s => s.pages);
-  const active = useStore(s => s.activePageId);
+  const active = useStore(s => s.loadingPage?.id ?? s.activePageId);
   const [drag, setDrag] = useState<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ id: string; anchor: HTMLElement } | null>(null);
@@ -87,7 +87,10 @@ function PageManager({ onClose }: { onClose: () => void }) {
                 setDrag(null);
                 setOver(null);
               }}
-              onClick={() => void engine.switchPage(page.id).catch(error => appAlert(String(error)))}
+              onClick={() => {
+                void engine.switchPage(page.id).catch(error => appAlert(String(error)));
+                onClose();
+              }}
             >
               <Thumbnail id={page.id} version={page.thumbnailVersion} />
               <Stack direction="row" sx={{ alignItems: 'center', px: 1, py: 0.75 }}>
@@ -133,7 +136,7 @@ function PageManager({ onClose }: { onClose: () => void }) {
 export function PageStepper() {
   const engine = useEngine();
   const pages = useStore(s => s.pages);
-  const active = useStore(s => s.activePageId);
+  const active = useStore(s => s.loadingPage?.id ?? s.activePageId);
   const busy = useStore(s => s.pageBusy);
   const index = Math.max(0, pages.findIndex(page => page.id === active));
   if (pages.length < 2) return null;
@@ -142,7 +145,7 @@ export function PageStepper() {
       <IconButton
         size="small"
         disabled={busy || index === 0}
-        onClick={() => void engine.switchPage(pages[index - 1].id)}
+        onClick={() => void engine.switchPage(pages[index - 1].id).catch(error => appAlert(String(error)))}
         aria-label="前のページ"
       >
         <ChevronLeftIcon fontSize="small" />
@@ -156,7 +159,7 @@ export function PageStepper() {
       <IconButton
         size="small"
         disabled={busy || index === pages.length - 1}
-        onClick={() => void engine.switchPage(pages[index + 1].id)}
+        onClick={() => void engine.switchPage(pages[index + 1].id).catch(error => appAlert(String(error)))}
         aria-label="次のページ"
       >
         <ChevronRightIcon fontSize="small" />

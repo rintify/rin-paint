@@ -113,6 +113,7 @@ export class PaintEngine {
   private storeProjection = new StoreProjectionCache();
   readonly view = new ViewController(this.artboard);
   private initPromise: Promise<void> | null = null;
+  private attachmentGeneration = 0;
   private lastViewState: ViewState = this.view.snapshot();
   private toolBeforeEyedropperId: string | null = null;
   private toolActivationOrigin: 'palette' | 'shortcut' | null = null;
@@ -239,10 +240,10 @@ export class PaintEngine {
   // ---------------------------------------------------------------- host accessors
 
   /** @internal */ isBusy(): boolean {
-    return this.busy;
+    return this.busy || useStore.getState().pageBusy;
   }
   /** @internal */ canMutate(): boolean {
-    return !this.busy && this.document.mode === 'edit';
+    return !this.isBusy() && this.document.mode === 'edit';
   }
   /** @internal */ setBusy(v: boolean): void {
     this.busy = v;
@@ -259,8 +260,8 @@ export class PaintEngine {
   /** @internal */ flushSavePublic(): Promise<void> {
     return this.autosave.flushSave();
   }
-  /** @internal */ restoreSavedPagePublic(page: SavedPage): Promise<void> {
-    return this.project.restoreSavedPage(page);
+  /** @internal */ restoreSavedPagePublic(page: SavedPage, options: { preserveView?: boolean } = {}): Promise<void> {
+    return this.project.restoreSavedPage(page, options);
   }
   /** @internal */ restorePageSnapshotPublic(
     snapshot: PageSnapshot,
@@ -378,23 +379,36 @@ export class PaintEngine {
 
   // ---------------------------------------------------------------- attach
 
-  attach(
+  async attach(
     main: HTMLCanvasElement,
     overlay: HTMLCanvasElement,
     wrapper: HTMLElement,
     area: HTMLElement,
-  ): void {
-    this.compositor.attachCanvases(main, overlay, area);
-    this.view.attach(area, wrapper);
-    this.input.attachListeners(area);
-    this.compositor.startLoop();
-    void this.init().then(() => {
-      this.requestRender();
+  ): Promise<void> {
+    const generation = ++this.attachmentGeneration;
+    const attached = () => generation === this.attachmentGeneration;
+    const resume = this.compositor.suspendPresentation();
+    try {
+      this.compositor.attachCanvases(main, overlay, area);
+      this.view.attach(area, wrapper);
+      await this.init();
+      if (!attached()) return;
       this.syncStore();
-    });
+      await document.fonts?.ready;
+      await this.compositor.textRenderer.ready();
+      if (!attached()) return;
+      // Let React apply restored panel/page dimensions before the first visible frame.
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      if (!attached()) return;
+    } finally {
+      resume();
+    }
+    await this.compositor.renderNextFrame();
+    if (attached()) this.input.attachListeners(area);
   }
 
   detach(): void {
+    this.attachmentGeneration++;
     if (useStore.getState().fillProgress !== null) this.fill.cancel();
     this.input.detachListeners();
     this.compositor.detachCanvases();

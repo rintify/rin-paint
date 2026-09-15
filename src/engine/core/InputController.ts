@@ -132,6 +132,25 @@ export class InputController {
     this.area = null;
   }
 
+  resetPageInteraction(): void {
+    this.clearMove();
+    this.clearPendingPress();
+    const pointers = new Set(this.touchPts.keys());
+    if (this.activePointer !== null) pointers.add(this.activePointer);
+    if (this.panDrag) pointers.add(this.panDrag.id);
+    this.activePointer = null;
+    this.layerPickPointer = null;
+    this.touchPts.clear();
+    this.gesture = null;
+    this.panDrag = null;
+    this.spaceDown = false;
+    this.panShortcutCode = null;
+    this.cancelEyedropper();
+    for (const id of pointers) {
+      if (this.area?.hasPointerCapture(id)) this.area.releasePointerCapture(id);
+    }
+  }
+
   toPoint(e: {
     clientX: number;
     clientY: number;
@@ -278,6 +297,7 @@ export class InputController {
 
   private onWheel = (e: WheelEvent): void => {
     e.preventDefault();
+    if (useStore.getState().pageBusy) return;
     const view = this.engine.view;
     if (e.ctrlKey || e.metaKey) {
       view.zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.01));
@@ -448,6 +468,7 @@ export class InputController {
   };
 
   private onKeyDown = (e: KeyboardEvent): void => {
+    if (useStore.getState().pageBusy) return;
     const eng = this.engine;
     if (
       e.target instanceof Element &&

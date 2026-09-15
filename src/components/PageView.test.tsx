@@ -11,6 +11,7 @@ import { PageView } from './PageView';
 const setConstrained = vi.hoisted(() => vi.fn());
 const mockEngine = vi.hoisted(() => ({
   transformEdit: { mode: 'scale' },
+  view: { snapshot: () => ({ x: 75, y: -30, scale: 1.5, rot: 0.4 }) },
   attach() {},
   detach() {},
   setFitWidth() {},
@@ -28,6 +29,8 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   setConstrained.mockClear();
   useStore.getState().set({
+    pageBusy: false,
+    loadingPage: null,
     polygonDraftActive: false,
     shapeHandleSelected: true,
     shapeHandleCanDelete: true,
@@ -57,4 +60,38 @@ describe('polygon vertex edge constraint UI', () => {
     await act(async () => useStore.getState().set({ shapeHandleSelected: false, shapeHandleEdgeConstrained: false }));
     expect([...container.querySelectorAll('button')].some(button => button.textContent === '辺に沿う')).toBe(false);
   });
+});
+
+describe('page loading overlay', () => {
+  it('marks the canvas busy and keeps the overlay mounted for its exit transition', async () => {
+    await act(async () => {
+      useStore.getState().set({ pageBusy: true });
+      root.render(<EngineProvider engine={mockEngine}><PageView /></EngineProvider>);
+    });
+    const overlay = container.querySelector('[data-testid="page-loading-overlay"]')!;
+    expect(overlay.getAttribute('aria-hidden')).toBe('false');
+    expect(container.querySelector('.canvas-area')?.getAttribute('aria-busy')).toBe('true');
+    expect(overlay.querySelector('[aria-label="ページを読み込み中"]')).not.toBeNull();
+    const center = container.querySelector<HTMLElement>('[data-testid="page-loading-center"]')!;
+    expect(center.style.left).toBe('calc(50% + 75px)');
+    expect(center.style.top).toBe('calc(50% + -30px)');
+    await act(async () => useStore.getState().set({ pageBusy: false }));
+    expect(container.querySelector('[data-testid="page-loading-overlay"]')).toBe(overlay);
+    expect(overlay.getAttribute('aria-hidden')).toBe('true');
+  });
+});
+
+
+it('shows the destination preview immediately while the source remains loaded', async () => {
+  await act(async () => {
+    useStore.getState().set({
+      activePageId: 'source', pageBusy: true,
+      loadingPage: { id: 'destination', spec: { widthMm: 100, heightMm: 100, ppi: 100 } },
+    });
+    root.render(<EngineProvider engine={mockEngine}><PageView /></EngineProvider>);
+  });
+  expect(container.querySelector('[data-testid="page-loading-preview"]')?.getAttribute('data-page-id')).toBe('destination');
+  expect(useStore.getState().activePageId).toBe('source');
+  await act(async () => useStore.getState().set({ pageBusy: false, loadingPage: null }));
+  expect(container.querySelector('[data-testid="page-loading-preview"]')).toBeNull();
 });
