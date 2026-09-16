@@ -11,6 +11,7 @@ import { parameterById } from '../engine/parameters/host';
 
 const actions = vi.hoisted(() => ({
   remove: vi.fn(),
+  move: vi.fn(() => true),
   merge: vi.fn(async () => undefined),
   rename: vi.fn(() => true),
   addRaster: vi.fn(),
@@ -92,6 +93,7 @@ const mockEngine = vi.hoisted(() => ({
   exitMultiSelect: actions.exitMultiSelect,
   toggleDescendantSelection: actions.toggleDescendantSelection,
   canMoveLayer: () => true,
+  moveLayers: actions.move,
   getShape: () => null,
   removeLayer: actions.remove,
   mergeLayerDown: actions.merge,
@@ -583,5 +585,56 @@ describe('mask interactions', () => {
           frames.some((frame) => frame.transform === 'scale(1.06)'),
       ),
     ).toBe(true);
+  });
+});
+
+
+describe('hierarchy drag selection', () => {
+  async function drag(element: Element, type: string) {
+    await act(async () => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: 20, clientY: 22 });
+      Object.defineProperty(event, 'dataTransfer', {
+        value: { setData: vi.fn(), effectAllowed: '', dropEffect: '' },
+      });
+      element.dispatchEvent(event);
+    });
+  }
+
+  it.each([
+    [true, ['raster', 'shape']],
+    [false, ['shape']],
+  ])('moves the selected set when the dragged row is selected: %s', async (selected, expected) => {
+    actions.move.mockClear();
+    const target = { ...layers[0], id: 'target' };
+    useStore.getState().set({
+      layers: [...layers, target],
+      rootLayerIds: ['raster', 'shape', 'target'],
+      selectedLayerIds: selected ? ['raster', 'shape'] : ['raster', 'target'],
+      multiSelectMode: true,
+    });
+    await renderPanel();
+    const source = container.querySelector('[data-layer-id="shape"]')!;
+    await drag(source, 'dragstart');
+    expect([...container.querySelectorAll('.is-dragging')].map(row => row.getAttribute('data-layer-id'))).toEqual(expected);
+    // Use the root-end area so an unselected source can also move past selected rows.
+    const end = container.querySelector('.layer-flat-list')!.firstElementChild!.lastElementChild!;
+    await drag(end, 'dragover');
+    await drag(end, 'drop');
+    expect(actions.move).toHaveBeenCalledWith(expected, { parentId: null, index: 3 });
+    expect(actions.move).toHaveBeenCalledOnce();
+    expect(container.querySelector('.is-dragging')).toBeNull();
+  });
+
+  it('clears a previous drop target when hovering a selected row', async () => {
+    actions.move.mockClear();
+    useStore.getState().set({ multiSelectMode: true, selectedLayerIds: ['raster', 'shape'] });
+    await renderPanel();
+    const source = container.querySelector('[data-layer-id="shape"]')!;
+    const end = container.querySelector('.layer-flat-list')!.firstElementChild!.lastElementChild!;
+    await drag(source, 'dragstart');
+    await drag(end, 'dragover');
+    await drag(source, 'dragover');
+    await drag(source, 'drop');
+    expect(actions.move).not.toHaveBeenCalled();
   });
 });

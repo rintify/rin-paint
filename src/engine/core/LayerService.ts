@@ -793,23 +793,51 @@ export class LayerService {
     this.engine.committed();
   }
 
-  moveLayer(id: string, to: LayerLocation): boolean {
-    if (!this.engine.canMutate()) return false;
-    const from = this.locationOf(id);
-    if (!from || !canReparent(this.layers, id, to.parentId)) return false;
-    const adjusted = { ...to };
-    if (from.parentId === to.parentId && from.index < to.index)
-      adjusted.index--;
-    if (from.parentId === adjusted.parentId && from.index === adjusted.index)
-      return false;
-    this.detachLayer(id);
-    this.insertAt(id, adjusted);
+  moveLayers(ids: string[], to: LayerLocation): boolean {
+    if (!this.engine.canMutate() || !ids.length
+      || !ids.every(id => this.canMoveLayer(id, to.parentId))) return false;
+    const selected = new Set(ids);
+    // Tree order also keeps children with a selected ancestor in that ancestor's subtree.
+    const roots: string[] = [];
+    const visit = (siblings: string[]) => {
+      for (const id of siblings) {
+        if (selected.has(id)) roots.push(id);
+        else visit(this.byId(id)!.childIds);
+      }
+    };
+    visit(this.rootLayerIds);
+    const moving = new Set(roots);
+    const siblings = this.siblingIds(to.parentId);
+    const index = Math.max(0, Math.min(to.index, siblings.length));
+    const anchorId = siblings.slice(index).find(id => !moving.has(id));
+    const remaining = siblings.filter(id => !moving.has(id));
+    const insertion = anchorId ? remaining.indexOf(anchorId) : remaining.length;
+    const result = [...remaining.slice(0, insertion), ...roots, ...remaining.slice(insertion)];
+    if (result.length === siblings.length && result.every((id, i) => id === siblings[i])) return false;
+
+    // Record each intermediate location so the existing batch history can undo in reverse.
+    const ops: import('../history/historyTree').AtomicOp[] = [];
+    for (const id of roots) {
+      const from = this.detachLayer(id)!;
+      const destination = this.siblingIds(to.parentId);
+      const adjusted = {
+        parentId: to.parentId,
+        index: anchorId ? destination.indexOf(anchorId) : destination.length,
+      };
+      this.insertAt(id, adjusted);
+      if (from.parentId !== adjusted.parentId || from.index !== adjusted.index)
+        ops.push({ kind: 'layerMove', layerId: id, from, to: adjusted });
+    }
     this.engine.history.push(
-      { kind: 'layerMove', layerId: id, from, to: adjusted },
-      'レイヤー並べ替え',
+      ops.length === 1 ? ops[0] : { kind: 'batch', ops },
+      roots.length > 1 ? '複数レイヤー並べ替え' : 'レイヤー並べ替え',
     );
     this.engine.committed();
     return true;
+  }
+
+  moveLayer(id: string, to: LayerLocation): boolean {
+    return this.moveLayers([id], to);
   }
 
   bakeAndMerge(

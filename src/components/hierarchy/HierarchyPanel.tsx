@@ -67,7 +67,10 @@ export function HierarchyPanel() {
   }));
   const [menu, setMenu] = useState<{ id: string; anchor: HTMLElement } | null>(null);
   const [addEffectAnchor, setAddEffectAnchor] = useState<HTMLElement | null>(null);
-  const [dragId, setDragId] = useState<string | null>(null);
+  const [dragIds, setDragIds] = useState<string[]>([]);
+  const dragging = dragIds.length > 0;
+  const canDrop = (parentId: string | null) =>
+    dragging && dragIds.every(id => engine.canMoveLayer(id, parentId));
   const [drop, setDrop] = useState<DropTarget | null>(null);
   const [focusRequest, setFocusRequest] = useState<{ id: string; token: number } | null>(null);
   const frozen = useRef<{ id: string; depth: number }[] | null>(null);
@@ -93,7 +96,7 @@ export function HierarchyPanel() {
     engine.toggleDescendantSelection(id);
     setPalette({ id, open: true });
   });
-  const visible = dragId && frozen.current ? frozen.current : desired;
+  const visible = dragging && frozen.current ? frozen.current : desired;
   const signature = visible.map(r => r.id + ':' + r.depth).join('|');
   const [rows, setRows] = useState<VisibleRow[]>([]);
   const [spacing, setSpacing] = useState({ top: 0, height: 0 });
@@ -232,7 +235,7 @@ export function HierarchyPanel() {
     if (previousGeneration.current === generation) return;
     previousGeneration.current = generation;
     setMenu(null);
-    setDragId(null);
+    setDragIds([]);
     setDrop(null);
     setPalette({ id: activeId, open: false });
     setSpacing({ top: 0, height: 0 });
@@ -264,14 +267,14 @@ export function HierarchyPanel() {
   };
   const finishDrag = () => {
     frozen.current = null;
-    setDragId(null);
+    setDragIds([]);
     setDrop(null);
   };
   const menuMeta = menu ? byId.get(menu.id) : undefined;
   const applyDrop = () => {
-    if (dragId && drop && engine.canMoveLayer(dragId, drop.parentId)) {
+    if (drop && canDrop(drop.parentId)) {
       skipAnchorOnce.current = true;
-      if (!engine.moveLayer(dragId, { parentId: drop.parentId, index: drop.index })) {
+      if (!engine.moveLayers(dragIds, { parentId: drop.parentId, index: drop.index })) {
         skipAnchorOnce.current = false;
       }
     }
@@ -334,7 +337,7 @@ export function HierarchyPanel() {
           if (!event.currentTarget.contains(event.relatedTarget as Node)) setDrop(null);
         }}
         onDragOver={event => {
-          if (!dragId) return;
+          if (!dragging) return;
           event.preventDefault();
           const el = event.currentTarget;
           const rect = el.getBoundingClientRect();
@@ -354,7 +357,7 @@ export function HierarchyPanel() {
                 anchor = byId.get(anchor.parentId)!;
                 depth--;
               }
-              if (engine.canMoveLayer(dragId, anchor.parentId)) {
+              if (canDrop(anchor.parentId)) {
                 const siblings = anchor.parentId ? byId.get(anchor.parentId)!.childIds : rootLayerIds;
                 setDrop({
                   parentId: anchor.parentId,
@@ -363,7 +366,7 @@ export function HierarchyPanel() {
                   edge: 'after',
                   depth,
                 });
-              }
+              } else setDrop(null);
             }
           }
         }}
@@ -397,7 +400,7 @@ export function HierarchyPanel() {
                   'layer-row layer-flat-row'
                   + (isPrimary ? ' active' : '')
                   + (multi && isSelected && !isPrimary ? ' selected' : '')
-                  + (dragId === meta.id ? ' is-dragging' : '')
+                  + (dragIds.includes(meta.id) ? ' is-dragging' : '')
                   + (guide?.edge === 'inside' ? ' drop-inside' : '')
                 }
                 data-layer-id={meta.id}
@@ -430,11 +433,16 @@ export function HierarchyPanel() {
                   event.dataTransfer.effectAllowed = 'copyMove';
                   event.dataTransfer.setData('text/plain', meta.id);
                   frozen.current = desired;
-                  setDragId(meta.id);
+                  longPress.onPointerCancel();
+                  setDragIds(multi && selectedIds.includes(meta.id) ? [...selectedIds] : [meta.id]);
                 }}
                 onDragEnd={finishDrag}
                 onDragOver={event => {
-                  if (!dragId || dragId === meta.id) return;
+                  if (!dragging) return;
+                  if (dragIds.includes(meta.id)) {
+                    setDrop(null);
+                    return;
+                  }
                   const rect = event.currentTarget.getBoundingClientRect();
                   const ratio = (event.clientY - rect.top) / rect.height;
                   let anchor = meta;
@@ -464,7 +472,7 @@ export function HierarchyPanel() {
                         edge: ratio < 0.5 ? 'before' : 'after',
                         depth,
                       };
-                  if (!engine.canMoveLayer(dragId, target.parentId)) {
+                  if (!canDrop(target.parentId)) {
                     setDrop(null);
                     return;
                   }
@@ -558,12 +566,13 @@ export function HierarchyPanel() {
           <Box
             sx={{ position: 'absolute', top: spacing.top + visible.length * ROW_HEIGHT, height: 32, left: 0, right: 0 }}
             onDragOver={event => {
-              if (!dragId) return;
+              if (!dragging) return;
               event.preventDefault();
               setDrop({ parentId: null, index: rootLayerIds.length, anchorId: 'end', edge: 'after', depth: 0 });
             }}
             onDrop={event => {
               event.preventDefault();
+              event.stopPropagation();
               applyDrop();
             }}
           >

@@ -770,6 +770,9 @@ export class PaintEngine {
   canRemoveLayer(id: string): boolean {
     return this.layerService.canRemoveLayer(id);
   }
+  moveLayers(ids: string[], to: LayerLocation): boolean {
+    return this.layerService.moveLayers(ids, to);
+  }
   moveLayer(id: string, to: LayerLocation): boolean {
     return this.layerService.moveLayer(id, to);
   }
